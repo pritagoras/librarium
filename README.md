@@ -22,6 +22,7 @@ La versión publicada guarda los datos en IndexedDB del navegador bajo el domini
 ## Funciones incluidas
 - Biblioteca con alta, edición y eliminación de libros.
 - Carga manual y búsqueda opcional en Open Library.
+- Escaneo de ISBN-10/13 con cámara compatible y búsqueda del libro por ISBN; también se puede escribir el código manualmente.
 - Portadas por archivo o URL.
 - Página actual y estados de lectura.
 - Importación de notas finales pegando JSON o seleccionando un archivo, con validación y vista previa.

@@ -29,7 +29,7 @@
 <div class="form-grid">
 <label class="wide">Título *<input id="title" required></label><label>Autor<input id="author"></label><label>Editorial<input id="publisher"></label>
 <label>Año<input id="year" type="number" min="0" max="3000"></label><label>Edición<input id="edition"></label>
-<label>ISBN<input id="isbn"></label><label>Cantidad de páginas<input id="totalPages" type="number" min="1"></label>
+<label>ISBN<div class="isbn-entry"><input id="isbn" inputmode="numeric" placeholder="978…"><button type="button" class="secondary" id="scanIsbnBtn">Escanear</button><button type="button" class="mini" id="lookupIsbnBtn">Buscar</button></div><small id="isbnStatus" class="muted"></small><div id="isbnScanner" class="isbn-scanner hidden"><video id="isbnVideo" playsinline muted></video><button type="button" class="mini" id="stopIsbnScanner">Cerrar cámara</button></div></label><label>Cantidad de páginas<input id="totalPages" type="number" min="1"></label>
 <label>Página actual<input id="currentPage" type="number" min="0" value="0"></label>
 <label>Estado<select id="status"><option value="pending">Pendiente</option><option value="reading">En lectura</option><option value="paused">Pausado</option><option value="finished">Terminado</option></select></label>
 <label class="wide">Portada<input id="coverFile" type="file" accept="image/*"><small class="muted">También podés pegar una URL de portada.</small><input id="coverUrl" placeholder="https://…"></label>
