@@ -1,7 +1,8 @@
 type Payload = Record<string, any>;
 
 const API_ROOT = 'https://generativelanguage.googleapis.com/v1beta/models';
-const FALLBACK_MODELS = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'];
+const DEFAULT_MODEL = 'gemini-3.8-flash';
+const FALLBACK_MODELS = [DEFAULT_MODEL, 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
 
 function apiError(data: any, status: number): Error & { status?: number } {
   const error = new Error(data?.error?.message || `Google Gemini respondió HTTP ${status}.`) as Error & {
@@ -12,12 +13,49 @@ function apiError(data: any, status: number): Error & { status?: number } {
 }
 
 function thinkingConfig(level?: string, model?: string) {
-  const selected = level === 'auto' || !level ? (model === 'gemini-3.1-flash-lite' ? 'LOW' : '') : level.toUpperCase();
+  const selected = level && level !== 'auto' ? level.toUpperCase() : '';
+  if (selected && !/^gemini-[34](?:[.-])/.test(model || '')) return {};
   return selected ? { thinkingConfig: { thinkingLevel: selected } } : {};
 }
 
 function modelFor(payload: Payload) {
-  return payload.model === 'gemini-3.1-flash-lite' ? 'gemini-3.1-flash-lite' : 'gemini-4-hydrogen';
+  const selected = String(payload.model || DEFAULT_MODEL).trim();
+  return /^gemini-[a-z0-9.-]{1,80}$/.test(selected) ? selected : DEFAULT_MODEL;
+}
+
+async function listModels(apiKey: string, signal?: AbortSignal) {
+  const models: any[] = [];
+  let pageToken = '';
+  do {
+    const query = new URLSearchParams({ pageSize: '1000' });
+    if (pageToken) query.set('pageToken', pageToken);
+    const response = await fetch(`${API_ROOT}?${query}`, {
+      headers: { 'x-goog-api-key': apiKey },
+      signal,
+    });
+    if (!response.ok) {
+      let details: any = {};
+      try { details = await response.json(); } catch {}
+      throw apiError(details, response.status);
+    }
+    const result = await response.json();
+    models.push(...(Array.isArray(result.models) ? result.models : []));
+    pageToken = String(result.nextPageToken || '');
+  } while (pageToken && models.length < 2000);
+
+  return models
+    .filter((model) => {
+      const id = String(model.name || '').replace(/^models\//, '');
+      return /^gemini-[a-z0-9.-]+$/i.test(id)
+        && model.supportedGenerationMethods?.includes('generateContent')
+        && !/(?:image|live|tts|transcrib|embedding|robotics)/i.test(id);
+    })
+    .map((model) => ({
+      id: String(model.name).replace(/^models\//, ''),
+      name: String(model.displayName || model.name).slice(0, 120),
+      thinking: Boolean(model.thinking),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 async function googleRequest(
@@ -61,7 +99,7 @@ async function generate(
       return { text: text.trim(), model };
     } catch (error: any) {
       lastError = error;
-      if (error?.name === 'AbortError' || ![429, 503].includes(error?.status) || model === models.at(-1)) {
+      if (error?.name === 'AbortError' || ![404, 429, 503].includes(error?.status) || model === models.at(-1)) {
         throw error;
       }
       await new Promise((resolve) => setTimeout(resolve, 700));
@@ -102,6 +140,9 @@ export async function directGeminiRequest(
   signal?: AbortSignal,
 ): Promise<Response> {
   try {
+    if (route === 'list-models') {
+      return responseJSON({ models: await listModels(apiKey, signal) });
+    }
     const preferred = modelFor(payload);
     if (route === 'chat-stream') {
       const models = [preferred, ...FALLBACK_MODELS.filter((model) => model !== preferred)];
@@ -121,7 +162,7 @@ export async function directGeminiRequest(
           });
         } catch (error: any) {
           lastError = error;
-          if (error?.name === 'AbortError' || ![429, 503].includes(error?.status) || model === models.at(-1)) throw error;
+          if (error?.name === 'AbortError' || ![404, 429, 503].includes(error?.status) || model === models.at(-1)) throw error;
           await new Promise((resolve) => setTimeout(resolve, 700));
         }
       }
@@ -132,7 +173,7 @@ export async function directGeminiRequest(
       const prompt = 'Transcribí fielmente todo el texto legible de esta página, en el idioma original. Conservá palabras, acentos, puntuación y párrafos. No traduzcas, resumas, corrijas ni agregues explicaciones. Si un fragmento es realmente ilegible, indicá [ilegible]. Devolvé únicamente la transcripción, sin Markdown ni comentarios.';
       const result = await generate(apiKey, preferred, (model) => textRequest([{ role: 'user', parts: [
         { text: prompt }, { inlineData: { mimeType: payload.mimeType || 'image/jpeg', data: payload.data } },
-      ] }], '', model, 'low'), signal);
+      ] }], '', model, payload.thinking), signal);
       return responseJSON({ text: result.text, model: result.model });
     }
 
@@ -157,7 +198,7 @@ export async function directGeminiRequest(
       const result = await generate(apiKey, preferred, (model) => textRequest(
         [{ role: 'user', parts }],
         'Sos un bibliotecario preciso. Respondés únicamente con JSON válido según el esquema y nunca inventás datos bibliográficos inciertos.',
-        model, 'low', { responseMimeType: 'application/json', responseSchema: schema },
+        model, payload.thinking, { responseMimeType: 'application/json', responseSchema: schema },
       ), signal);
       const parsed = parseJson(result.text);
       return responseJSON({ suggestion: {
@@ -192,7 +233,7 @@ export async function directGeminiRequest(
       } };
       const result = await generate(apiKey, preferred, (model) => textRequest(prompt,
         'Sos un editor literario y asistente de lectura riguroso. Respondés siempre en español claro y preciso, devolviendo JSON válido según el esquema.',
-        model, payload.thinking === 'auto' ? 'medium' : payload.thinking,
+        model, payload.thinking,
         { responseMimeType: 'application/json', responseSchema: schema },
       ), signal);
       const parsed = parseJson(result.text);

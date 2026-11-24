@@ -5,8 +5,8 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = Number(process.env.PORT) || 3000;
-const HOST = '0.0.0.0';
+const PORT = Number(process.env.PORT) || 8765;
+const HOST = '127.0.0.1';
 
 async function startServer() {
   const app = express();
