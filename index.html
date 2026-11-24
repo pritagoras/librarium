@@ -261,9 +261,11 @@ Notas finales:
     <label>Título<input id="annotationHeading" placeholder="Un título breve" maxlength="300"></label>
     <label for="annotationText">Comentario / observación</label>
     <textarea id="annotationText" rows="5" placeholder="¿Qué querés conservar de esta página?"></textarea>
+    <label for="annotationPersonalComment">Mi comentario sobre esta anotación o foto</label>
+    <textarea id="annotationPersonalComment" rows="3" placeholder="Una idea propia, duda, desacuerdo o reflexión…"></textarea>
     <label>Fotografía (opcional)<input id="annotationPhoto" type="file" accept="image/*"><small id="annotationPhotoStatus" class="muted"></small></label>
     <div class="dialog-actions">
-      <button type="button" id="askAnnotationGemini" class="secondary">Consultar a la IA</button>
+      <button type="button" id="askAnnotationGemini" class="secondary">Guardar y debatir con IA</button>
       <button type="button" class="secondary" data-close>Cancelar</button>
       <button class="primary">Guardar anotación</button>
     </div>

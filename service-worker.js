@@ -1,4 +1,4 @@
-const CACHE = "librarium-v33";
+const CACHE = "librarium-v34";
 const FILES = [
   "./",
   "./index.html",
