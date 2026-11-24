@@ -1,6 +1,6 @@
 import { all, get, openDB } from './db';
 import { signInWithGoogle, signOutUser } from './firebase';
-import { directGeminiRequest } from './gemini-direct';
+import { directGeminiRequest, FALLBACK_MODELS as GEMINI_FALLBACK_MODELS } from './gemini-direct';
 import {
   deleteFromCloud,
   getSyncState,
@@ -2999,12 +2999,12 @@ async function sendGeminiQuestion(e: Event) {
   geminiStreamController = controller;
   // Si la conexión se cuelga (sin respuesta inicial o sin nuevos datos), cortamos en vez de quedarnos en "Pensando…".
   let stalled = false;
+  let attemptCtl: AbortController | null = null;
   let watchdog: ReturnType<typeof setTimeout> | undefined;
   const armWatchdog = (ms: number) => {
     clearTimeout(watchdog);
-    watchdog = setTimeout(() => { stalled = true; controller.abort(); }, ms);
+    watchdog = setTimeout(() => { stalled = true; attemptCtl?.abort(); }, ms);
   };
-  armWatchdog(90000);
   let modelTurn: { wrapper: HTMLElement; bubble: HTMLElement } | null = null;
   let answer = '';
   let finishReason = '';
@@ -3096,122 +3096,162 @@ async function sendGeminiQuestion(e: Event) {
     if (images.length) geminiConversationHadImages = true;
     geminiAttachedImage = null;
 
-    const contents = [...geminiHistory, { role: 'user' as const, parts }];
+    const baseContents = [...geminiHistory, { role: 'user' as const, parts }];
     modelTurn = createGeminiModelTurn();
-
-    const response = await requestGeminiFeature('chat-stream', {
-        contents,
-        systemInstruction: aiStyleInstruction(aiSettings),
-        model: aiSettings.model,
-        thinking: aiSettings.thinking,
-      }, controller.signal);
-
-    if (!response.ok || !response.body) {
-      let message = `Error HTTP ${response.status}`;
-      try { message = (await response.json()).error || message; } catch {}
-      throw Error(message);
-    }
-    usedModel = response.headers.get('X-Librarium-Model') || usedModel;
-    armWatchdog(60000);
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let streamError: string | null = null;
+    const turn = modelTurn;
     const messagesBox = $('#geminiMessages')!;
+    // Modelo elegido primero y después los de respaldo. Si uno falla, se corta o deja la respuesta a mitad, sigue el próximo.
+    const models = [aiSettings.model, ...GEMINI_FALLBACK_MODELS.filter((m) => m !== aiSettings.model)];
+    const failedModels: string[] = [];
+    let lastError: Error | null = null;
+    const retryNote = document.createElement('div');
+    retryNote.className = 'gemini-message system';
 
-    const processEventBlock = (block: string) => {
-      const lines = block.split('\n');
-      let eventName = 'message';
-      const dataLines: string[] = [];
-      for (const line of lines) {
-        if (line.startsWith('event:')) eventName = line.slice(6).trim();
-        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+    for (let i = 0; i < models.length; i++) {
+      const model = models[i];
+      if (i > 0) {
+        retryNote.textContent = `${failedModels.at(-1)} falló; ${answer.trim() ? 'continuando' : 'reintentando'} con ${model}…`;
+        turn.wrapper.append(retryNote);
       }
-      if (!dataLines.length) return;
-      let payload: any = {};
-      try {
-        payload = JSON.parse(dataLines.join('\n'));
-      } catch {
-        return;
-      }
+      const attempt = new AbortController();
+      attemptCtl = attempt;
+      const onUserAbort = () => attempt.abort();
+      controller.signal.addEventListener('abort', onUserAbort, { once: true });
+      stalled = false;
+      finishReason = '';
+      let streamError: string | null = null;
 
-      if (eventName === 'meta' && payload.model) {
-        usedModel = payload.model;
-      } else if (eventName === 'chunk' && payload.text) {
-        answer += payload.text;
-        if (modelTurn) {
-          modelTurn.bubble.innerHTML = renderGeminiMarkdown(answer);
-          messagesBox.scrollTop = messagesBox.scrollHeight;
+      const processEventBlock = (block: string) => {
+        const lines = block.split('\n');
+        let eventName = 'message';
+        const dataLines: string[] = [];
+        for (const line of lines) {
+          if (line.startsWith('event:')) eventName = line.slice(6).trim();
+          else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
         }
-      } else if (eventName === 'message' && Array.isArray(payload.candidates)) {
-        const reason = payload.candidates.map((candidate: any) => candidate.finishReason).find(Boolean);
-        if (reason) finishReason = String(reason);
-        const piece = payload.candidates
-          .flatMap((candidate: any) => candidate.content?.parts || [])
-          .filter((part: any) => !part.thought)
-          .map((part: any) => part.text || '')
-          .join('');
-        if (piece) {
-          answer += piece;
-          if (modelTurn) {
-            modelTurn.bubble.innerHTML = renderGeminiMarkdown(answer);
+        if (!dataLines.length) return;
+        let payload: any = {};
+        try {
+          payload = JSON.parse(dataLines.join('\n'));
+        } catch {
+          return;
+        }
+
+        if (eventName === 'meta' && payload.model) {
+          usedModel = payload.model;
+        } else if (eventName === 'chunk' && payload.text) {
+          answer += payload.text;
+          turn.bubble.innerHTML = renderGeminiMarkdown(answer);
+          messagesBox.scrollTop = messagesBox.scrollHeight;
+        } else if (eventName === 'message' && Array.isArray(payload.candidates)) {
+          const reason = payload.candidates.map((candidate: any) => candidate.finishReason).find(Boolean);
+          if (reason) finishReason = String(reason);
+          const piece = payload.candidates
+            .flatMap((candidate: any) => candidate.content?.parts || [])
+            .filter((part: any) => !part.thought)
+            .map((part: any) => part.text || '')
+            .join('');
+          if (piece) {
+            answer += piece;
+            turn.bubble.innerHTML = renderGeminiMarkdown(answer);
             messagesBox.scrollTop = messagesBox.scrollHeight;
           }
+        } else if (eventName === 'message' && payload.promptFeedback?.blockReason && !answer.trim()) {
+          streamError = `La consulta fue bloqueada por Gemini (${payload.promptFeedback.blockReason}).`;
+        } else if (eventName === 'message' && payload.error) {
+          streamError = payload.error.message || 'Error al generar respuesta.';
+        } else if (eventName === 'done') {
+          if (payload.text && !answer.trim()) answer = String(payload.text);
+          if (payload.model) usedModel = payload.model;
+        } else if (eventName === 'error') {
+          streamError = payload.error || 'Error al generar respuesta.';
         }
-      } else if (eventName === 'message' && payload.promptFeedback?.blockReason && !answer.trim()) {
-        streamError = `La consulta fue bloqueada por Gemini (${payload.promptFeedback.blockReason}).`;
-      } else if (eventName === 'message' && payload.error) {
-        streamError = payload.error.message || 'Error al generar respuesta.';
-      } else if (eventName === 'done') {
-        if (payload.text && !answer.trim()) answer = String(payload.text);
-        if (payload.model) usedModel = payload.model;
-      } else if (eventName === 'error') {
-        streamError = payload.error || 'Error al generar respuesta.';
-      }
-    };
+      };
 
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      armWatchdog(45000);
-      // Normalizamos sobre el buffer completo: un "\r\n" partido entre dos pedazos no se reconocía y el mensaje quedaba trabado.
-      buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n');
-      const blocks = buffer.split('\n\n');
-      buffer = blocks.pop() || '';
-      for (const block of blocks) {
-        if (block.trim()) processEventBlock(block);
+      try {
+        armWatchdog(i === 0 ? 60000 : 45000);
+        // Si ya hay texto parcial de un intento anterior, el nuevo modelo continúa desde ahí.
+        const attemptContents = answer.trim()
+          ? [
+              ...baseContents,
+              { role: 'model' as const, parts: [{ text: answer.trim() }] },
+              { role: 'user' as const, parts: [{ text: 'Continuá tu respuesta anterior exactamente desde donde quedó, sin repetir lo ya dicho ni agregar introducciones.' }] },
+            ]
+          : baseContents;
+        const response = await requestGeminiFeature('chat-stream', {
+          contents: attemptContents,
+          systemInstruction: aiStyleInstruction(aiSettings),
+          model,
+          thinking: aiSettings.thinking,
+          singleModel: true,
+        }, attempt.signal);
+
+        if (!response.ok || !response.body) {
+          let message = `Error HTTP ${response.status}`;
+          try { message = (await response.json()).error || message; } catch {}
+          const httpError: any = Error(message);
+          httpError.status = response.status;
+          throw httpError;
+        }
+        usedModel = response.headers.get('X-Librarium-Model') || model;
+        armWatchdog(60000);
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          armWatchdog(45000);
+          // Normalizamos sobre el buffer completo: un "\r\n" partido entre dos pedazos no se reconocía y el mensaje quedaba trabado.
+          buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n');
+          const blocks = buffer.split('\n\n');
+          buffer = blocks.pop() || '';
+          for (const block of blocks) {
+            if (block.trim()) processEventBlock(block);
+          }
+        }
+        if (buffer.trim()) processEventBlock(buffer);
+        if (streamError && !answer.trim()) throw Error(streamError);
+        if (!answer.trim()) throw Error('Gemini no devolvió texto.');
+        // Una respuesta completa siempre termina con finishReason STOP.
+        if (finishReason === 'STOP') { lastError = null; break; }
+        lastError = Error('La respuesta quedó incompleta.');
+        if (finishReason === 'SAFETY' || finishReason === 'RECITATION') break;
+      } catch (err: any) {
+        if (controller.signal.aborted) throw err; // el usuario apretó "Detener" o cerró el chat
+        lastError = stalled ? Error('La IA tardó demasiado en responder.') : err;
+        // Errores de clave o de pedido no se arreglan cambiando de modelo.
+        if ([400, 401, 403].includes(err?.status)) break;
+      } finally {
+        controller.signal.removeEventListener('abort', onUserAbort);
+        clearTimeout(watchdog);
       }
+      failedModels.push(model);
     }
-    if (buffer.trim()) processEventBlock(buffer);
-    if (streamError && !answer.trim()) throw Error(streamError);
 
     const finalAnswer = answer.trim();
-    if (!finalAnswer) throw Error('Gemini no devolvió texto.');
-    modelTurn.bubble.innerHTML = renderGeminiMarkdown(finalAnswer);
-    attachGeminiMessageActions(modelTurn.wrapper, finalAnswer);
-    // Una respuesta completa siempre termina con finishReason STOP. Si falta o es otro, quedó a mitad.
-    if (finishReason !== 'STOP') markGeminiIncomplete(modelTurn.wrapper, finishReason);
-    geminiHistory = [...contents, { role: 'model', parts: [{ text: finalAnswer }] }];
+    if (!finalAnswer) throw lastError || Error('Gemini no devolvió texto.');
+    retryNote.remove();
+    turn.bubble.innerHTML = renderGeminiMarkdown(finalAnswer);
+    attachGeminiMessageActions(turn.wrapper, finalAnswer);
+    if (finishReason !== 'STOP') markGeminiIncomplete(turn.wrapper, finishReason || 'STALLED');
+    geminiHistory = [...baseContents, { role: 'model', parts: [{ text: finalAnswer }] }];
     geminiExtraContext = '';
     addGeminiMessage(
       'system',
-      usedModel !== aiSettings.model
-        ? `Modelo preferido ${aiSettings.model} no disponible; respondió ${usedModel} · razonamiento ${thinkingLabel(aiSettings.thinking)}.`
+      failedModels.length
+        ? `Respondió ${usedModel} porque ${failedModels.join(', ')} falló · razonamiento ${thinkingLabel(aiSettings.thinking)}.`
         : `Modelo ${usedModel} · razonamiento ${thinkingLabel(aiSettings.thinking)}.`,
     );
     await saveGeminiHistory();
   } catch (err: any) {
-    if (err?.name === 'AbortError' && stalled && !answer.trim()) {
-      modelTurn?.wrapper.remove();
-      addGeminiMessage('error', 'La IA tardó demasiado en responder. Probá de nuevo; si pasa seguido, elegí un nivel de razonamiento más bajo en Ajustes de IA.');
-    } else if (err?.name === 'AbortError') {
+    if (err?.name === 'AbortError') {
       const partial = answer.trim();
       if (partial && modelTurn) {
         modelTurn.bubble.innerHTML = renderGeminiMarkdown(partial);
         attachGeminiMessageActions(modelTurn.wrapper, partial);
-        if (stalled) markGeminiIncomplete(modelTurn.wrapper, 'STALLED');
-        addGeminiMessage('system', stalled ? 'La respuesta se cortó por falta de datos.' : 'Respuesta detenida.');
+        addGeminiMessage('system', 'Respuesta detenida.');
       } else {
         modelTurn?.wrapper.remove();
         addGeminiMessage('system', 'Consulta detenida.');
