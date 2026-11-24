@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#48382d"><meta name="description" content="Tu biblioteca personal y cuaderno de lectura">
+<link rel="manifest" href="manifest.json"><link rel="stylesheet" href="css/style.css">
+<title>Librarium</title>
+</head>
+<body>
+<header class="topbar"><div class="brand"><span class="brand-mark">✦</span><div><small>TU BIBLIOTECA PERSONAL</small><h1>Librarium</h1></div></div><button id="backupBtn" class="quiet">Copia de seguridad</button></header>
+<nav class="tabs"><button class="tab active" data-view="library">Biblioteca</button><button class="tab" data-view="reading">En lectura</button><button class="tab" data-view="notebook">Cuaderno</button></nav>
+<main>
+<section id="libraryView" class="view active">
+  <div class="intro"><div><p class="eyebrow">UN LUGAR PARA TUS LECTURAS</p><h2>Tu biblioteca</h2><p class="muted">Libros, notas y descubrimientos, todo en un mismo lugar.</p></div><button id="addBookBtn" class="primary">＋ Añadir libro</button></div>
+  <div class="toolbar"><input id="bookSearch" placeholder="Buscar libros o autores…"><select id="bookFilter"><option value="all">Todos los libros</option><option value="reading">En lectura</option><option value="pending">Pendientes</option><option value="paused">Pausados</option><option value="finished">Terminados</option></select></div>
+  <div id="bookGrid" class="book-grid"></div>
+  <div id="emptyBooks" class="empty"><span>❧</span><h3>Tu biblioteca empieza acá</h3><p>Agregá tu primer libro manualmente o buscá sus datos en el catálogo.</p><button class="primary" id="emptyAdd">Añadir un libro</button></div>
+</section>
+<section id="readingView" class="view"><p class="eyebrow">CONTINUAR</p><h2>En lectura</h2><div id="readingGrid" class="book-grid"></div></section>
+<section id="notebookView" class="view"><p class="eyebrow">TUS REGISTROS</p><h2>Cuaderno de lectura</h2><p class="muted">Anotaciones de todos tus libros, ordenadas por fecha.</p><div id="journalList" class="journal-list"></div></section>
+</main>
+<footer>LIBRARIUM <span>·</span> Tu biblioteca, tu historia de lectura.</footer>
+
+<dialog id="bookDialog"><form id="bookForm" method="dialog">
+<div class="dialog-head"><div><p class="eyebrow">INCORPORAR A LA BIBLIOTECA</p><h2 id="bookDialogTitle">Añadir libro</h2></div><button type="button" class="close" data-close>×</button></div>
+<div class="choice-row"><button type="button" id="manualMode" class="choice active">Carga manual</button><button type="button" id="searchMode" class="choice">Buscar libro</button></div>
+<div id="catalogPanel" class="catalog hidden"><div class="inline"><input id="catalogQuery" placeholder="Título o autor"><button type="button" id="catalogSearch" class="secondary">Buscar</button></div><div id="catalogResults"></div></div>
+<input type="hidden" id="bookId">
+<div class="form-grid">
+<label class="wide">Título *<input id="title" required></label><label>Autor<input id="author"></label><label>Editorial<input id="publisher"></label>
+<label>Año<input id="year" type="number" min="0" max="3000"></label><label>Edición<input id="edition"></label>
+<label>ISBN<input id="isbn"></label><label>Cantidad de páginas<input id="totalPages" type="number" min="1"></label>
+<label>Página actual<input id="currentPage" type="number" min="0" value="0"></label>
+<label>Estado<select id="status"><option value="pending">Pendiente</option><option value="reading">En lectura</option><option value="paused">Pausado</option><option value="finished">Terminado</option></select></label>
+<label class="wide">Portada<input id="coverFile" type="file" accept="image/*"><small class="muted">También podés pegar una URL de portada.</small><input id="coverUrl" placeholder="https://…"></label>
+</div><div class="dialog-actions"><button type="button" class="secondary" data-close>Cancelar</button><button class="primary" type="submit">Guardar libro</button></div>
+</form></dialog>
+
+<dialog id="detailDialog"><div class="detail-wrap"><button class="close detail-close" data-close>×</button><div id="detailContent"></div></div></dialog>
+<dialog id="noteDialog"><form id="noteForm" method="dialog"><div class="dialog-head"><div><p class="eyebrow">APARATO DE NOTAS</p><h2>Importar notas finales</h2></div><button type="button" class="close" data-close>×</button></div><p class="muted">Se agregarán al libro abierto: <strong id="importBookTitle"></strong>. Pegá un JSON o seleccioná un archivo.</p><div class="json-toolbar"><span>JSON</span><button type="button" class="mini" id="copyNotesGuide">Copiar guía para un modelo</button><details class="json-help"><summary>Ver guía</summary><p>Convertí las notas finales que pego al final de este mensaje en JSON válido para importar en Librarium. Devolvé únicamente el JSON, sin Markdown ni explicaciones. Conservá fielmente los textos, números y páginas; no inventes datos. Cada nota debe tener <code>number</code> (entero) y <code>text</code> (cadena). Incluí <code>reference_page</code> solo si la nota tiene una página de referencia en el texto principal; si no la tiene, omití ese campo. Incluí <code>end_page</code> solo si conocés la página donde aparece la nota. Usá <code>read:false</code>. Escapá comillas y saltos de línea para que sea JSON válido.</p><pre>{
+  "schema_version": 1,
+  "book": {"title": "Título", "author": "Autor"},
+  "notes": [
+    {"number": 1, "reference_page": 12, "end_page": 245, "text": "Texto de la nota", "read": false},
+    {"number": 2, "end_page": 246, "text": "Nota sin página de referencia", "read": false}
+  ]
+}
+
+Título: [completar]
+Autor: [completar]
+
+Notas finales:
+[pegar aquí las notas]</pre></details></div><label>Pegar JSON<textarea id="jsonText" rows="9" placeholder='{"notes":[{"number":1,"end_page":245,"text":"Texto de la nota"}]}'></textarea></label><label>O elegir archivo JSON<input id="jsonFile" type="file" accept=".json,application/json"></label><pre id="jsonPreview" class="preview">Pegá un JSON o seleccioná un archivo…</pre><div class="dialog-actions"><button type="button" class="secondary" data-close>Cancelar</button><button class="primary" type="submit" disabled id="importNotesBtn">Importar notas</button></div></form></dialog>
+<dialog id="manualNoteDialog"><form id="manualNoteForm" method="dialog"><div class="dialog-head"><div><p class="eyebrow">APARATO DE NOTAS</p><h2>Nueva nota final</h2></div><button type="button" class="close" data-close>×</button></div><p class="muted">Libro: <strong id="manualBookTitle"></strong></p><div class="form-grid"><label>Número de nota *<input id="manualNoteNumber" type="number" min="1" step="1" required></label><label class="wide check-label"><span>¿Tiene página de referencia?</span><input id="manualHasReference" type="checkbox"> Sí, quiero indicar la página donde se cita</label><label id="manualReferenceLabel">Página de referencia<input id="manualReferencePage" type="number" min="0" step="1"></label><label>Página de la nota<input id="manualEndPage" type="number" min="0" step="1"></label><label class="wide">Texto de la nota *<textarea id="manualNoteText" rows="5" required></textarea></label></div><p id="manualNoteError" class="muted"></p><div class="dialog-actions"><button type="button" class="secondary" data-close>Cancelar</button><button class="primary" type="submit">Guardar nota</button></div></form></dialog>
+<dialog id="annotationDialog"><form id="annotationForm" method="dialog"><div class="dialog-head"><div><p class="eyebrow">CUADERNO DE LECTURA</p><h2 id="annotationTitle">Nueva anotación</h2></div><button type="button" class="close" data-close>×</button></div><input type="hidden" id="annotationBook"><label>Página<input id="annotationPage" type="number" min="0" required></label><label>Título<input id="annotationHeading" placeholder="Un título breve"></label><label>Observación<textarea id="annotationText" rows="5" placeholder="¿Qué querés conservar de esta página?"></textarea></label><label>Fotografía (opcional)<input id="annotationPhoto" type="file" accept="image/*"></label><div class="dialog-actions"><button type="button" class="secondary" data-close>Cancelar</button><button class="primary">Guardar registro</button></div></form></dialog>
+<input id="restoreFile" type="file" accept=".json,application/json" hidden>
+<script src="js/db.js"></script><script src="js/app.js"></script>
+</body></html>
+
