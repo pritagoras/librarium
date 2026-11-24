@@ -4,18 +4,19 @@ Biblioteca personal y cuaderno de lectura. Aplicación web local, con datos alma
 
 ## Requisitos
 - Windows 10/11
-- Python 3 instalado (para iniciar el servidor local)
+- Node.js 22 o superior, que incluye npm
 - Navegador moderno (Chrome o Edge recomendado)
 
 ## Inicio
 1. Extraé esta carpeta en `C:\Users\Prita\Documents\GitHub\Librarium`.
-2. Ejecutá `INSTALAR.bat` una vez.
-3. Ejecutá `INICIAR_LIBRARIUM.bat` cada vez que quieras usar la aplicación.
-4. Para cerrar el servidor, volvé a la ventana negra y presioná Ctrl+C.
+2. Instalá Node.js 22 o superior desde https://nodejs.org/ si todavía no está instalado.
+3. Ejecutá `INSTALAR.bat` una vez para instalar las dependencias.
+4. Ejecutá `INICIAR_LIBRARIUM.bat` cada vez que quieras usar la aplicación.
+5. Para cerrar el servidor, volvé a la ventana negra y presioná Ctrl+C.
 
 ## Publicar en GitHub Pages
 
-Librarium es una aplicación estática y puede publicarse en GitHub Pages sin Python. El flujo de GitHub Actions incluido despliega el contenido de este repositorio automáticamente. En GitHub, configurá **Settings → Pages → Build and deployment → Source: GitHub Actions**; luego cada cambio enviado a `main` se publica en Pages.
+Librarium puede publicarse en GitHub Pages sin instalar Node.js en el navegador. El flujo de GitHub Actions incluido despliega el contenido de este repositorio automáticamente. En GitHub, configurá **Settings → Pages → Build and deployment → Source: GitHub Actions**; luego cada cambio enviado a `main` se publica en Pages.
 
 La versión publicada guarda los datos en IndexedDB del navegador bajo el dominio de GitHub Pages. Es un almacenamiento separado del sitio local `127.0.0.1`; exportá una copia de seguridad desde la versión local y restaurala en Pages si querés llevar tus datos. Los datos no se sincronizan entre dispositivos. El código del sitio queda visible para quienes puedan acceder al repositorio.
 

@@ -71,11 +71,26 @@ let geminiStreamController: AbortController | null = null;
 const AI_SETTINGS_KEY = 'librarium-ai-settings';
 const PRIVATE_GEMINI_KEY = 'librarium-private-gemini-key';
 const AI_SETTINGS_DEFAULTS: AISettings = {
-  model: 'gemini-4-hydrogen',
+  model: 'gemini-3.8-flash',
   thinking: 'auto',
+  chatModel: '',
+  chatThinking: 'inherit',
+  analysisModel: '',
+  analysisThinking: 'inherit',
+  imageModel: '',
+  imageThinking: 'inherit',
   style: 'natural',
   customStyle: '',
 };
+
+type AITaskProfile = 'chat' | 'analysis' | 'image';
+type GeminiModelChoice = { id: string; name: string; thinking: boolean };
+let availableGeminiModels: GeminiModelChoice[] = [
+  { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', thinking: true },
+  { id: 'gemini-3.5-flash-lite', name: 'Gemini 3.5 Flash-Lite', thinking: true },
+  { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', thinking: true },
+  { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview', thinking: true },
+];
 
 function getPrivateGeminiKey(): string {
   try {
@@ -655,13 +670,15 @@ async function autofillBookWithAI() {
   status.textContent = 'Buscando ficha y etiquetas sugeridas…';
 
   try {
+    const ai = getAISettingsForTask('image');
     const res = await requestGeminiFeature('book-autofill', {
         title,
         author,
         isbn,
         existingTags: getAllLibraryTags(),
         coverImage,
-        model: getAISettings().model,
+        model: ai.model,
+        thinking: ai.thinking,
       });
     const data = await res.json();
     if (!res.ok) throw Error(data.error || `Error HTTP ${res.status}`);
@@ -1002,7 +1019,7 @@ async function renderDetail() {
       statusEl.textContent = 'Armando borrador con tus citas y anotaciones…';
 
       try {
-        const ai = getAISettings();
+        const ai = getAISettingsForTask('analysis');
         const res = await requestGeminiFeature('review-draft', {
             bookTitle: activeBook.title,
             bookAuthor: activeBook.author || '',
@@ -1455,7 +1472,7 @@ async function runBookSynthesis(book: Book) {
   await renderDetail();
 
   try {
-    const aiSettings = getAISettings();
+    const aiSettings = getAISettingsForTask('analysis');
     const res = await requestGeminiFeature('book-synthesis', {
         bookTitle: book.title,
         bookAuthor: book.author || '',
@@ -1701,7 +1718,10 @@ async function transcribeQuotePhoto(index: number, button: HTMLButtonElement) {
   try {
     const [header, data] = image.split(',', 2);
     const mimeType = header.match(/data:(.*?);base64/)?.[1] || 'image/jpeg';
-    const res = await requestGeminiFeature('transcribe', { mimeType, data, model: getAISettings().model });
+    const aiSettings = getAISettingsForTask('image');
+    const res = await requestGeminiFeature('transcribe', {
+      mimeType, data, model: aiSettings.model, thinking: aiSettings.thinking,
+    });
     const result = await res.json();
     if (!res.ok) throw Error(result.error || `Error HTTP ${res.status}`);
     const transcript = String(result.text || '').trim();
@@ -1942,18 +1962,173 @@ async function renderJournal() {
 function getAISettings(): AISettings {
   try {
     const parsed = JSON.parse(localStorage.getItem(AI_SETTINGS_KEY) || '{}');
-    const model =
-      parsed.model === 'gemini-3.1-flash-lite' ? 'gemini-3.1-flash-lite' : 'gemini-4-hydrogen';
-    return { ...AI_SETTINGS_DEFAULTS, ...parsed, model };
+    const safeModel = (value: unknown, fallback: string) => {
+      const candidate = String(value || '');
+      if (candidate === 'gemini-4-hydrogen') return AI_SETTINGS_DEFAULTS.model;
+      return /^gemini-[a-z0-9.-]{1,80}$/.test(candidate) ? candidate : fallback;
+    };
+    const thinking = ['auto', 'minimal', 'low', 'medium', 'high'].includes(parsed.thinking)
+      ? parsed.thinking
+      : AI_SETTINGS_DEFAULTS.thinking;
+    const safeTaskThinking = (value: unknown): AISettings['chatThinking'] =>
+      value === 'inherit' || ['auto', 'minimal', 'low', 'medium', 'high'].includes(String(value))
+        ? value as AISettings['chatThinking']
+        : 'inherit';
+    return {
+      ...AI_SETTINGS_DEFAULTS,
+      ...parsed,
+      model: safeModel(parsed.model, AI_SETTINGS_DEFAULTS.model),
+      thinking,
+      chatModel: safeModel(parsed.chatModel, ''),
+      chatThinking: safeTaskThinking(parsed.chatThinking),
+      analysisModel: safeModel(parsed.analysisModel, ''),
+      analysisThinking: safeTaskThinking(parsed.analysisThinking),
+      imageModel: safeModel(parsed.imageModel, ''),
+      imageThinking: safeTaskThinking(parsed.imageThinking),
+    };
   } catch {
     return { ...AI_SETTINGS_DEFAULTS };
   }
 }
 
+function getAISettingsForTask(task: AITaskProfile): AISettings {
+  const settings = getAISettings();
+  const profile = task === 'chat'
+    ? { model: settings.chatModel, thinking: settings.chatThinking }
+    : task === 'analysis'
+      ? { model: settings.analysisModel, thinking: settings.analysisThinking }
+      : { model: settings.imageModel, thinking: settings.imageThinking };
+  return {
+    ...settings,
+    model: profile.model || settings.model,
+    thinking: profile.thinking === 'inherit' ? settings.thinking : profile.thinking,
+  };
+}
+
+function fillModelSelect(select: HTMLSelectElement, selectedValue = select.value) {
+  const inheritedLabel = select.dataset.inheritOption;
+  select.replaceChildren();
+  if (inheritedLabel) {
+    const inherited = document.createElement('option');
+    inherited.value = '';
+    inherited.textContent = inheritedLabel;
+    select.append(inherited);
+  }
+  for (const model of availableGeminiModels) {
+    const option = document.createElement('option');
+    option.value = model.id;
+    option.textContent = `${model.name} · ${model.id}`;
+    select.append(option);
+  }
+  if (selectedValue && !availableGeminiModels.some((model) => model.id === selectedValue)) {
+    const saved = document.createElement('option');
+    saved.value = selectedValue;
+    saved.textContent = `${selectedValue} · no aparece en la última lista`;
+    select.append(saved);
+  }
+  select.value = selectedValue;
+  if (select.value !== selectedValue) select.value = inheritedLabel ? '' : availableGeminiModels[0]?.id || '';
+}
+
+function populateAIModelSelects() {
+  const ai = getAISettings();
+  const selections: Record<string, string> = {
+    aiModel: ai.model,
+    aiChatModel: ai.chatModel,
+    aiAnalysisModel: ai.analysisModel,
+    aiImageModel: ai.imageModel,
+  };
+  document.querySelectorAll<HTMLSelectElement>('[data-model-select], #aiModel').forEach((select) => {
+    fillModelSelect(select, selections[select.id] ?? select.value);
+  });
+}
+
+function supportedThinkingLevels(modelId: string): AISettings['thinking'][] {
+  if (/^gemini-[34](?:[.-])/.test(modelId)) {
+    const levels: AISettings['thinking'][] = ['auto', 'low', 'medium', 'high'];
+    if (/flash-lite|3\.(?:6|5)-flash|3-flash-preview/i.test(modelId)) levels.splice(1, 0, 'minimal');
+    return levels;
+  }
+  return ['auto'];
+}
+
+function updateThinkingSelect(select: HTMLSelectElement, modelId: string, selectedValue: string) {
+  const inheritedLabel = select.dataset.inheritOption;
+  const levels = supportedThinkingLevels(modelId);
+  select.replaceChildren();
+  if (inheritedLabel) {
+    const inherited = document.createElement('option');
+    inherited.value = 'inherit';
+    inherited.textContent = inheritedLabel;
+    select.append(inherited);
+  }
+  for (const value of levels) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = ({ auto: 'Automático', minimal: 'Mínimo', low: 'Bajo', medium: 'Medio', high: 'Alto' })[value];
+    select.append(option);
+  }
+  select.value = levels.includes(selectedValue as AISettings['thinking']) || selectedValue === 'inherit'
+    ? selectedValue
+    : inheritedLabel ? 'inherit' : 'auto';
+}
+
+function syncAIThinkingOptions() {
+  const pairs = [
+    ['aiModel', 'aiThinking', false],
+    ['aiChatModel', 'aiChatThinking', true],
+    ['aiAnalysisModel', 'aiAnalysisThinking', true],
+    ['aiImageModel', 'aiImageThinking', true],
+  ] as const;
+  for (const [modelId, thinkingId, isTask] of pairs) {
+    const model = $<HTMLSelectElement>(`#${modelId}`);
+    const thinking = $<HTMLSelectElement>(`#${thinkingId}`);
+    if (!model || !thinking) continue;
+    const taskModel = isTask && !model.value ? $<HTMLSelectElement>('#aiModel')?.value || '' : model.value;
+    updateThinkingSelect(thinking, taskModel, thinking.value || (isTask ? 'inherit' : 'auto'));
+  }
+}
+
+function thinkingLabel(level: AISettings['thinking']) {
+  return ({ auto: 'automático', minimal: 'mínimo', low: 'bajo', medium: 'medio', high: 'alto' })[level];
+}
+
+async function refreshAIModels() {
+  const status = $('#aiSettingsStatus');
+  const button = $<HTMLButtonElement>('#refreshAIModels');
+  if (!getPrivateGeminiKey()) {
+    if (status) status.textContent = 'Guardá tu API key personal para consultar los modelos habilitados para tu clave.';
+    return;
+  }
+  if (button) button.disabled = true;
+  if (status) status.textContent = 'Consultando los modelos disponibles para tu clave…';
+  try {
+    const response = await requestGeminiFeature('list-models', {});
+    const result = await response.json();
+    if (!response.ok) throw Error(result.error || `Error HTTP ${response.status}`);
+    const models = Array.isArray(result.models) ? result.models as GeminiModelChoice[] : [];
+    if (!models.length) throw Error('Google no devolvió modelos compatibles con generateContent.');
+    availableGeminiModels = models;
+    populateAIModelSelects();
+    syncAIThinkingOptions();
+    if (status) status.textContent = `${models.length} modelos compatibles disponibles para tu clave. La lista viene directamente de Google.`;
+  } catch (error: any) {
+    if (status) status.textContent = `No se pudo actualizar la lista: ${error.message || 'error de conexión'}`;
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 function saveAISettings() {
   const settings: AISettings = {
-    model: ($<HTMLSelectElement>('#aiModel')?.value as AISettings['model']) || 'gemini-4-hydrogen',
+    model: $<HTMLSelectElement>('#aiModel')?.value || AI_SETTINGS_DEFAULTS.model,
     thinking: ($<HTMLSelectElement>('#aiThinking')?.value as AISettings['thinking']) || 'auto',
+    chatModel: $<HTMLSelectElement>('#aiChatModel')?.value || '',
+    chatThinking: ($<HTMLSelectElement>('#aiChatThinking')?.value as AISettings['chatThinking']) || 'inherit',
+    analysisModel: $<HTMLSelectElement>('#aiAnalysisModel')?.value || '',
+    analysisThinking: ($<HTMLSelectElement>('#aiAnalysisThinking')?.value as AISettings['analysisThinking']) || 'inherit',
+    imageModel: $<HTMLSelectElement>('#aiImageModel')?.value || '',
+    imageThinking: ($<HTMLSelectElement>('#aiImageThinking')?.value as AISettings['imageThinking']) || 'inherit',
     style: ($<HTMLSelectElement>('#aiStyle')?.value as AISettings['style']) || 'natural',
     customStyle: ($<HTMLTextAreaElement>('#aiCustomStyle')?.value || '').trim().slice(0, 600),
   };
@@ -1964,6 +2139,7 @@ function saveAISettings() {
     $('#aiSettingsStatus')!.textContent = 'No se pudieron guardar las preferencias.';
   }
   $('#aiCustomStyleWrap')?.classList.toggle('hidden', settings.style !== 'custom');
+  syncAIThinkingOptions();
 }
 
 function aiStyleInstruction(settings = getAISettings()): string {
@@ -2022,15 +2198,27 @@ function initSettings() {
   const ai = getAISettings();
   const privateKeyInput = $<HTMLInputElement>('#privateGeminiKeyInput');
   const privateKeyStatus = $('#privateGeminiKeyStatus');
+  populateAIModelSelects();
   ($<HTMLSelectElement>('#aiModel')!).value = ai.model;
   ($<HTMLSelectElement>('#aiThinking')!).value = ai.thinking;
+  ($<HTMLSelectElement>('#aiChatModel')!).value = ai.chatModel;
+  ($<HTMLSelectElement>('#aiChatThinking')!).value = ai.chatThinking;
+  ($<HTMLSelectElement>('#aiAnalysisModel')!).value = ai.analysisModel;
+  ($<HTMLSelectElement>('#aiAnalysisThinking')!).value = ai.analysisThinking;
+  ($<HTMLSelectElement>('#aiImageModel')!).value = ai.imageModel;
+  ($<HTMLSelectElement>('#aiImageThinking')!).value = ai.imageThinking;
+  syncAIThinkingOptions();
   ($<HTMLSelectElement>('#aiStyle')!).value = ai.style;
   ($<HTMLTextAreaElement>('#aiCustomStyle')!).value = ai.customStyle;
   $('#aiCustomStyleWrap')?.classList.toggle('hidden', ai.style !== 'custom');
 
-  ['#aiModel', '#aiThinking', '#aiStyle'].forEach((selector) =>
-    $(selector)?.addEventListener('change', saveAISettings),
+  ['#aiModel', '#aiThinking', '#aiChatModel', '#aiChatThinking', '#aiAnalysisModel', '#aiAnalysisThinking', '#aiImageModel', '#aiImageThinking', '#aiStyle'].forEach((selector) =>
+    $(selector)?.addEventListener('change', () => {
+      syncAIThinkingOptions();
+      saveAISettings();
+    }),
   );
+  $('#refreshAIModels')?.addEventListener('click', () => void refreshAIModels());
   $('#aiCustomStyle')?.addEventListener('input', saveAISettings);
 
   if (privateKeyStatus) {
@@ -2048,6 +2236,7 @@ function initSettings() {
       localStorage.setItem(PRIVATE_GEMINI_KEY, key);
       if (privateKeyInput) privateKeyInput.value = '';
       if (privateKeyStatus) privateKeyStatus.textContent = 'Clave guardada solo en este navegador. La IA usará conexiones directas con Google.';
+      void refreshAIModels();
     } catch {
       if (privateKeyStatus) privateKeyStatus.textContent = 'No se pudo guardar la clave en el almacenamiento local de este navegador.';
     }
@@ -2649,7 +2838,10 @@ async function sendGeminiQuestion(e: Event) {
   button.textContent = 'Respondiendo…';
   stopBtn?.classList.remove('hidden');
   actionsWrap?.classList.add('streaming');
-  const aiSettings = getAISettings();
+  const imageConversation = Boolean(
+    geminiAttachedImage || geminiConversationHadImages || geminiItem?.entry?.photo || geminiItem?.quote?.photos?.length,
+  );
+  const aiSettings = getAISettingsForTask(imageConversation ? 'image' : 'chat');
   addGeminiMessage('user', question);
   qInput.value = '';
 
@@ -2829,9 +3021,12 @@ async function sendGeminiQuestion(e: Event) {
     attachGeminiMessageActions(modelTurn.wrapper, finalAnswer);
     geminiHistory = [...contents, { role: 'model', parts: [{ text: finalAnswer }] }];
     geminiExtraContext = '';
-    if (usedModel && usedModel !== aiSettings.model) {
-      addGeminiMessage('system', `Respondió ${usedModel}; tu modelo preferido estaba saturado.`);
-    }
+    addGeminiMessage(
+      'system',
+      usedModel !== aiSettings.model
+        ? `Modelo preferido ${aiSettings.model} no disponible; respondió ${usedModel} · razonamiento ${thinkingLabel(aiSettings.thinking)}.`
+        : `Modelo ${usedModel} · razonamiento ${thinkingLabel(aiSettings.thinking)}.`,
+    );
     await saveGeminiHistory();
   } catch (err: any) {
     if (err?.name === 'AbortError') {
@@ -3451,18 +3646,24 @@ function wireEvents() {
     if (!geminiDialog) return;
     const expanded = geminiDialog.classList.toggle('expanded');
     expandGeminiButton.setAttribute('aria-expanded', String(expanded));
-    expandGeminiButton.setAttribute('aria-label', expanded ? 'Restaurar tamaño de ventana' : 'Ampliar conversación');
-    expandGeminiButton.title = expanded ? 'Restaurar tamaño de ventana' : 'Ampliar conversación';
+    expandGeminiButton.setAttribute('aria-label', expanded ? 'Restaurar tamaño del chat' : 'Ampliar este chat a pantalla completa');
+    expandGeminiButton.title = expanded ? 'Restaurar tamaño del chat' : 'Ampliar este chat a pantalla completa';
     expandGeminiButton.textContent = expanded ? '⤢' : '⛶';
+    if (expanded) {
+      requestAnimationFrame(() => {
+        const messages = $<HTMLDivElement>('#geminiMessages');
+        if (messages) messages.scrollTop = messages.scrollHeight;
+      });
+    }
   });
   geminiDialog?.addEventListener('close', () => {
     geminiStreamController?.abort();
     geminiAttachedImage = null;
     geminiDialog.classList.remove('expanded');
     expandGeminiButton?.setAttribute('aria-expanded', 'false');
-    expandGeminiButton?.setAttribute('aria-label', 'Ampliar conversación');
+    expandGeminiButton?.setAttribute('aria-label', 'Ampliar este chat a pantalla completa');
     if (expandGeminiButton) {
-      expandGeminiButton.title = 'Ampliar conversación';
+      expandGeminiButton.title = 'Ampliar este chat a pantalla completa';
       expandGeminiButton.textContent = '⛶';
     }
   });

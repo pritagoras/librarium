@@ -117,9 +117,17 @@ export interface MediaItem {
   createdAt?: string;
 }
 
+export type AIThinking = 'auto' | 'minimal' | 'low' | 'medium' | 'high';
+
 export interface AISettings {
-  model: 'gemini-4-hydrogen' | 'gemini-3.1-flash-lite';
-  thinking: 'auto' | 'low' | 'medium' | 'high';
+  model: string;
+  thinking: AIThinking;
+  chatModel: string;
+  chatThinking: 'inherit' | AIThinking;
+  analysisModel: string;
+  analysisThinking: 'inherit' | AIThinking;
+  imageModel: string;
+  imageThinking: 'inherit' | AIThinking;
   style: 'natural' | 'concise' | 'detailed' | 'socratic' | 'custom';
   customStyle: string;
 }

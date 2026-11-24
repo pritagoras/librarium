@@ -404,20 +404,48 @@ Notas finales:
         <p class="muted private-key-privacy">La clave queda en el almacenamiento local de este navegador, sin cifrar; no se sube a Librarium, no se sincroniza ni se incluye en las copias de seguridad. Las consultas van directamente a Google, que recibe la clave y el contenido enviado. El historial de conversaciones puede sincronizarse con tu cuenta de Librarium si activaste la sincronización. Librarium no incluye una clave global: sin tu clave personal, las funciones de IA quedan desactivadas.</p>
       </div>
       <div class="ai-settings-grid">
-        <label>Modelo preferido
+        <label>Modelo general
           <select id="aiModel">
-            <option value="gemini-4-hydrogen">Gemini 4 Flash · completo y análisis</option>
-            <option value="gemini-3.1-flash-lite">Gemini Flash-Lite · más ágil</option>
+            <option value="gemini-3.8-flash">Gemini 3.8 Flash</option>
           </select>
         </label>
         <label>Razonamiento
           <select id="aiThinking">
             <option value="auto">Automático</option>
+            <option value="minimal">Mínimo · respuestas simples</option>
             <option value="low">Bajo · más rápido</option>
             <option value="medium">Medio · equilibrado</option>
             <option value="high">Alto · más análisis</option>
           </select>
         </label>
+        <div class="ai-model-refresh">
+          <button type="button" id="refreshAIModels" class="mini">Actualizar modelos de mi clave</button>
+          <span class="muted">La lista se consulta directamente a Google con tu clave.</span>
+        </div>
+        <details class="ai-task-profiles">
+          <summary>Personalizar modelo por tarea</summary>
+          <p class="muted">Si no elegís un modelo o nivel, se usa la preferencia general.</p>
+          <div class="ai-task-profile-grid">
+            <label>Chat y preguntas
+              <select id="aiChatModel" data-model-select data-inherit-option="Modelo general"></select>
+            </label>
+            <label>Razonamiento del chat
+              <select id="aiChatThinking" data-thinking-select data-inherit-option="Nivel general"></select>
+            </label>
+            <label>Análisis y borradores
+              <select id="aiAnalysisModel" data-model-select data-inherit-option="Modelo general"></select>
+            </label>
+            <label>Razonamiento del análisis
+              <select id="aiAnalysisThinking" data-thinking-select data-inherit-option="Nivel general"></select>
+            </label>
+            <label>Fotos, fichas y lectura de texto
+              <select id="aiImageModel" data-model-select data-inherit-option="Modelo general"></select>
+            </label>
+            <label>Razonamiento de imágenes
+              <select id="aiImageThinking" data-thinking-select data-inherit-option="Nivel general"></select>
+            </label>
+          </div>
+        </details>
         <label>Estilo de respuesta
           <select id="aiStyle">
             <option value="natural">Claro y natural</option>
