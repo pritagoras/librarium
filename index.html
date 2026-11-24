@@ -31,6 +31,11 @@
 
 <main>
   <section id="libraryView" class="view active">
+    <button type="button" id="aiConvsBanner" class="ai-convs-banner hidden" aria-haspopup="dialog">
+      <span class="ai-convs-icon" aria-hidden="true">💬</span>
+      <span class="ai-convs-text"><strong>Tus conversaciones con la IA</strong><small id="aiConvsSummary"></small></span>
+      <span class="ai-convs-chevron" aria-hidden="true">›</span>
+    </button>
     <div class="library-bar">
       <input id="bookSearch" type="search" placeholder="Buscar libros, autores o etiquetas…" aria-label="Buscar libros, autores o etiquetas">
       <button type="button" id="toggleFiltersBtn" class="quiet library-filter-btn" aria-expanded="false" aria-controls="libraryFilters">Filtros</button>
@@ -512,6 +517,20 @@ Notas finales:
       </form>
       <p class="gemini-footnote">Revisá las respuestas de la IA: pueden contener errores.</p>
     </div>
+  </section>
+</dialog>
+
+<dialog id="aiConvsDialog" class="ai-convs-dialog">
+  <section class="ai-convs-shell">
+    <div class="ai-convs-topbar">
+      <div>
+        <p class="eyebrow">ASISTENTE DE LECTURA</p>
+        <h2>Conversaciones con la IA</h2>
+      </div>
+      <button type="button" class="close" data-close aria-label="Cerrar">×</button>
+    </div>
+    <input id="aiConvsSearch" type="search" placeholder="Buscar por libro, cita o texto de la charla…" aria-label="Buscar en las conversaciones">
+    <div id="aiConvsList" class="ai-convs-list"></div>
   </section>
 </dialog>
 
