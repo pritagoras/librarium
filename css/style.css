@@ -186,3 +186,21 @@ main{padding:20px clamp(16px,5vw,40px) 64px}
 :root[data-theme="dark"] .account-card{background:#292b28}
 @media(max-width:620px){.content-heading-actions{width:100%}.content-heading-actions button{flex:1}.book-synthesis-card{padding:16px}}
 
+/* Danger Actions & In-App Confirmation Dialog */
+.danger-btn{padding:10px 14px;min-height:40px;border:1px solid #b9675c88;border-radius:7px;background:transparent;color:#9d3c32;font-size:13px;font-weight:600;transition:background .15s,border-color .15s}
+.danger-btn:hover{background:#b9675c18;border-color:#9d3c32}
+.danger-btn:disabled{opacity:.6;cursor:wait}
+.danger-solid{padding:12px 18px;border-radius:7px;font-weight:600;background:#9d3c32;color:#fffaf2}
+.danger-solid:hover{background:#822f26}
+:root[data-theme="dark"] .danger-btn{color:#e6897f;border-color:#b9675c77}
+:root[data-theme="dark"] .danger-btn:hover{background:#b9675c26;border-color:#e6897f}
+:root[data-theme="dark"] .danger-solid{background:#a3453b;color:#fffaf2}
+:root[data-theme="dark"] .danger-solid:hover{background:#b85247}
+
+.confirm-dialog{width:min(440px,calc(100% - 24px))}
+.confirm-shell{padding:24px;display:flex;flex-direction:column;gap:12px}
+.confirm-shell .dialog-head h2{font-size:24px}
+.confirm-shell #confirmMessage{margin:0}
+.confirm-shell .dialog-actions{margin-top:8px}
+@media(max-width:620px){.confirm-shell{padding:20px 18px}}
+

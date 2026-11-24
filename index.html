@@ -460,6 +460,23 @@ Notas finales:
   </section>
 </dialog>
 
+<dialog id="confirmDialog" class="confirm-dialog">
+  <div class="confirm-shell">
+    <div class="dialog-head">
+      <div>
+        <p class="eyebrow" id="confirmEyebrow">CONFIRMAR</p>
+        <h2 id="confirmTitle">¿Continuar?</h2>
+      </div>
+      <button type="button" class="close" data-close aria-label="Cerrar">×</button>
+    </div>
+    <p id="confirmMessage" class="muted"></p>
+    <div class="dialog-actions">
+      <button type="button" class="secondary" id="confirmCancelBtn">Cancelar</button>
+      <button type="button" class="primary" id="confirmOkBtn">Confirmar</button>
+    </div>
+  </div>
+</dialog>
+
 <input id="restoreFile" type="file" accept=".json,application/json" hidden>
 <script type="module" src="/src/main.ts"></script>
 </body>

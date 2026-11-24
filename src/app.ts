@@ -97,6 +97,50 @@ const fileData = (f: File): Promise<string> =>
     r.readAsDataURL(f);
   });
 
+function showConfirmDialog(options: {
+  eyebrow?: string;
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  danger?: boolean;
+  noticeOnly?: boolean;
+}): Promise<boolean> {
+  return new Promise((resolve) => {
+    const dlg = $<HTMLDialogElement>('#confirmDialog');
+    if (!dlg) {
+      resolve(false);
+      return;
+    }
+    $('#confirmEyebrow')!.textContent =
+      options.eyebrow || (options.noticeOnly ? 'AVISO' : 'CONFIRMAR');
+    $('#confirmTitle')!.textContent = options.title;
+    $('#confirmMessage')!.textContent = options.message;
+    const cancelBtn = $<HTMLButtonElement>('#confirmCancelBtn')!;
+    const okBtn = $<HTMLButtonElement>('#confirmOkBtn')!;
+    cancelBtn.textContent = options.cancelLabel || 'Cancelar';
+    cancelBtn.classList.toggle('hidden', Boolean(options.noticeOnly));
+    okBtn.textContent =
+      options.confirmLabel || (options.noticeOnly ? 'Entendido' : 'Confirmar');
+    okBtn.className = options.danger ? 'danger-solid' : 'primary';
+
+    let settled = false;
+    const finish = (result: boolean) => {
+      if (settled) return;
+      settled = true;
+      dlg.removeEventListener('close', onClose);
+      if (dlg.open) dlg.close();
+      resolve(result);
+    };
+    const onClose = () => finish(false);
+    dlg.addEventListener('close', onClose, { once: true });
+    cancelBtn.onclick = () => finish(false);
+    okBtn.onclick = () => finish(true);
+    if (!dlg.open) dlg.showModal();
+    okBtn.focus();
+  });
+}
+
 function parseTagsInput(raw: string): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -772,7 +816,7 @@ async function renderDetail() {
       </section>
       <section class="book-settings-section danger-zone">
         <p class="eyebrow">LIBRO</p>
-        <button class="mini" id="deleteBook">Eliminar libro y sus registros</button>
+        <button type="button" class="danger-btn" id="deleteBook">Eliminar libro y sus registros</button>
       </section>`;
   }
 
@@ -1037,7 +1081,14 @@ async function renderDetail() {
 
   $$('[data-delete-note]').forEach((x) => {
     x.onclick = async () => {
-      if (confirm('¿Eliminar esta nota?')) {
+      const ok = await showConfirmDialog({
+        eyebrow: 'NOTA FINAL',
+        title: '¿Eliminar esta nota?',
+        message: 'La nota y su conversación con la IA se borrarán de este libro.',
+        confirmLabel: 'Eliminar',
+        danger: true,
+      });
+      if (ok) {
         const noteId = x.dataset.deleteNote!;
         await deleteFromCloud('notes', noteId);
         await deleteFromCloud('conversations', `note__${noteId}`);
@@ -1080,7 +1131,14 @@ async function renderDetail() {
 
   $$('[data-delete-entry]').forEach((x) => {
     x.onclick = async () => {
-      if (confirm('¿Eliminar este registro?')) {
+      const ok = await showConfirmDialog({
+        eyebrow: 'ANOTACIÓN',
+        title: '¿Eliminar este registro?',
+        message: 'Se eliminará la anotación junto con su foto si tuviera una.',
+        confirmLabel: 'Eliminar',
+        danger: true,
+      });
+      if (ok) {
         const entryId = x.dataset.deleteEntry!;
         await deleteFromCloud('entries', entryId);
         await deleteFromCloud('conversations', `entry__${entryId}`);
@@ -1090,7 +1148,19 @@ async function renderDetail() {
   });
 
   $('#deleteBook')?.addEventListener('click', async () => {
-    if (!confirm('¿Eliminar el libro y todos sus registros?')) return;
+    const ok = await showConfirmDialog({
+      eyebrow: 'ELIMINAR LIBRO',
+      title: `¿Eliminar «${b.title}»?`,
+      message: 'Se borrarán el libro y todas sus notas, anotaciones, citas y reseñas guardadas.',
+      confirmLabel: 'Sí, eliminar',
+      danger: true,
+    });
+    if (!ok) return;
+    const btn = $<HTMLButtonElement>('#deleteBook');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Eliminando…';
+    }
     for (const n of notes) {
       await deleteFromCloud('notes', n.id);
       await deleteFromCloud('conversations', `note__${n.id}`);
@@ -1108,6 +1178,7 @@ async function renderDetail() {
     }
     await deleteFromCloud('conversations', `book__${b.id}`);
     await deleteFromCloud('books', b.id);
+    activeBook = null;
     books = await all<Book>('books');
     render();
     $<HTMLDialogElement>('#detailDialog')?.close();
@@ -1151,7 +1222,13 @@ async function runBookSynthesis(book: Book) {
   });
 
   if (items.length < 2) {
-    alert('Necesitás al menos 2 citas, anotaciones o notas comentadas en este libro para generar el mapa de conexiones.');
+    await showConfirmDialog({
+      eyebrow: 'SÍNTESIS LITERARIA',
+      title: 'Falta material para analizar',
+      message:
+        'Necesitás al menos 2 citas, anotaciones o notas comentadas en este libro para generar el mapa de conexiones.',
+      noticeOnly: true,
+    });
     return;
   }
 
@@ -1190,7 +1267,12 @@ async function runBookSynthesis(book: Book) {
 
     await pushAnalysisToCloud(analysisRecord);
   } catch (err: any) {
-    alert(`No se pudo completar el análisis del libro: ${err?.message || err}`);
+    await showConfirmDialog({
+      eyebrow: 'SÍNTESIS LITERARIA',
+      title: 'No se pudo completar el análisis',
+      message: String(err?.message || err),
+      noticeOnly: true,
+    });
   } finally {
     isAnalyzingBook = false;
     await renderDetail();
@@ -1311,7 +1393,15 @@ function bindQuoteActions(container: HTMLElement) {
     }
     if (remove) {
       const quote = await get<Quote>('quotes', remove.dataset.deleteQuote!);
-      if (!quote || !confirm('¿Eliminar esta cita y sus fotos?')) return;
+      if (!quote) return;
+      const ok = await showConfirmDialog({
+        eyebrow: 'CITAS',
+        title: '¿Eliminar esta cita y sus fotos?',
+        message: 'Se borrará la cita guardada junto con su análisis y las imágenes adjuntas.',
+        confirmLabel: 'Eliminar',
+        danger: true,
+      });
+      if (!ok) return;
       await deleteFromCloud('quotes', quote.id);
       await deleteFromCloud('conversations', `quote__${quote.id}`);
       if ($<HTMLDialogElement>('#detailDialog')?.open && activeBook?.id === quote.bookId) {
@@ -1409,9 +1499,17 @@ async function transcribeQuotePhoto(index: number, button: HTMLButtonElement) {
 
     const quoteText = $<HTMLTextAreaElement>('#quoteText')!;
     const current = quoteText.value.trim();
-    if (current && !confirm('¿Reemplazar el texto que ya escribiste por la transcripción?')) {
-      $('#quotePhotoStatus')!.textContent = 'Conservé el texto que ya tenías.';
-      return;
+    if (current) {
+      const ok = await showConfirmDialog({
+        eyebrow: 'TRANSCRIPCIÓN',
+        title: '¿Reemplazar el texto actual?',
+        message: 'Ya escribiste texto en esta cita. ¿Querés reemplazarlo con la transcripción extraída de la foto?',
+        confirmLabel: 'Reemplazar',
+      });
+      if (!ok) {
+        $('#quotePhotoStatus')!.textContent = 'Conservé el texto que ya tenías.';
+        return;
+      }
     }
     quoteText.value = transcript;
     quoteText.focus();
@@ -2119,7 +2217,14 @@ async function saveGeminiHistory() {
 
 async function clearGeminiHistory() {
   if (!geminiConversationId) return;
-  if (!confirm('¿Borrar el historial guardado de esta conversación?')) return;
+  const ok = await showConfirmDialog({
+    eyebrow: 'ASISTENTE DE LECTURA',
+    title: '¿Borrar historial de esta charla?',
+    message: 'Se eliminarán los mensajes guardados de esta conversación.',
+    confirmLabel: 'Borrar historial',
+    danger: true,
+  });
+  if (!ok) return;
   await deleteFromCloud('conversations', geminiConversationId);
   geminiHistory = [];
   geminiConversationHadImages = false;
@@ -2794,13 +2899,13 @@ function wireEvents() {
       if (!Array.isArray(d.books) || !Array.isArray(d.notes) || !Array.isArray(d.entries)) {
         throw Error('Copia no reconocida');
       }
-      if (
-        !confirm(
-          'Se incorporarán los datos de la copia. Los registros con el mismo ID se actualizarán. ¿Continuar?',
-        )
-      ) {
-        return;
-      }
+      const ok = await showConfirmDialog({
+        eyebrow: 'RESTAURAR COPIA',
+        title: '¿Incorporar copia de seguridad?',
+        message: 'Se incorporarán los datos de la copia. Los registros con el mismo ID se actualizarán.',
+        confirmLabel: 'Restaurar',
+      });
+      if (!ok) return;
       for (const b of d.books) {
         await pushBookToCloud({
           ...b,
@@ -2818,9 +2923,19 @@ function wireEvents() {
       }
       books = await all<Book>('books');
       render();
-      alert('Copia restaurada.');
+      await showConfirmDialog({
+        eyebrow: 'COPIA DE SEGURIDAD',
+        title: 'Copia restaurada',
+        message: 'Se incorporaron todos los libros y registros del archivo.',
+        noticeOnly: true,
+      });
     } catch (err: any) {
-      alert('No se pudo restaurar: ' + err.message);
+      await showConfirmDialog({
+        eyebrow: 'COPIA DE SEGURIDAD',
+        title: 'No se pudo restaurar',
+        message: String(err?.message || err),
+        noticeOnly: true,
+      });
     } finally {
       input.value = '';
     }
