@@ -485,34 +485,33 @@ Notas finales:
 
 <dialog id="geminiDialog" class="gemini-dialog">
   <section class="gemini-shell">
-    <div class="dialog-head">
-      <div>
+    <div class="gemini-topbar">
+      <div class="gemini-title">
         <p class="eyebrow">ASISTENTE DE LECTURA</p>
         <h2>Preguntar a la IA</h2>
       </div>
       <div class="gemini-head-actions">
-        <button type="button" id="toggleGeminiExpand" class="gemini-expand" aria-label="Ampliar conversación" aria-expanded="false" title="Ampliar conversación">⛶</button>
+        <button type="button" id="clearGeminiHistory" class="mini hidden" title="Borrar historial" aria-label="Borrar historial">Borrar</button>
         <button type="button" class="close" data-close aria-label="Cerrar">×</button>
       </div>
     </div>
-    <div id="geminiContextCard" class="gemini-context-card"></div>
-    <div class="gemini-history-tools">
-      <button type="button" id="clearGeminiHistory" class="mini hidden">Borrar historial</button>
-    </div>
+    <div id="geminiContextCard" class="gemini-context-card collapsed" role="button" tabindex="0" aria-expanded="false" title="Tocá para ver más o menos"></div>
     <div id="geminiMessages" class="gemini-messages" aria-live="polite"></div>
-    <div class="gemini-chips">
-      <button type="button" class="mini" data-ai-prompt="Explicámelo con palabras simples.">Explicámelo simple</button>
-      <button type="button" class="mini" data-ai-prompt="Resumilo en pocas líneas.">Resumilo</button>
-      <button type="button" class="mini" data-ai-prompt="¿Qué ideas o conceptos clave aparecen acá?">Ideas clave</button>
-    </div>
-    <form id="geminiForm" class="gemini-compose">
-      <textarea id="geminiQuestion" rows="3" placeholder="Preguntale algo sobre esto…" required></textarea>
-      <div class="gemini-compose-actions">
-        <button id="geminiStopBtn" class="secondary hidden" type="button">Detener</button>
-        <button id="geminiSend" class="primary" type="submit">Enviar</button>
+    <div class="gemini-bottom">
+      <div class="gemini-chips">
+        <button type="button" class="mini" data-ai-prompt="Explicámelo con palabras simples.">Explicámelo simple</button>
+        <button type="button" class="mini" data-ai-prompt="Resumilo en pocas líneas.">Resumilo</button>
+        <button type="button" class="mini" data-ai-prompt="¿Qué ideas o conceptos clave aparecen acá?">Ideas clave</button>
       </div>
-    </form>
-    <p class="gemini-footnote">Revisá las respuestas de la IA: pueden contener errores.</p>
+      <form id="geminiForm" class="gemini-compose">
+        <textarea id="geminiQuestion" rows="1" placeholder="Preguntale algo sobre esto…" required></textarea>
+        <div class="gemini-compose-actions">
+          <button id="geminiStopBtn" class="gemini-stop hidden" type="button" aria-label="Detener" title="Detener">■</button>
+          <button id="geminiSend" class="gemini-send" type="submit" aria-label="Enviar" title="Enviar">↑</button>
+        </div>
+      </form>
+      <p class="gemini-footnote">Revisá las respuestas de la IA: pueden contener errores.</p>
+    </div>
   </section>
 </dialog>
 
