@@ -23,3 +23,4 @@ dialog{border:1px solid var(--line);border-radius:12px;padding:0;background:var(
 :root[data-theme="dark"] .progress{background:#3b3d37}
 :root[data-theme="dark"] .update-notice{background:#292b28;border-color:var(--line);color:var(--ink)}
 :root[data-theme="dark"] .isbn-scanner{background:#30332e}
+@media(max-width:620px){.update-notice{bottom:calc(12px + env(safe-area-inset-bottom))}}
