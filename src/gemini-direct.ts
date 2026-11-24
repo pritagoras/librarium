@@ -254,7 +254,7 @@ export async function directGeminiRequest(
         `Cita ${i + 1}${q.page != null ? ` (p. ${q.page})` : ''}: ${String(q.text || '').slice(0, 500)}${q.analysis ? ` | Reflexión: ${String(q.analysis).slice(0, 300)}` : ''}`,
       ));
       if (Array.isArray(payload.entries)) payload.entries.slice(0, 20).forEach((e: any, i: number) => snippets.push(
-        `Anotación ${i + 1} (p. ${e.page ?? '?'}): ${e.title ? e.title + ': ' : ''}${String(e.text || '').slice(0, 400)}`,
+        `Anotación ${i + 1} (p. ${e.page ?? '?'}): ${e.title ? e.title + ': ' : ''}${String(e.text || '').slice(0, 400)}${e.comment ? ` | Comentario personal: ${String(e.comment).slice(0, 400)}` : ''}`,
       ));
       if (Array.isArray(payload.notes)) payload.notes.slice(0, 15).forEach((n: any) => { if (n.comment) snippets.push(`Comentario en nota ${n.number}: ${String(n.comment).slice(0, 350)}`); });
       const tags = Array.isArray(payload.existingTags) ? payload.existingTags.map(String).filter(Boolean).slice(0, 30) : [];

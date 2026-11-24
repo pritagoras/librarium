@@ -53,6 +53,7 @@ export interface Entry {
   page: number;
   title?: string;
   text?: string;
+  comment?: string;
   photo?: string | null;
   photoMediaId?: string | null;
   createdAt: string;

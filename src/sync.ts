@@ -390,6 +390,7 @@ export async function pushEntryToCloud(entry: Entry): Promise<Entry> {
     page: Math.min(100000, Math.max(0, Math.floor(Number(entry.page) || 0))),
     title: String(entry.title || '').slice(0, 300),
     text: String(entry.text || '').slice(0, 20000),
+    comment: String(entry.comment || '').slice(0, 10000),
     createdAt: entry.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -417,6 +418,7 @@ export async function pushEntryToCloud(entry: Entry): Promise<Entry> {
       page: normalized.page,
       title: normalized.title || '',
       text: normalized.text || '',
+      comment: normalized.comment || '',
       photoMediaId: normalized.photoMediaId || null,
       updatedAt: serverTimestamp(),
     };
@@ -874,6 +876,7 @@ function subscribeUserCollections(uid: string) {
             page: Number(data.page) || 0,
             title: data.title || '',
             text: data.text || '',
+            comment: data.comment || '',
             photoMediaId: data.photoMediaId || null,
             photo: null,
             createdAt: toIso(data.createdAt),
