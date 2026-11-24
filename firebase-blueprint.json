@@ -1,0 +1,450 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private user account profile for Librarium cloud sync.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 254
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "displayName", "email", "createdAt", "updatedAt"]
+    },
+    "Book": {
+      "title": "Book",
+      "description": "A book in the user's personal library with reading progress, tags, rating, and review.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "author": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "publisher": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "year": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "edition": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "isbn": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "totalPages": {
+          "type": "integer"
+        },
+        "currentPage": {
+          "type": "integer"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "reading", "paused", "finished"]
+        },
+        "coverUrl": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "coverMediaId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "tags": {
+          "type": "array"
+        },
+        "rating": {
+          "type": "integer"
+        },
+        "review": {
+          "type": "string",
+          "maxLength": 10000
+        },
+        "readingLog": {
+          "type": "object"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "userId", "title", "status", "totalPages", "currentPage", "tags", "createdAt", "updatedAt"]
+    },
+    "Note": {
+      "title": "Note",
+      "description": "An endnote associated with a book.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "bookId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "number": {
+          "type": "integer"
+        },
+        "section": {
+          "type": "integer"
+        },
+        "referencePage": {
+          "type": "integer"
+        },
+        "endPage": {
+          "type": "integer"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20000
+        },
+        "comment": {
+          "type": "string",
+          "maxLength": 10000
+        },
+        "read": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "userId", "bookId", "number", "section", "text", "read", "createdAt", "updatedAt"]
+    },
+    "Entry": {
+      "title": "Entry",
+      "description": "A page annotation or photo note in the reading notebook.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "bookId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "page": {
+          "type": "integer"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "photoMediaId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "userId", "bookId", "page", "createdAt", "updatedAt"]
+    },
+    "Quote": {
+      "title": "Quote",
+      "description": "A favorite book quote with optional analysis and attached photo references.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "bookId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20000
+        },
+        "chapter": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "page": {
+          "type": "integer"
+        },
+        "analysis": {
+          "type": "string",
+          "maxLength": 10000
+        },
+        "photoMediaIds": {
+          "type": "array"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "userId", "bookId", "text", "photoMediaIds", "createdAt", "updatedAt"]
+    },
+    "BookAnalysis": {
+      "title": "BookAnalysis",
+      "description": "AI-generated thematic synthesis and quote connections for a whole book.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "bookId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 15000
+        },
+        "themes": {
+          "type": "array"
+        },
+        "connections": {
+          "type": "array"
+        },
+        "questions": {
+          "type": "array"
+        },
+        "sourceCount": {
+          "type": "integer"
+        },
+        "model": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "userId", "bookId", "summary", "themes", "connections", "questions", "sourceCount", "model", "createdAt", "updatedAt"]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "AI conversation history tied to a note, entry, quote, or whole-book synthesis.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "bookId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "targetType": {
+          "type": "string",
+          "enum": ["note", "entry", "quote", "book"]
+        },
+        "history": {
+          "type": "array"
+        },
+        "hadImages": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "userId", "bookId", "targetType", "history", "hadImages", "createdAt", "updatedAt"]
+    },
+    "Media": {
+      "title": "Media",
+      "description": "Compressed JPEG image stored individually under 1MB Firestore document limits.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "mimeType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "dataUrl": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 750000
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "userId", "mimeType", "dataUrl", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Private profile document for an authenticated Librarium user."
+    },
+    "/users/{userId}/books/{bookId}": {
+      "schema": { "$ref": "#/entities/Book" },
+      "description": "Books owned by the user."
+    },
+    "/users/{userId}/notes/{noteId}": {
+      "schema": { "$ref": "#/entities/Note" },
+      "description": "Endnotes belonging to the user's books."
+    },
+    "/users/{userId}/entries/{entryId}": {
+      "schema": { "$ref": "#/entities/Entry" },
+      "description": "Reading notebook annotations and photo references belonging to the user."
+    },
+    "/users/{userId}/quotes/{quoteId}": {
+      "schema": { "$ref": "#/entities/Quote" },
+      "description": "Favorite quotes belonging to the user's books."
+    },
+    "/users/{userId}/analyses/{analysisId}": {
+      "schema": { "$ref": "#/entities/BookAnalysis" },
+      "description": "AI-generated thematic analyses and quote connections per book."
+    },
+    "/users/{userId}/conversations/{convId}": {
+      "schema": { "$ref": "#/entities/Conversation" },
+      "description": "AI reading assistant conversation histories per item or book."
+    },
+    "/users/{userId}/media/{mediaId}": {
+      "schema": { "$ref": "#/entities/Media" },
+      "description": "Compressed image assets referenced by books, entries, and quotes."
+    }
+  }
+}

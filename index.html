@@ -3,43 +3,199 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#242622"><meta name="description" content="Tu biblioteca personal y cuaderno de lectura">
-<link rel="manifest" href="manifest.json"><link rel="icon" href="assets/librarium-icon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="assets/apple-touch-icon.png"><link rel="stylesheet" href="css/style.css">
+<meta property="og:title" content="Librarium"><meta property="og:description" content="Tu biblioteca personal y cuaderno de lectura">
+<link rel="manifest" href="./manifest.json"><link rel="icon" href="./assets/librarium-icon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="./assets/apple-touch-icon.png">
 <title>Librarium</title>
 </head>
 <body>
-<header class="topbar"><div class="brand"><span class="brand-mark">✦</span><div><small>TU BIBLIOTECA PERSONAL</small><h1>Librarium</h1></div></div><div class="backup-actions"><button id="settingsOpen" class="quiet" type="button" aria-haspopup="dialog">⚙ Ajustes</button></div></header>
-<nav class="tabs"><button class="tab active" data-view="library">Biblioteca</button><button class="tab" data-view="reading">En lectura</button><button class="tab" data-view="notebook">Cuaderno</button><button class="tab" data-view="quotes">Citas</button></nav>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">✦</span>
+    <div>
+      <small>TU BIBLIOTECA PERSONAL</small>
+      <h1>Librarium</h1>
+    </div>
+  </div>
+  <div class="backup-actions">
+    <button id="accountBtn" class="quiet" type="button">Iniciar sesión</button>
+    <button id="settingsOpen" class="quiet" type="button" aria-haspopup="dialog">⚙ Ajustes</button>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="tab active" data-view="library">Biblioteca</button>
+  <button class="tab" data-view="reading">En lectura</button>
+  <button class="tab" data-view="notebook">Cuaderno</button>
+  <button class="tab" data-view="quotes">Citas</button>
+</nav>
+
 <main>
-<section id="libraryView" class="view active">
-  <div class="intro"><div><p class="eyebrow">UN LUGAR PARA TUS LECTURAS</p><h2>Tu biblioteca</h2><p class="muted">Libros, notas y descubrimientos, todo en un mismo lugar.</p></div><button id="addBookBtn" class="primary">＋ Añadir libro</button></div>
-  <div class="toolbar"><input id="bookSearch" placeholder="Buscar libros o autores…"><select id="bookFilter"><option value="all">Todos los libros</option><option value="reading">En lectura</option><option value="pending">Pendientes</option><option value="paused">Pausados</option><option value="finished">Terminados</option></select></div>
-  <div id="bookGrid" class="book-grid"></div>
-  <div id="emptyBooks" class="empty"><span>❧</span><h3>Tu biblioteca empieza acá</h3><p>Agregá tu primer libro manualmente o buscá sus datos en el catálogo.</p><button class="primary" id="emptyAdd">Añadir un libro</button></div>
-</section>
-<section id="readingView" class="view"><p class="eyebrow">CONTINUAR</p><h2>En lectura</h2><div id="readingGrid" class="book-grid"></div></section>
-<section id="notebookView" class="view"><p class="eyebrow">TUS REGISTROS</p><h2>Cuaderno de lectura</h2><p class="muted">Anotaciones de todos tus libros, ordenadas por fecha.</p><div id="journalList" class="journal-list"></div></section>
-<section id="quotesView" class="view"><p class="eyebrow">TU COLECCIÓN</p><h2>Citas favoritas</h2><p class="muted">Fragmentos, ideas y fotos que querés conservar. Para agregar una, abrí el libro correspondiente y entrá en Citas.</p><div id="quoteCollection" class="quote-collection"></div></section>
+  <section id="libraryView" class="view active">
+    <div class="intro">
+      <div>
+        <p class="eyebrow">UN LUGAR PARA TUS LECTURAS</p>
+        <h2>Tu biblioteca</h2>
+        <p class="muted">Libros, reseñas, notas y descubrimientos, sincronizados en un mismo lugar.</p>
+      </div>
+      <button id="addBookBtn" class="primary">＋ Añadir libro</button>
+    </div>
+    <div class="toolbar">
+      <input id="bookSearch" placeholder="Buscar libros, autores o etiquetas…">
+      <select id="bookFilter" aria-label="Filtrar por estado">
+        <option value="all">Todos los libros</option>
+        <option value="reading">En lectura</option>
+        <option value="pending">Pendientes</option>
+        <option value="paused">Pausados</option>
+        <option value="finished">Terminados</option>
+      </select>
+      <select id="bookTagFilter" aria-label="Filtrar por etiqueta">
+        <option value="all">Todas las etiquetas</option>
+      </select>
+      <select id="bookSort" aria-label="Ordenar biblioteca">
+        <option value="recent">Más recientes</option>
+        <option value="title">Título (A–Z)</option>
+        <option value="author">Autor (A–Z)</option>
+        <option value="rating">Mejor puntuados</option>
+        <option value="progress">Mayor avance</option>
+        <option value="year">Año de publicación</option>
+      </select>
+    </div>
+    <div id="bookGrid" class="book-grid"></div>
+    <div id="emptyBooks" class="empty">
+      <span>❧</span>
+      <h3>Tu biblioteca empieza acá</h3>
+      <p>Agregá tu primer libro manualmente o buscá sus datos en el catálogo.</p>
+      <button class="primary" id="emptyAdd">Añadir un libro</button>
+    </div>
+  </section>
+
+  <section id="readingView" class="view">
+    <p class="eyebrow">CONTINUAR</p>
+    <h2>En lectura</h2>
+    <div id="readingGrid" class="book-grid"></div>
+  </section>
+
+  <section id="notebookView" class="view">
+    <p class="eyebrow">TUS REGISTROS</p>
+    <h2>Cuaderno de lectura</h2>
+    <p class="muted">Anotaciones de todos tus libros, ordenadas por fecha.</p>
+    <div id="journalList" class="journal-list"></div>
+  </section>
+
+  <section id="quotesView" class="view">
+    <p class="eyebrow">TU COLECCIÓN</p>
+    <h2>Citas favoritas</h2>
+    <p class="muted">Fragmentos, ideas y fotos que querés conservar. Podés agregar una nueva desde acá o abrir un libro para analizar conexiones entre sus citas.</p>
+    <div id="quoteCollection" class="quote-collection"></div>
+  </section>
 </main>
+
 <footer>LIBRARIUM <span>·</span> Tu biblioteca, tu historia de lectura.</footer>
-<aside id="updateNotice" class="update-notice hidden" role="status" aria-live="polite"><span>Hay una actualización disponible.</span><button id="applyUpdateBtn" class="secondary" type="button">Actualizar</button><button id="dismissUpdateBtn" class="mini" type="button" aria-label="Cerrar aviso">×</button></aside>
 
-<dialog id="bookDialog"><form id="bookForm" method="dialog">
-<div class="dialog-head"><div><p class="eyebrow">INCORPORAR A LA BIBLIOTECA</p><h2 id="bookDialogTitle">Añadir libro</h2></div><button type="button" class="close" data-close>×</button></div>
-<div class="choice-row"><button type="button" id="manualMode" class="choice active">Carga manual</button><button type="button" id="searchMode" class="choice">Buscar libro</button></div>
-<div id="catalogPanel" class="catalog hidden"><div class="inline"><input id="catalogQuery" placeholder="Título o autor"><button type="button" id="catalogSearch" class="secondary">Buscar</button></div><div id="catalogResults"></div></div>
-<input type="hidden" id="bookId">
-<div class="form-grid">
-<label class="wide">Título *<input id="title" required></label><label>Autor<input id="author"></label><label>Editorial<input id="publisher"></label>
-<label>Año<input id="year" type="number" min="0" max="3000"></label><label>Edición<input id="edition"></label>
-<label>ISBN<div class="isbn-entry"><input id="isbn" inputmode="numeric" placeholder="978…"><button type="button" class="secondary" id="scanIsbnBtn">Escanear</button><button type="button" class="mini" id="lookupIsbnBtn">Buscar</button></div><small id="isbnStatus" class="muted"></small><div id="isbnScanner" class="isbn-scanner hidden"><video id="isbnVideo" playsinline muted></video><button type="button" class="mini" id="stopIsbnScanner">Cerrar cámara</button></div></label><label>Cantidad de páginas<input id="totalPages" type="number" min="1"></label>
-<label>Página actual<input id="currentPage" type="number" min="0" value="0"></label>
-<label>Estado<select id="status"><option value="pending">Pendiente</option><option value="reading">En lectura</option><option value="paused">Pausado</option><option value="finished">Terminado</option></select></label>
-<label class="wide">Portada<input id="coverFile" type="file" accept="image/*"><small class="muted">También podés pegar una URL de portada.</small><input id="coverUrl" placeholder="https://…"></label>
-</div><div class="dialog-actions"><button type="button" class="secondary" data-close>Cancelar</button><button class="primary" type="submit">Guardar libro</button></div>
-</form></dialog>
+<aside id="updateNotice" class="update-notice hidden" role="status" aria-live="polite">
+  <span>Hay una actualización disponible.</span>
+  <button id="applyUpdateBtn" class="secondary" type="button">Actualizar</button>
+  <button id="dismissUpdateBtn" class="mini" type="button" aria-label="Cerrar aviso">×</button>
+</aside>
 
-<dialog id="detailDialog" class="book-detail-dialog"><div class="detail-wrap"><button class="close detail-close" data-close aria-label="Volver a la biblioteca">×</button><div id="detailContent"></div></div></dialog>
-<dialog id="noteDialog"><form id="noteForm" method="dialog"><div class="dialog-head"><div><p class="eyebrow">APARATO DE NOTAS</p><h2>Importar notas finales</h2></div><button type="button" class="close" data-close>×</button></div><p class="muted">Se agregarán al libro abierto: <strong id="importBookTitle"></strong>. Pegá un JSON o seleccioná un archivo.</p><div class="json-toolbar"><span>JSON</span><button type="button" class="mini" id="copyNotesGuide">Copiar guía para un modelo</button><details class="json-help"><summary>Ver guía</summary><p>Convertí las notas finales que pego al final de este mensaje en JSON válido para importar en Librarium. Devolvé únicamente el JSON, sin Markdown ni explicaciones. Conservá fielmente los textos, números y páginas; no inventes datos. Cada nota debe tener <code>number</code> (entero) y <code>text</code> (cadena). Incluí <code>reference_page</code> solo si la nota tiene una página de referencia en el texto principal; si no la tiene, omití ese campo. Incluí <code>end_page</code> solo si conocés la página donde aparece la nota. Usá <code>read:false</code>. Escapá comillas y saltos de línea para que sea JSON válido.</p><pre>{
+<dialog id="bookDialog">
+  <form id="bookForm" method="dialog">
+    <div class="dialog-head">
+      <div>
+        <p class="eyebrow">INCORPORAR A LA BIBLIOTECA</p>
+        <h2 id="bookDialogTitle">Añadir libro</h2>
+      </div>
+      <button type="button" class="close" data-close>×</button>
+    </div>
+    <div class="choice-row">
+      <button type="button" id="manualMode" class="choice active">Carga manual</button>
+      <button type="button" id="searchMode" class="choice">Buscar libro</button>
+    </div>
+    <div id="catalogPanel" class="catalog hidden">
+      <div class="inline">
+        <input id="catalogQuery" placeholder="Título o autor">
+        <button type="button" id="catalogSearch" class="secondary">Buscar</button>
+      </div>
+      <div id="catalogResults"></div>
+    </div>
+    <input type="hidden" id="bookId">
+    <div class="form-grid">
+      <label class="wide">Título *<input id="title" required maxlength="300"></label>
+      <label>Autor<input id="author" maxlength="300"></label>
+      <label>Editorial<input id="publisher" maxlength="200"></label>
+      <label>Año<input id="year" type="number" min="0" max="3000"></label>
+      <label>Edición<input id="edition" maxlength="120"></label>
+      <label>ISBN
+        <div class="isbn-entry">
+          <input id="isbn" inputmode="numeric" placeholder="978…" maxlength="32">
+          <button type="button" class="secondary" id="scanIsbnBtn">Escanear</button>
+          <button type="button" class="mini" id="lookupIsbnBtn">Buscar</button>
+        </div>
+        <small id="isbnStatus" class="muted"></small>
+        <div id="isbnScanner" class="isbn-scanner hidden">
+          <video id="isbnVideo" playsinline muted></video>
+          <button type="button" class="mini" id="stopIsbnScanner">Cerrar cámara</button>
+        </div>
+      </label>
+      <label>Cantidad de páginas<input id="totalPages" type="number" min="1"></label>
+      <label>Página actual<input id="currentPage" type="number" min="0" value="0"></label>
+      <label>Estado
+        <select id="status">
+          <option value="pending">Pendiente</option>
+          <option value="reading">En lectura</option>
+          <option value="paused">Pausado</option>
+          <option value="finished">Terminado</option>
+        </select>
+      </label>
+      <label class="wide">Etiquetas (separadas por coma, máx. 10)
+        <input id="bookTagsInput" placeholder="Ej.: Filosofía, Novela, Siglo XX">
+        <div id="bookTagsSuggestions" class="tag-suggestions"></div>
+      </label>
+      <div class="wide rating-field">
+        <span class="field-label">Puntuación</span>
+        <div id="bookFormStars" class="star-picker" role="group" aria-label="Puntuación del libro"></div>
+        <input type="hidden" id="bookRatingValue" value="">
+      </div>
+      <label class="wide">Reseña personal
+        <textarea id="bookReviewInput" rows="3" maxlength="10000" placeholder="¿Qué te dejó este libro?"></textarea>
+      </label>
+      <label class="wide">Portada
+        <input id="coverFile" type="file" accept="image/*">
+        <small class="muted">También podés pegar una URL de portada.</small>
+        <input id="coverUrl" placeholder="https://…">
+      </label>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="secondary" data-close>Cancelar</button>
+      <button class="primary" type="submit">Guardar libro</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="detailDialog" class="book-detail-dialog">
+  <div class="detail-wrap">
+    <button class="close detail-close" data-close aria-label="Volver a la biblioteca">×</button>
+    <div id="detailContent"></div>
+  </div>
+</dialog>
+
+<dialog id="noteDialog">
+  <form id="noteForm" method="dialog">
+    <div class="dialog-head">
+      <div>
+        <p class="eyebrow">APARATO DE NOTAS</p>
+        <h2>Importar notas finales</h2>
+      </div>
+      <button type="button" class="close" data-close>×</button>
+    </div>
+    <p class="muted">Se agregarán al libro abierto: <strong id="importBookTitle"></strong>. Pegá un JSON o seleccioná un archivo.</p>
+    <div class="json-toolbar">
+      <span>JSON</span>
+      <button type="button" class="mini" id="copyNotesGuide">Copiar guía para un modelo</button>
+      <details class="json-help">
+        <summary>Ver guía</summary>
+        <p>Convertí las notas finales que pego al final de este mensaje en JSON válido para importar en Librarium. Devolvé únicamente el JSON, sin Markdown ni explicaciones. Conservá fielmente los textos, números y páginas; no inventes datos. Cada nota debe tener <code>number</code> (entero) y <code>text</code> (cadena). Incluí <code>reference_page</code> solo si la nota tiene una página de referencia en el texto principal; si no la tiene, omití ese campo. Incluí <code>end_page</code> solo si conocés la página donde aparece la nota. Usá <code>read:false</code>. Escapá comillas y saltos de línea para que sea JSON válido.</p>
+        <pre>{
   "schema_version": 1,
   "book": {"title": "Título", "author": "Autor"},
   "notes": [
@@ -52,23 +208,262 @@ Título: [completar]
 Autor: [completar]
 
 Notas finales:
-[pegar aquí las notas]</pre></details></div><label>Pegar JSON<textarea id="jsonText" rows="9" placeholder='{"notes":[{"number":1,"end_page":245,"text":"Texto de la nota"}]}'></textarea></label><label>O elegir archivo JSON<input id="jsonFile" type="file" accept=".json,application/json"></label><pre id="jsonPreview" class="preview">Pegá un JSON o seleccioná un archivo…</pre><div class="dialog-actions"><button type="button" class="secondary" data-close>Cancelar</button><button class="primary" type="submit" disabled id="importNotesBtn">Importar notas</button></div></form></dialog>
-<dialog id="manualNoteDialog"><form id="manualNoteForm" method="dialog"><div class="dialog-head"><div><p class="eyebrow">APARATO DE NOTAS</p><h2>Nueva nota final</h2></div><button type="button" class="close" data-close>×</button></div><p class="muted">Libro: <strong id="manualBookTitle"></strong></p><div class="form-grid"><label>Número de nota *<input id="manualNoteNumber" type="number" min="1" step="1" required></label><label class="wide check-label"><span>¿Tiene página de referencia?</span><input id="manualHasReference" type="checkbox"> Sí, quiero indicar la página donde se cita</label><label id="manualReferenceLabel">Página de referencia<input id="manualReferencePage" type="number" min="0" step="1"></label><label>Página de la nota<input id="manualEndPage" type="number" min="0" step="1"></label><label class="wide">Texto de la nota *<textarea id="manualNoteText" rows="5" required></textarea></label></div><p id="manualNoteError" class="muted"></p><div class="dialog-actions"><button type="button" class="secondary" data-close>Cancelar</button><button class="primary" type="submit">Guardar nota</button></div></form></dialog>
-<dialog id="annotationDialog"><form id="annotationForm" method="dialog"><div class="dialog-head"><div><p class="eyebrow">CUADERNO DE LECTURA</p><h2 id="annotationTitle">Nueva anotación</h2></div><button type="button" class="close" data-close>×</button></div><input type="hidden" id="annotationBook"><input type="hidden" id="annotationId"><label>Página<input id="annotationPage" type="number" min="0" required></label><label>Título<input id="annotationHeading" placeholder="Un título breve"></label><label>Comentario / observación<textarea id="annotationText" rows="5" placeholder="¿Qué querés conservar de esta página?"></textarea></label><label>Fotografía (opcional)<input id="annotationPhoto" type="file" accept="image/*"><small id="annotationPhotoStatus" class="muted"></small></label><div class="dialog-actions"><button type="button" id="askAnnotationGemini" class="secondary">Consultar a la IA</button><button type="button" class="secondary" data-close>Cancelar</button><button class="primary">Guardar anotación</button></div></form></dialog>
-<dialog id="noteCommentDialog"><form id="noteCommentForm" method="dialog"><div class="dialog-head"><div><p class="eyebrow">NOTA FINAL</p><h2>Comentario personal</h2></div><button type="button" class="close" data-close>×</button></div><input id="commentNoteId" type="hidden"><p id="commentNoteLabel" class="muted"></p><label>Comentario<textarea id="noteCommentText" rows="5" placeholder="Escribí tu comentario sobre esta nota…"></textarea></label><div class="dialog-actions"><button type="button" id="askCommentGemini" class="secondary">Consultar a la IA</button><button type="button" class="secondary" data-close>Cancelar</button><button class="primary" type="submit">Guardar comentario</button></div></form></dialog>
-<dialog id="quoteDialog"><form id="quoteForm" method="dialog"><div class="dialog-head"><div><p class="eyebrow">CITAS FAVORITAS</p><h2 id="quoteDialogTitle">Guardar una cita</h2></div><button type="button" class="close" data-close aria-label="Cerrar">×</button></div><input id="quoteId" type="hidden"><input id="quoteBookId" type="hidden"><label>Texto de la cita *<textarea id="quoteText" rows="5" required placeholder="Escribí, pegá o extraé el fragmento de una foto…"></textarea></label><div class="form-grid"><label>Capítulo / sección<input id="quoteChapter" placeholder="Ej.: Capítulo III"></label><label>Página<input id="quotePage" type="number" min="0" step="1" placeholder="Opcional"></label></div><label>Mi análisis o comentario<textarea id="quoteAnalysis" rows="4" placeholder="¿Qué te llamó la atención? ¿Con qué lo relacionás?"></textarea></label><label>Fotos (opcional)<input id="quotePhotos" type="file" accept="image/*" multiple><small class="muted" id="quotePhotoStatus" role="status" aria-live="polite">Podés guardar hasta 5 fotos por cita. Se optimizan para ocupar menos espacio.</small></label><p class="quote-ocr-privacy">Para extraer texto, la foto elegida se envía a Gemini con tu clave. La transcripción queda acá para que la revises antes de guardar.</p><div id="quotePhotoPreview" class="quote-photo-preview"></div><div class="dialog-actions"><button type="button" class="secondary" data-close>Cancelar</button><button class="primary" type="submit">Guardar cita</button></div></form></dialog>
-<dialog id="readingProgressDialog"><form id="readingProgressForm" method="dialog"><div class="dialog-head"><div><p class="eyebrow">SEGUIMIENTO DE LECTURA</p><h2>Actualizar página</h2></div><button type="button" class="close" data-close aria-label="Cerrar">×</button></div><p class="muted" id="readingProgressBook"></p><label>Página actual<input id="readingProgressPage" type="number" min="0" step="1" required></label><p class="reading-progress-hint" id="readingProgressHint"></p><div id="readingHistory" class="reading-history"></div><div class="dialog-actions"><button type="button" class="secondary" data-close>Cancelar</button><button class="primary" type="submit">Guardar avance</button></div></form></dialog>
-<dialog id="photoViewerDialog" class="photo-viewer-dialog"><div class="photo-viewer-wrap"><button type="button" class="close photo-viewer-close" data-close aria-label="Cerrar fotografía">×</button><img id="photoViewerImage" class="photo-viewer-image" alt="Fotografía de la anotación"><section class="photo-viewer-caption"><p id="photoViewerMeta" class="eyebrow"></p><h2 id="photoViewerTitle"></h2><p id="photoViewerComment" class="muted"></p><button id="askPhotoGemini" class="secondary" type="button">Preguntar a la IA sobre esta foto</button> <button id="editPhotoAnnotation" class="secondary" type="button">Editar anotación y comentario</button></section></div></dialog>
-<dialog id="settingsDialog" class="settings-dialog"><section class="settings-shell">
-<div class="dialog-head"><div><p class="eyebrow">PREFERENCIAS</p><h2>Ajustes</h2></div><button type="button" class="close" data-close aria-label="Cerrar">×</button></div>
-<section class="settings-section"><h3>Apariencia</h3><label class="switch-row"><span>Modo oscuro</span><input id="themeSwitch" type="checkbox" role="switch"></label></section>
-<section class="settings-section"><h3>Asistente de IA (Gemini)</h3><p class="muted">Pegá tu clave de Google AI Studio. Queda guardada en este navegador y no se incluye en las copias de seguridad. Lo que preguntes, junto con la nota, anotación o foto elegida, se envía a Google para generar la respuesta.</p><label>Clave de Gemini API<div class="key-entry"><input id="geminiApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="Pegá tu clave"><button type="button" class="mini" id="toggleGeminiKey">Mostrar</button></div></label><div class="panel-actions"><button id="saveGeminiKey" type="button" class="secondary">Guardar clave</button><button id="removeGeminiKey" type="button" class="mini">Borrar clave</button><span id="geminiKeyStatus" class="muted" aria-live="polite"></span></div><p class="muted">Para preguntar, mantené apretada una nota, una anotación o una foto (o hacé clic derecho en la computadora).</p></section>
-<section class="settings-section"><h3>Ajustes de IA</h3><p class="muted">Estas preferencias se guardan en este navegador y se aplican a todas tus consultas.</p><div class="ai-settings-grid"><label>Modelo preferido<select id="aiModel"><option value="gemini-3.8-flash">Gemini 3.8 Flash · completo</option><option value="gemini-3.6-flash">Gemini 3.6 Flash · equilibrado</option><option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite · más ágil</option></select></label><label>Razonamiento<select id="aiThinking"><option value="auto">Automático</option><option value="low">Bajo · más rápido</option><option value="medium">Medio · equilibrado</option><option value="high">Alto · más análisis</option></select></label><label class="ai-style-label">Estilo de respuesta<select id="aiStyle"><option value="natural">Claro y natural</option><option value="concise">Breve y directo</option><option value="detailed">Detallado y analítico</option><option value="socratic">Con preguntas orientadoras</option><option value="custom">Personalizado</option></select></label><label id="aiCustomStyleWrap" class="ai-custom-style hidden">Instrucciones de estilo<textarea id="aiCustomStyle" rows="3" maxlength="600" placeholder="Ej.: explicá el contexto literario y definí los términos poco comunes."></textarea></label></div><p id="aiSettingsStatus" class="muted ai-settings-status" aria-live="polite">Los cambios se guardan automáticamente en este navegador.</p></section>
-<section class="settings-section"><h3>Datos</h3><div class="panel-actions"><button id="backupBtn" type="button" class="secondary">Copia de seguridad</button><button id="restoreBtn" type="button" class="secondary">Restaurar copia</button></div></section>
-<section class="settings-section"><h3>Usar en el celular</h3><p class="muted">Instalá Librarium en la pantalla de inicio para abrirla como una aplicación.</p><div class="panel-actions"><button id="installAppBtn" type="button" class="secondary">Instalar Librarium</button><span id="installAppHelp" class="muted" aria-live="polite"></span></div></section>
-</section></dialog>
-<dialog id="geminiDialog" class="gemini-dialog"><section class="gemini-shell"><div class="dialog-head"><div><p class="eyebrow">ASISTENTE DE LECTURA</p><h2>Preguntar a la IA</h2></div><button type="button" class="close" data-close aria-label="Cerrar">×</button></div><div id="geminiContextCard" class="gemini-context-card"></div><div class="gemini-history-tools"><button type="button" id="clearGeminiHistory" class="mini hidden">Borrar historial</button></div><div id="geminiNoKey" class="gemini-nokey hidden"><span>Falta tu clave de API para poder consultar.</span><button type="button" class="secondary" id="openSettingsFromChat">Abrir ajustes</button></div><div id="geminiMessages" class="gemini-messages" aria-live="polite"></div><div class="gemini-chips"><button type="button" class="mini" data-ai-prompt="Explicámelo con palabras simples.">Explicámelo simple</button><button type="button" class="mini" data-ai-prompt="Resumilo en pocas líneas.">Resumilo</button><button type="button" class="mini" data-ai-prompt="¿Qué ideas o conceptos clave aparecen acá?">Ideas clave</button></div><label>Imagen opcional<input id="geminiImage" type="file" accept="image/*"><small class="muted" id="geminiImageStatus">También podés adjuntar una foto de un pasaje.</small></label><form id="geminiForm" class="gemini-compose"><textarea id="geminiQuestion" rows="3" placeholder="Preguntale algo sobre esto…" required></textarea><button id="geminiSend" class="primary" type="submit">Enviar</button></form><p class="gemini-footnote">Revisá las respuestas de la IA: pueden contener errores.</p></section></dialog>
-<input id="restoreFile" type="file" accept=".json,application/json" hidden>
-<script src="js/db.js"></script><script src="js/app.js"></script>
-</body></html>
+[pegar aquí las notas]</pre>
+      </details>
+    </div>
+    <label>Pegar JSON<textarea id="jsonText" rows="9" placeholder='{"notes":[{"number":1,"end_page":245,"text":"Texto de la nota"}]}'></textarea></label>
+    <label>O elegir archivo JSON<input id="jsonFile" type="file" accept=".json,application/json"></label>
+    <pre id="jsonPreview" class="preview">Pegá un JSON o seleccioná un archivo…</pre>
+    <div class="dialog-actions">
+      <button type="button" class="secondary" data-close>Cancelar</button>
+      <button class="primary" type="submit" disabled id="importNotesBtn">Importar notas</button>
+    </div>
+  </form>
+</dialog>
 
+<dialog id="manualNoteDialog">
+  <form id="manualNoteForm" method="dialog">
+    <div class="dialog-head">
+      <div>
+        <p class="eyebrow">APARATO DE NOTAS</p>
+        <h2>Nueva nota final</h2>
+      </div>
+      <button type="button" class="close" data-close>×</button>
+    </div>
+    <p class="muted">Libro: <strong id="manualBookTitle"></strong></p>
+    <div class="form-grid">
+      <label>Número de nota *<input id="manualNoteNumber" type="number" min="1" step="1" required></label>
+      <label class="wide check-label"><span>¿Tiene página de referencia?</span><input id="manualHasReference" type="checkbox"> Sí, quiero indicar la página donde se cita</label>
+      <label id="manualReferenceLabel">Página de referencia<input id="manualReferencePage" type="number" min="0" step="1"></label>
+      <label>Página de la nota<input id="manualEndPage" type="number" min="0" step="1"></label>
+      <label class="wide">Texto de la nota *<textarea id="manualNoteText" rows="5" required></textarea></label>
+    </div>
+    <p id="manualNoteError" class="muted"></p>
+    <div class="dialog-actions">
+      <button type="button" class="secondary" data-close>Cancelar</button>
+      <button class="primary" type="submit">Guardar nota</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="annotationDialog">
+  <form id="annotationForm" method="dialog">
+    <div class="dialog-head">
+      <div>
+        <p class="eyebrow">CUADERNO DE LECTURA</p>
+        <h2 id="annotationTitle">Nueva anotación</h2>
+      </div>
+      <button type="button" class="close" data-close>×</button>
+    </div>
+    <input type="hidden" id="annotationBook"><input type="hidden" id="annotationId">
+    <label>Página<input id="annotationPage" type="number" min="0" required></label>
+    <label>Título<input id="annotationHeading" placeholder="Un título breve" maxlength="300"></label>
+    <label>Comentario / observación<textarea id="annotationText" rows="5" placeholder="¿Qué querés conservar de esta página?"></textarea></label>
+    <label>Fotografía (opcional)<input id="annotationPhoto" type="file" accept="image/*"><small id="annotationPhotoStatus" class="muted"></small></label>
+    <div class="dialog-actions">
+      <button type="button" id="askAnnotationGemini" class="secondary">Consultar a la IA</button>
+      <button type="button" class="secondary" data-close>Cancelar</button>
+      <button class="primary">Guardar anotación</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="noteCommentDialog">
+  <form id="noteCommentForm" method="dialog">
+    <div class="dialog-head">
+      <div>
+        <p class="eyebrow">NOTA FINAL</p>
+        <h2>Comentario personal</h2>
+      </div>
+      <button type="button" class="close" data-close>×</button>
+    </div>
+    <input id="commentNoteId" type="hidden">
+    <p id="commentNoteLabel" class="muted"></p>
+    <label>Comentario<textarea id="noteCommentText" rows="5" placeholder="Escribí tu comentario sobre esta nota…"></textarea></label>
+    <div class="dialog-actions">
+      <button type="button" id="askCommentGemini" class="secondary">Consultar a la IA</button>
+      <button type="button" class="secondary" data-close>Cancelar</button>
+      <button class="primary" type="submit">Guardar comentario</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="quoteDialog">
+  <form id="quoteForm" method="dialog">
+    <div class="dialog-head">
+      <div>
+        <p class="eyebrow">CITAS FAVORITAS</p>
+        <h2 id="quoteDialogTitle">Guardar una cita</h2>
+      </div>
+      <button type="button" class="close" data-close aria-label="Cerrar">×</button>
+    </div>
+    <input id="quoteId" type="hidden"><input id="quoteBookId" type="hidden">
+    <label>Texto de la cita *<textarea id="quoteText" rows="5" required placeholder="Escribí, pegá o extraé el fragmento de una foto…"></textarea></label>
+    <div class="form-grid">
+      <label>Capítulo / sección<input id="quoteChapter" placeholder="Ej.: Capítulo III" maxlength="200"></label>
+      <label>Página<input id="quotePage" type="number" min="0" step="1" placeholder="Opcional"></label>
+    </div>
+    <label>Mi análisis o comentario<textarea id="quoteAnalysis" rows="4" placeholder="¿Qué te llamó la atención? ¿Con qué lo relacionás?"></textarea></label>
+    <label>Fotos (opcional)<input id="quotePhotos" type="file" accept="image/*" multiple><small class="muted" id="quotePhotoStatus" role="status" aria-live="polite">Podés guardar hasta 5 fotos por cita. Se optimizan para ocupar menos espacio.</small></label>
+    <p class="quote-ocr-privacy">Podés extraer texto de una foto con Gemini. La transcripción queda acá para que la revises antes de guardar.</p>
+    <div id="quotePhotoPreview" class="quote-photo-preview"></div>
+    <div class="dialog-actions">
+      <button type="button" class="secondary" data-close>Cancelar</button>
+      <button class="primary" type="submit">Guardar cita</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="readingProgressDialog">
+  <form id="readingProgressForm" method="dialog">
+    <div class="dialog-head">
+      <div>
+        <p class="eyebrow">SEGUIMIENTO DE LECTURA</p>
+        <h2>Actualizar página</h2>
+      </div>
+      <button type="button" class="close" data-close aria-label="Cerrar">×</button>
+    </div>
+    <p class="muted" id="readingProgressBook"></p>
+    <label>Página actual<input id="readingProgressPage" type="number" min="0" step="1" required></label>
+    <p class="reading-progress-hint" id="readingProgressHint"></p>
+    <div id="readingHistory" class="reading-history"></div>
+    <div class="dialog-actions">
+      <button type="button" class="secondary" data-close>Cancelar</button>
+      <button class="primary" type="submit">Guardar avance</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="photoViewerDialog" class="photo-viewer-dialog">
+  <div class="photo-viewer-wrap">
+    <button type="button" class="close photo-viewer-close" data-close aria-label="Cerrar fotografía">×</button>
+    <img id="photoViewerImage" class="photo-viewer-image" alt="Fotografía de la anotación">
+    <section class="photo-viewer-caption">
+      <p id="photoViewerMeta" class="eyebrow"></p>
+      <h2 id="photoViewerTitle"></h2>
+      <p id="photoViewerComment" class="muted"></p>
+      <button id="askPhotoGemini" class="secondary" type="button">Preguntar a la IA sobre esta foto</button>
+      <button id="editPhotoAnnotation" class="secondary" type="button">Editar anotación y comentario</button>
+    </section>
+  </div>
+</dialog>
+
+<dialog id="settingsDialog" class="settings-dialog">
+  <section class="settings-shell">
+    <div class="dialog-head">
+      <div>
+        <p class="eyebrow">PREFERENCIAS</p>
+        <h2>Ajustes</h2>
+      </div>
+      <button type="button" class="close" data-close aria-label="Cerrar">×</button>
+    </div>
+
+    <section class="settings-section">
+      <h3>Cuenta y sincronización en la nube</h3>
+      <p class="muted" id="syncStatusText">Modo local. Iniciá sesión para guardar y sincronizar tu biblioteca entre dispositivos.</p>
+      <div id="accountSignedOutView" class="panel-actions">
+        <button id="googleSignInBtn" type="button" class="primary">Continuar con Google</button>
+      </div>
+      <div id="accountSignedInView" class="account-card hidden">
+        <img id="accountAvatar" class="account-avatar hidden" alt="Avatar de usuario" referrerpolicy="no-referrer">
+        <div class="account-info">
+          <strong id="accountName"></strong>
+          <small id="accountEmail" class="muted"></small>
+        </div>
+        <div class="panel-actions">
+          <button id="syncNowBtn" type="button" class="secondary">Sincronizar datos locales</button>
+          <button id="googleSignOutBtn" type="button" class="mini">Cerrar sesión</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h3>Apariencia</h3>
+      <label class="switch-row"><span>Modo oscuro</span><input id="themeSwitch" type="checkbox" role="switch"></label>
+    </section>
+
+    <section class="settings-section">
+      <h3>Ajustes de IA</h3>
+      <p class="muted">Estas preferencias se guardan en este navegador y se aplican tanto a consultas por nota o cita como al análisis completo de cada libro.</p>
+      <div class="ai-settings-grid">
+        <label>Modelo preferido
+          <select id="aiModel">
+            <option value="gemini-4-hydrogen">Gemini 4 Flash · completo y análisis</option>
+            <option value="gemini-3.1-flash-lite">Gemini Flash-Lite · más ágil</option>
+          </select>
+        </label>
+        <label>Razonamiento
+          <select id="aiThinking">
+            <option value="auto">Automático</option>
+            <option value="low">Bajo · más rápido</option>
+            <option value="medium">Medio · equilibrado</option>
+            <option value="high">Alto · más análisis</option>
+          </select>
+        </label>
+        <label class="ai-style-label">Estilo de respuesta
+          <select id="aiStyle">
+            <option value="natural">Claro y natural</option>
+            <option value="concise">Breve y directo</option>
+            <option value="detailed">Detallado y analítico</option>
+            <option value="socratic">Con preguntas orientadoras</option>
+            <option value="custom">Personalizado</option>
+          </select>
+        </label>
+        <label id="aiCustomStyleWrap" class="ai-custom-style hidden">Instrucciones de estilo
+          <textarea id="aiCustomStyle" rows="3" maxlength="600" placeholder="Ej.: explicá el contexto literario y definí los términos poco comunes."></textarea>
+        </label>
+      </div>
+      <p id="aiSettingsStatus" class="muted ai-settings-status" aria-live="polite">Los cambios se guardan automáticamente en este navegador.</p>
+    </section>
+
+    <section class="settings-section">
+      <h3>Datos</h3>
+      <div class="panel-actions">
+        <button id="backupBtn" type="button" class="secondary">Copia de seguridad</button>
+        <button id="restoreBtn" type="button" class="secondary">Restaurar copia</button>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h3>Usar en el celular</h3>
+      <p class="muted">Instalá Librarium en la pantalla de inicio para abrirla como una aplicación.</p>
+      <div class="panel-actions">
+        <button id="installAppBtn" type="button" class="secondary">Instalar Librarium</button>
+        <span id="installAppHelp" class="muted" aria-live="polite"></span>
+      </div>
+    </section>
+  </section>
+</dialog>
+
+<dialog id="geminiDialog" class="gemini-dialog">
+  <section class="gemini-shell">
+    <div class="dialog-head">
+      <div>
+        <p class="eyebrow">ASISTENTE DE LECTURA</p>
+        <h2>Preguntar a la IA</h2>
+      </div>
+      <button type="button" class="close" data-close aria-label="Cerrar">×</button>
+    </div>
+    <div id="geminiContextCard" class="gemini-context-card"></div>
+    <div class="gemini-history-tools">
+      <button type="button" id="clearGeminiHistory" class="mini hidden">Borrar historial</button>
+    </div>
+    <div id="geminiMessages" class="gemini-messages" aria-live="polite"></div>
+    <div class="gemini-chips">
+      <button type="button" class="mini" data-ai-prompt="Explicámelo con palabras simples.">Explicámelo simple</button>
+      <button type="button" class="mini" data-ai-prompt="Resumilo en pocas líneas.">Resumilo</button>
+      <button type="button" class="mini" data-ai-prompt="¿Qué ideas o conceptos clave aparecen acá?">Ideas clave</button>
+    </div>
+    <label>Imagen opcional<input id="geminiImage" type="file" accept="image/*"><small class="muted" id="geminiImageStatus">También podés adjuntar una foto de un pasaje.</small></label>
+    <form id="geminiForm" class="gemini-compose">
+      <textarea id="geminiQuestion" rows="3" placeholder="Preguntale algo sobre esto…" required></textarea>
+      <button id="geminiSend" class="primary" type="submit">Enviar</button>
+    </form>
+    <p class="gemini-footnote">Revisá las respuestas de la IA: pueden contener errores.</p>
+  </section>
+</dialog>
+
+<input id="restoreFile" type="file" accept=".json,application/json" hidden>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

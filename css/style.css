@@ -94,3 +94,77 @@ dialog{border:1px solid var(--line);border-radius:12px;padding:0;background:var(
 @media(max-width:620px){.favorite-quote{padding:15px}.favorite-quote blockquote{font-size:17px}.quote-photo-thumb{width:76px;height:76px}.quote-collection{width:100%}.quote-add-global{align-items:stretch;flex-direction:column}.quote-add-global button{width:100%}.reading-progress-trigger{width:100%}.quote-photo-edit .quote-photo-remove{width:38px;height:38px}}
 
 html,body{background:var(--paper);min-height:100dvh}
+
+/* Toolbar & Library Controls */
+.toolbar{flex-wrap:wrap}
+.toolbar input{flex:1 1 240px;min-width:180px}
+.toolbar select{flex:0 1 190px;width:auto;min-width:150px}
+@media(max-width:620px){.toolbar select{width:100%;flex:1 1 auto}}
+
+/* Tabular numerals & unboxed typographic metadata */
+.book-meta p,.reading-progress-trigger,.note-num,.quote-source{font-variant-numeric:tabular-nums}
+.book-card-tags{font-size:11px;color:var(--muted);line-height:1.4;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical}
+.book-card-rating{font-size:12px;color:var(--brown);font-weight:600;letter-spacing:.02em}
+.book-detail-meta-line{margin:6px 0 0;font-size:13px;color:var(--muted);line-height:1.5}
+.book-detail-meta-line strong{color:var(--brown)}
+
+/* Interactive Star Picker */
+.rating-field{display:flex;flex-direction:column;gap:6px}
+.rating-field .field-label{font-size:12px;font-weight:600;color:var(--brown)}
+.star-picker{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.star-btn{min-width:40px;min-height:40px;padding:4px 8px;border:1px solid var(--line);border-radius:7px;background:var(--white);color:var(--muted);font-size:19px;line-height:1;transition:transform .15s,background .15s,color .15s}
+.star-btn:hover{background:var(--paper2);color:var(--brown);transform:translateY(-1px)}
+.star-btn.active{background:var(--paper2);border-color:var(--green);color:var(--brown)}
+.star-clear{padding:8px 10px;border:1px solid var(--line);border-radius:7px;background:transparent;color:var(--muted);font-size:12px;min-height:40px}
+.star-clear:hover{background:var(--paper2);color:var(--brown)}
+:root[data-theme="dark"] .star-btn{background:#292b28;color:#8e8677;border-color:var(--line)}
+:root[data-theme="dark"] .star-btn.active{background:#343731;color:#f3d285;border-color:var(--green)}
+:root[data-theme="dark"] .star-clear:hover{background:#343731;color:var(--ink)}
+
+/* Tag suggestions */
+.tag-suggestions{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.tag-suggestion-btn{padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--paper2);color:var(--brown);font-size:12px;font-weight:500;min-height:32px}
+.tag-suggestion-btn:hover{border-color:var(--green)}
+:root[data-theme="dark"] .tag-suggestion-btn{background:#343731;color:var(--ink)}
+
+/* Review Tab */
+.review-panel{display:flex;flex-direction:column;gap:16px}
+.review-panel textarea{min-height:190px;line-height:1.6}
+.review-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.review-status{font-size:13px;color:var(--green);font-weight:500}
+
+/* Whole-book Quotes Synthesis Panel */
+.content-heading-actions{display:flex;gap:8px;flex-wrap:wrap}
+.book-synthesis-card{margin:0 0 24px;padding:22px;border:1px solid var(--line);border-radius:10px;background:var(--white);display:flex;flex-direction:column;gap:16px}
+.book-synthesis-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap}
+.book-synthesis-head h3{margin:4px 0 0;font:600 22px 'Playfair Display',serif;color:var(--brown)}
+.synthesis-summary p{margin:0 0 10px;font-size:15px;line-height:1.65;color:var(--ink)}
+.synthesis-summary p:last-child{margin-bottom:0}
+.synthesis-themes{font-size:13px;color:var(--muted);line-height:1.6;padding-top:10px;border-top:1px solid var(--line)}
+.synthesis-themes strong{color:var(--brown)}
+.synthesis-connections{display:grid;grid-template-columns:1fr;gap:12px}
+.connection-card{padding:14px 16px;border:1px solid var(--line);border-radius:8px;background:var(--paper)}
+.connection-card h4{margin:0 0 6px;font:600 16px 'Playfair Display',serif;color:var(--brown)}
+.connection-card p{margin:0 0 10px;font-size:14px;line-height:1.55;color:var(--ink)}
+.connection-refs{display:flex;flex-wrap:wrap;gap:6px}
+.connection-ref-btn{padding:5px 10px;border:1px solid var(--line);border-radius:6px;background:var(--white);color:var(--brown);font-size:12px;font-weight:600;white-space:nowrap}
+.connection-ref-btn:hover{border-color:var(--green);background:var(--paper2)}
+.synthesis-questions{margin:0;padding-left:20px;font-size:14px;line-height:1.6;color:var(--ink)}
+.synthesis-questions li{margin:4px 0}
+.synthesis-footer{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--line)}
+.quote-highlight{outline:2px solid var(--green);outline-offset:3px;transition:outline-color .3s}
+:root[data-theme="dark"] .book-synthesis-card{background:#292b28}
+:root[data-theme="dark"] .connection-card{background:#242622}
+:root[data-theme="dark"] .connection-ref-btn{background:#343731;color:var(--ink)}
+:root[data-theme="dark"] .connection-ref-btn:hover{background:#41443d}
+
+/* Account & Sync UI */
+.account-card{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px;border:1px solid var(--line);border-radius:9px;background:var(--white)}
+.account-avatar{width:40px;height:40px;border-radius:50%;object-fit:cover;border:1px solid var(--line);flex-shrink:0}
+.account-info{flex:1;min-width:160px;display:flex;flex-direction:column;gap:2px}
+.account-info strong{font-size:14px;color:var(--brown)}
+.account-info small{font-size:12px;letter-spacing:0;font-weight:400}
+.account-card .panel-actions{margin-bottom:0;width:100%}
+:root[data-theme="dark"] .account-card{background:#292b28}
+@media(max-width:620px){.content-heading-actions{width:100%}.content-heading-actions button{flex:1}.book-synthesis-card{padding:16px}}
+

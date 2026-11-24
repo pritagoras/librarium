@@ -1,1 +1,50 @@
-const CACHE="librarium-v27";const FILES=["./","./index.html","./css/style.css","./js/db.js","./js/app.js","./manifest.json","./assets/librarium-icon.svg","./assets/icon-192.png","./assets/icon-512.png","./assets/apple-touch-icon.png"];self.addEventListener("install",e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(FILES))));self.addEventListener("activate",e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));self.addEventListener("message",e=>{if(e.data?.type==="SKIP_WAITING")self.skipWaiting()});self.addEventListener("fetch",e=>{if(e.request.method!=="GET")return;e.respondWith(caches.match(e.request).then(cached=>cached||fetch(e.request).then(r=>{let copy=r.clone();caches.open(CACHE).then(c=>c.put(e.request,copy));return r}).catch(()=>caches.match("./index.html"))))});
+const CACHE = "librarium-v28";
+const FILES = [
+  "./",
+  "./index.html",
+  "./manifest.json",
+  "./assets/librarium-icon.svg",
+  "./assets/icon-192.png",
+  "./assets/icon-512.png",
+  "./assets/apple-touch-icon.png",
+];
+
+self.addEventListener("install", (e) =>
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)))
+);
+
+self.addEventListener("activate", (e) =>
+  e.waitUntil(
+    caches
+      .keys()
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
+  )
+);
+
+self.addEventListener("message", (e) => {
+  if (e.data?.type === "SKIP_WAITING") self.skipWaiting();
+});
+
+self.addEventListener("fetch", (e) => {
+  if (e.request.method !== "GET") return;
+  const url = new URL(e.request.url);
+  if (url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/src/") || url.pathname.startsWith("/@")) return;
+
+  e.respondWith(
+    caches.match(e.request).then(
+      (cached) =>
+        cached ||
+        fetch(e.request)
+          .then((r) => {
+            if (r.ok && r.type === "basic") {
+              const copy = r.clone();
+              caches.open(CACHE).then((c) => c.put(e.request, copy));
+            }
+            return r;
+          })
+          .catch(() => caches.match("./index.html"))
+    )
+  );
+});
