@@ -2509,6 +2509,8 @@ async function openGemini(
 
   $('#geminiMessages')!.replaceChildren();
   ($<HTMLTextAreaElement>('#geminiQuestion')!).value = '';
+  autosizeGeminiInput();
+  setGeminiContextCollapsed(true);
 
   if (geminiConversationId) {
     const legacyId = geminiConversationId.replace('__', ':');
@@ -2532,7 +2534,47 @@ async function openGemini(
   $('#clearGeminiHistory')?.classList.toggle('hidden', !geminiConversationId || !geminiHistory.length);
   renderGeminiContextCard();
   $<HTMLDialogElement>('#geminiDialog')?.showModal();
-  $<HTMLTextAreaElement>('#geminiQuestion')?.focus();
+  fitGeminiToViewport();
+  scrollGeminiToBottom(false);
+  // En pantallas táctiles no abrimos el teclado solo: taparía la cita y la conversación.
+  if (!window.matchMedia('(pointer: coarse)').matches) $<HTMLTextAreaElement>('#geminiQuestion')?.focus();
+}
+
+function scrollGeminiToBottom(smooth = true) {
+  const box = $<HTMLDivElement>('#geminiMessages');
+  if (!box) return;
+  box.style.scrollBehavior = smooth ? 'smooth' : 'auto';
+  requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; });
+}
+
+function autosizeGeminiInput() {
+  const input = $<HTMLTextAreaElement>('#geminiQuestion');
+  if (!input) return;
+  input.style.height = 'auto';
+  input.style.height = `${Math.min(input.scrollHeight, window.innerHeight * 0.3)}px`;
+}
+
+function setGeminiContextCollapsed(collapsed: boolean) {
+  const card = $('#geminiContextCard');
+  if (!card) return;
+  card.classList.toggle('collapsed', collapsed);
+  card.setAttribute('aria-expanded', String(!collapsed));
+}
+
+// Cuando aparece el teclado del celular, el chat se achica al área visible para que
+// la barra de escritura quede siempre a la vista.
+function fitGeminiToViewport() {
+  const dialog = $<HTMLDialogElement>('#geminiDialog');
+  const vv = window.visualViewport;
+  if (!dialog || !vv) return;
+  if (!dialog.open) {
+    dialog.style.height = '';
+    dialog.style.top = '';
+    return;
+  }
+  dialog.style.height = `${vv.height}px`;
+  dialog.style.top = `${vv.offsetTop}px`;
+  scrollGeminiToBottom(false);
 }
 
 function renderGeminiContextCard() {
@@ -2912,7 +2954,6 @@ async function sendGeminiQuestion(e: Event) {
   const stopBtn = $<HTMLButtonElement>('#geminiStopBtn');
   const actionsWrap = $('.gemini-compose-actions');
   button.disabled = true;
-  button.textContent = 'Respondiendo…';
   stopBtn?.classList.remove('hidden');
   actionsWrap?.classList.add('streaming');
   const imageConversation = Boolean(
@@ -2921,6 +2962,7 @@ async function sendGeminiQuestion(e: Event) {
   const aiSettings = getAISettingsForTask(imageConversation ? 'image' : 'chat');
   addGeminiMessage('user', question);
   qInput.value = '';
+  autosizeGeminiInput();
 
   const controller = new AbortController();
   geminiStreamController = controller;
@@ -3127,7 +3169,6 @@ async function sendGeminiQuestion(e: Event) {
   } finally {
     if (geminiStreamController === controller) geminiStreamController = null;
     button.disabled = false;
-    button.textContent = 'Enviar';
     stopBtn?.classList.add('hidden');
     actionsWrap?.classList.remove('streaming');
   }
@@ -3744,31 +3785,23 @@ function wireEvents() {
   });
   $('#clearGeminiHistory')!.onclick = clearGeminiHistory;
   const geminiDialog = $<HTMLDialogElement>('#geminiDialog');
-  const expandGeminiButton = $<HTMLButtonElement>('#toggleGeminiExpand');
-  expandGeminiButton?.addEventListener('click', () => {
-    if (!geminiDialog) return;
-    const expanded = geminiDialog.classList.toggle('expanded');
-    expandGeminiButton.setAttribute('aria-expanded', String(expanded));
-    expandGeminiButton.setAttribute('aria-label', expanded ? 'Restaurar tamaño del chat' : 'Ampliar este chat a pantalla completa');
-    expandGeminiButton.title = expanded ? 'Restaurar tamaño del chat' : 'Ampliar este chat a pantalla completa';
-    expandGeminiButton.textContent = expanded ? '⤢' : '⛶';
-    if (expanded) {
-      requestAnimationFrame(() => {
-        const messages = $<HTMLDivElement>('#geminiMessages');
-        if (messages) messages.scrollTop = messages.scrollHeight;
-      });
-    }
+  const geminiCard = $('#geminiContextCard');
+  geminiCard?.addEventListener('click', (event) => {
+    if ((event.target as HTMLElement).closest('a,button')) return;
+    setGeminiContextCollapsed(!geminiCard.classList.contains('collapsed'));
   });
+  geminiCard?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    setGeminiContextCollapsed(!geminiCard.classList.contains('collapsed'));
+  });
+  window.visualViewport?.addEventListener('resize', fitGeminiToViewport);
+  window.visualViewport?.addEventListener('scroll', fitGeminiToViewport);
   geminiDialog?.addEventListener('close', () => {
     geminiStreamController?.abort();
     geminiAttachedImage = null;
-    geminiDialog.classList.remove('expanded');
-    expandGeminiButton?.setAttribute('aria-expanded', 'false');
-    expandGeminiButton?.setAttribute('aria-label', 'Ampliar este chat a pantalla completa');
-    if (expandGeminiButton) {
-      expandGeminiButton.title = 'Ampliar este chat a pantalla completa';
-      expandGeminiButton.textContent = '⛶';
-    }
+    geminiDialog.style.height = '';
+    geminiDialog.style.top = '';
   });
   $('#aiAutofillBookBtn')?.addEventListener('click', () => void autofillBookWithAI());
 
@@ -3778,8 +3811,10 @@ function wireEvents() {
       $<HTMLFormElement>('#geminiForm')?.requestSubmit();
     };
   });
+  $('#geminiQuestion')?.addEventListener('input', autosizeGeminiInput);
   $('#geminiQuestion')?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    const desktopEnter = e.key === 'Enter' && !e.shiftKey && !e.isComposing && window.matchMedia('(pointer: fine)').matches;
+    if (desktopEnter || (e.key === 'Enter' && (e.ctrlKey || e.metaKey))) {
       e.preventDefault();
       $<HTMLFormElement>('#geminiForm')?.requestSubmit();
     }
