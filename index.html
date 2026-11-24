@@ -2,10 +2,68 @@
 <html lang="es">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#242622"><meta name="description" content="Tu biblioteca personal y cuaderno de lectura">
-<meta property="og:title" content="Librarium"><meta property="og:description" content="Tu biblioteca personal y cuaderno de lectura">
+<meta name="theme-color" content="#242622">
+<meta name="description" content="Organizá tus lecturas, notas finales, citas favoritas y reseñas personales en un cuaderno privado que funciona sin conexión y en tu celular.">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="es_AR">
+<meta property="og:site_name" content="Librarium">
+<meta property="og:title" content="Librarium – Biblioteca personal y cuaderno de lectura">
+<meta property="og:description" content="Organizá tus lecturas, notas finales, citas favoritas y reseñas personales en un cuaderno privado que funciona sin conexión y en tu celular.">
+<meta property="og:image" content="./assets/og-librarium.jpg">
+<meta property="og:image:type" content="image/jpeg">
+<meta property="og:image:width" content="1376">
+<meta property="og:image:height" content="768">
+<meta property="og:image:alt" content="Librarium: cuaderno de lectura abierto con marcador y estilográfica sobre escritorio cálido">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Librarium – Biblioteca personal y cuaderno de lectura">
+<meta name="twitter:description" content="Organizá tus lecturas, notas finales, citas favoritas y reseñas personales en un cuaderno privado que funciona sin conexión y en tu celular.">
+<meta name="twitter:image" content="./assets/og-librarium.jpg">
 <link rel="manifest" href="./manifest.json"><link rel="icon" href="./assets/librarium-icon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="./assets/apple-touch-icon.png">
-<title>Librarium</title>
+<title>Librarium – Biblioteca personal y cuaderno de lectura</title>
+<script>
+(function () {
+  try {
+    var absUrl = window.location.href.split('#')[0];
+    var absImg = new URL('./assets/og-librarium.jpg', absUrl).href;
+    var head = document.head;
+    var canonical = document.querySelector('link[rel="canonical"]');
+    if (!canonical) {
+      canonical = document.createElement('link');
+      canonical.setAttribute('rel', 'canonical');
+      head.appendChild(canonical);
+    }
+    canonical.setAttribute('href', absUrl);
+    var setMeta = function (attr, key, val) {
+      var el = document.querySelector('meta[' + attr + '="' + key + '"]');
+      if (!el) {
+        el = document.createElement('meta');
+        el.setAttribute(attr, key);
+        head.appendChild(el);
+      }
+      el.setAttribute('content', val);
+    };
+    setMeta('property', 'og:url', absUrl);
+    setMeta('property', 'og:image', absImg);
+    setMeta('name', 'twitter:image', absImg);
+  } catch (e) {}
+})();
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  "name": "Librarium",
+  "description": "Biblioteca personal y cuaderno de lectura privado con seguimiento de páginas, notas finales, citas favoritas, sincronización opcional en la nube y asistente de lectura con IA.",
+  "applicationCategory": "LifestyleApplication",
+  "operatingSystem": "Any",
+  "inLanguage": "es",
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  }
+}
+</script>
 </head>
 <body>
 <header class="topbar">
@@ -22,14 +80,21 @@
   </div>
 </header>
 
-<nav class="tabs">
-  <button class="tab active" data-view="library">Biblioteca</button>
-  <button class="tab" data-view="reading">En lectura</button>
-  <button class="tab" data-view="notebook">Cuaderno</button>
-  <button class="tab" data-view="quotes">Citas</button>
+<nav class="tabs" role="tablist" aria-label="Secciones principales">
+  <button class="tab active" type="button" role="tab" aria-selected="true" data-view="library">Biblioteca</button>
+  <button class="tab" type="button" role="tab" aria-selected="false" data-view="reading">En lectura</button>
+  <button class="tab" type="button" role="tab" aria-selected="false" data-view="notebook">Cuaderno</button>
+  <button class="tab" type="button" role="tab" aria-selected="false" data-view="quotes">Citas</button>
 </nav>
 
 <main>
+  <aside id="inAppBrowserNotice" class="info-banner hidden" role="status">
+    <span>Abriste Librarium desde un navegador interno. Para usar tu cuenta de Google o conservar tus datos de forma segura, tocá <strong>⋮</strong> y elegí <strong>Abrir en el navegador</strong> (Chrome o Safari).</span>
+    <button id="dismissInAppNotice" type="button" class="mini" aria-label="Cerrar aviso">×</button>
+  </aside>
+  <aside id="offlineNotice" class="info-banner offline-banner hidden" role="status" aria-live="polite">
+    <span>Sin conexión: tus cambios siguen guardándose en este dispositivo.</span>
+  </aside>
   <section id="libraryView" class="view active">
     <button type="button" id="aiConvsBanner" class="ai-convs-banner hidden" aria-haspopup="dialog">
       <span class="ai-convs-icon" aria-hidden="true">💬</span>
@@ -64,10 +129,18 @@
     </div>
     <div id="bookGrid" class="book-grid"></div>
     <div id="emptyBooks" class="empty">
-      <span>❧</span>
+      <span class="empty-ornament" aria-hidden="true">❧</span>
       <h3>Tu biblioteca empieza acá</h3>
-      <p>Agregá tu primer libro manualmente o buscá sus datos en el catálogo.</p>
-      <button class="primary" id="emptyAdd">Añadir un libro</button>
+      <p class="empty-lead">Un espacio privado para seguir tus lecturas, ordenar notas finales y guardar citas con tus propias reflexiones.</p>
+      <ol class="empty-steps">
+        <li><strong>1. Cargá un libro</strong> manualmente, buscando en el catálogo o escaneando su ISBN.</li>
+        <li><strong>2. Guardá citas, notas y fotos</strong> mientras leés desde el celular o la computadora.</li>
+        <li><strong>3. Sincronizá o activá la IA</strong> cuando quieras con tu cuenta de Google o tu clave gratuita de Gemini.</li>
+      </ol>
+      <div class="empty-actions">
+        <button class="primary" id="emptyAdd" type="button">Añadir un libro</button>
+        <button class="secondary" id="emptySampleBtn" type="button">Probar con un libro de ejemplo</button>
+      </div>
     </div>
   </section>
 
@@ -408,6 +481,14 @@ Notas finales:
           <button id="removePrivateGeminiKey" class="mini" type="button">Eliminar clave</button>
         </div>
         <p id="privateGeminiKeyStatus" class="muted" aria-live="polite"></p>
+        <details id="privateKeyGuide" class="private-key-guide">
+          <summary>¿Cómo consigo mi API key gratuita en 1 minuto?</summary>
+          <ol>
+            <li>Entrá a <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Google AI Studio</a> e iniciá sesión con tu cuenta de Google.</li>
+            <li>Tocá <strong>Create API key</strong> (o <em>Crear clave de API</em>) y copiala.</li>
+            <li>Pegala en el campo de arriba y tocá <strong>Guardar en este dispositivo</strong>.</li>
+          </ol>
+        </details>
         <p class="muted private-key-privacy">La clave queda en el almacenamiento local de este navegador, sin cifrar; no se sube a Librarium, no se sincroniza ni se incluye en las copias de seguridad. Las consultas van directamente a Google, que recibe la clave y el contenido enviado. El historial de conversaciones puede sincronizarse con tu cuenta de Librarium si activaste la sincronización. Librarium no incluye una clave global: sin tu clave personal, las funciones de IA quedan desactivadas.</p>
       </div>
       <div class="ai-settings-grid">
@@ -501,6 +582,10 @@ Notas finales:
       </div>
     </div>
     <div id="geminiContextCard" class="gemini-context-card collapsed" role="button" tabindex="0" aria-expanded="false" title="Tocá para ver más o menos"></div>
+    <div id="geminiNoKeyBanner" class="gemini-nokey hidden" role="status">
+      <span>Falta tu API key personal de Gemini para conversar con el asistente.</span>
+      <button type="button" id="geminiOpenKeySettings" class="secondary">Configurar mi API key</button>
+    </div>
     <div id="geminiMessages" class="gemini-messages" aria-live="polite"></div>
     <div class="gemini-bottom">
       <div class="gemini-chips">
