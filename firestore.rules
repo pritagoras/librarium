@@ -50,6 +50,10 @@ service cloud.firestore {
       return !(field in data) || data[field] == null || (data[field] is int && data[field] >= 0);
     }
 
+    function isOptionalPositiveBoundedInt(data, field, maxVal) {
+      return !(field in data) || data[field] == null || (data[field] is int && data[field] >= 1 && data[field] <= maxVal);
+    }
+
     function isOptionalTimestamp(data, field) {
       return !(field in data) || data[field] == null || data[field] is timestamp;
     }
@@ -65,7 +69,7 @@ service cloud.firestore {
       return data.keys().hasAll(['uid', 'displayName', 'email', 'createdAt', 'updatedAt'])
         && data.keys().hasOnly([
           'uid', 'displayName', 'email', 'photoURL',
-          'lastActiveAt', 'booksCount', 'bookSummaries',
+          'lastActiveAt', 'visitCount', 'booksCount', 'bookSummaries',
           'createdAt', 'updatedAt'
         ])
         && data.uid == userId
@@ -74,6 +78,7 @@ service cloud.firestore {
         && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
         && isOptionalString(data, 'photoURL', 1000)
         && isOptionalTimestamp(data, 'lastActiveAt')
+        && isOptionalPositiveBoundedInt(data, 'visitCount', 1000000)
         && isOptionalNonNegInt(data, 'booksCount')
         && (!('bookSummaries' in data) || data.bookSummaries == null || (
           data.bookSummaries is list &&
@@ -254,6 +259,7 @@ service cloud.firestore {
         && isValidId(userId)
         && isValidUserProfile(incoming(), userId)
         && (!('lastActiveAt' in incoming()) || incoming().lastActiveAt == request.time)
+        && (!('visitCount' in incoming()) || incoming().visitCount == 1)
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
       allow update: if isVerifiedOwner(userId)
@@ -263,9 +269,14 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (!('lastActiveAt' in incoming()) || incoming().lastActiveAt == request.time || incoming().lastActiveAt == existing().lastActiveAt)
+        && (
+          !('visitCount' in incoming()) ||
+          (!('visitCount' in existing()) && incoming().visitCount >= 1 && incoming().visitCount <= 2) ||
+          ('visitCount' in existing() && (incoming().visitCount == existing().visitCount || incoming().visitCount == existing().visitCount + 1))
+        )
         && incoming().diff(existing()).affectedKeys().hasOnly([
           'displayName', 'email', 'photoURL',
-          'lastActiveAt', 'booksCount', 'bookSummaries',
+          'lastActiveAt', 'visitCount', 'booksCount', 'bookSummaries',
           'updatedAt'
         ]);
       allow delete: if isVerifiedOwner(userId) && isValidId(userId);

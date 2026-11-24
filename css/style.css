@@ -476,5 +476,11 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 :root[data-theme="dark"] .user-book-status.status-reading{background:#34432e;color:#cfe2c4}
 :root[data-theme="dark"] .user-book-status.status-finished{background:#30452f;color:#c9e6c6}
 :root[data-theme="dark"] .user-book-status.status-paused{background:#473b22;color:#f0d699}
+.users-visits-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
+.users-visit-stat{padding:11px 12px;border:1px solid var(--line);border-radius:8px;background:var(--white);display:flex;flex-direction:column;gap:3px}
+.users-visit-stat-label{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.users-visit-stat strong{font-size:20px;line-height:1.15;color:var(--brown);font-variant-numeric:tabular-nums}
+.users-visit-sub{font-size:12px;color:var(--muted);line-height:1.35}
+:root[data-theme="dark"] .users-visit-stat{background:#292b28}
 
 
