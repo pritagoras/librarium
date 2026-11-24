@@ -2,5 +2,5 @@
   "name": "Librarium",
   "description": "Tu biblioteca personal y cuaderno de lectura",
   "requestFramePermissions": ["camera"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": []
 }

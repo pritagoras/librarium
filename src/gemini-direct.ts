@@ -128,38 +128,12 @@ export async function directGeminiRequest(
       throw lastError || Error('No se pudo consultar Gemini.');
     }
 
-    if (route === 'transcribe-audio') {
-      const result = await generate(apiKey, 'gemini-3.5-transcribe', (model) => ({
-        contents: [{ role: 'user', parts: [
-          { inlineData: { mimeType: payload.mimeType || 'audio/webm', data: payload.data } },
-          { text: 'Transcribí fielmente este audio en español. Devolvé únicamente el texto dictado, con puntuación natural y sin explicaciones ni Markdown.' },
-        ] }],
-      }), signal);
-      return responseJSON({ text: result.text, model: result.model });
-    }
-
     if (route === 'transcribe') {
       const prompt = 'Transcribí fielmente todo el texto legible de esta página, en el idioma original. Conservá palabras, acentos, puntuación y párrafos. No traduzcas, resumas, corrijas ni agregues explicaciones. Si un fragmento es realmente ilegible, indicá [ilegible]. Devolvé únicamente la transcripción, sin Markdown ni comentarios.';
       const result = await generate(apiKey, preferred, (model) => textRequest([{ role: 'user', parts: [
         { text: prompt }, { inlineData: { mimeType: payload.mimeType || 'image/jpeg', data: payload.data } },
       ] }], '', model, 'low'), signal);
       return responseJSON({ text: result.text, model: result.model });
-    }
-
-    if (route === 'tts') {
-      const voice = ['Kore', 'Puck', 'Charon', 'Fenrir', 'Zephyr'].includes(payload.voiceName) ? payload.voiceName : 'Kore';
-      const model = 'gemini-3.8-flash-lite-tts';
-      const response = await googleRequest(apiKey, model, {
-        contents: [{ role: 'user', parts: [{ text: String(payload.text || '').replace(/\s+/g, ' ').trim().slice(0, 3500) }] }],
-        generationConfig: {
-          responseModalities: ['AUDIO'],
-          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
-        },
-      }, signal);
-      const result = await response.json();
-      const audio = result.candidates?.[0]?.content?.parts?.find((part: any) => part.inlineData?.data)?.inlineData?.data;
-      if (!audio) throw Error('No se pudo generar el audio de lectura.');
-      return responseJSON({ audioBase64: audio, mimeType: 'audio/wav', model });
     }
 
     if (route === 'book-autofill') {
