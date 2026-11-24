@@ -495,6 +495,7 @@ function sortBooks(list: Book[], sortBy: SortOption): Book[] {
 }
 
 function render() {
+  scheduleAiConvsBanner();
   populateTagFilter();
   const q = ($<HTMLInputElement>('#bookSearch')?.value || '').toLowerCase().trim();
   const statusFilter = $<HTMLSelectElement>('#bookFilter')?.value || 'all';
@@ -2467,6 +2468,168 @@ function initAskGesture() {
   });
 }
 
+type AiConvRow = {
+  conv: Conversation;
+  book: Book;
+  label: string;
+  target: string;
+  question: string;
+  answer: string;
+  turns: number;
+  seed: Parameters<typeof openGemini>[0];
+};
+let aiConvRows: AiConvRow[] = [];
+let aiConvsReturn = false;
+let aiConvsBannerTimer: ReturnType<typeof setTimeout> | undefined;
+
+function plainSnippet(text: string, max: number): string {
+  const clean = String(text || '').replace(/[*#`>_]/g, '').replace(/\s+/g, ' ').trim();
+  return clean.length > max ? `${clean.slice(0, max).trimEnd()}…` : clean;
+}
+
+async function loadAiConversationRows(): Promise<AiConvRow[]> {
+  const [convs, notes, entries, quotes, analyses] = await Promise.all([
+    all<Conversation>('conversations'),
+    all<Note>('notes'),
+    all<Entry>('entries'),
+    all<Quote>('quotes'),
+    all<BookAnalysis>('analyses'),
+  ]);
+  const rows: AiConvRow[] = [];
+  for (const conv of convs) {
+    if (!conv.history?.length) continue;
+    const match = /^(note|entry|quote|book|review)(?:__|:)(.+)$/.exec(conv.id);
+    if (!match) continue;
+    const kind = match[1];
+    const key = sanitizeId(match[2]);
+    const findBook = (id?: string) => books.find((b) => b.id === (id || conv.bookId));
+    let book: Book | undefined;
+    let label = '';
+    let target = '';
+    let seed: AiConvRow['seed'] | null = null;
+
+    if (kind === 'note') {
+      const n = notes.find((x) => sanitizeId(x.id) === key);
+      if (!n) continue;
+      book = findBook(n.bookId);
+      label = `Nota ${n.number}`;
+      target = n.text;
+      seed = { noteId: n.id };
+    } else if (kind === 'entry') {
+      const e = entries.find((x) => sanitizeId(x.id) === key);
+      if (!e) continue;
+      book = findBook(e.bookId);
+      label = `Anotación · pág. ${e.page}`;
+      target = e.title || e.text || '';
+      seed = { entryId: e.id };
+    } else if (kind === 'quote') {
+      const q = quotes.find((x) => sanitizeId(x.id) === key);
+      if (!q) continue;
+      book = findBook(q.bookId);
+      label = `Cita${q.page != null ? ` · pág. ${q.page}` : ''}`;
+      target = q.text;
+      seed = { quoteId: q.id };
+    } else {
+      book = books.find((b) => sanitizeId(b.id) === key) || findBook();
+      if (!book) continue;
+      if (kind === 'book') {
+        const analysis = analyses.find((a) => a.bookId === book!.id);
+        label = 'Síntesis del libro';
+        target = analysis?.summary || '';
+        seed = analysis ? { bookId: book.id, analysis } : { bookId: book.id, conversationKey: conv.id };
+      } else {
+        label = 'Mi reseña';
+        target = book.review || '';
+        seed = { bookId: book.id, conversationKey: conv.id };
+      }
+    }
+    if (!book || !seed) continue;
+
+    const lastUser = [...conv.history].reverse().find((t) => t.role === 'user');
+    const lastModel = [...conv.history].reverse().find((t) => t.role === 'model');
+    const userTexts = (lastUser?.parts || []).map((part) => part.text).filter(Boolean);
+    rows.push({
+      conv,
+      book,
+      label,
+      target: plainSnippet(target, 110),
+      question: plainSnippet(userTexts[userTexts.length - 1] || '', 120),
+      answer: plainSnippet((lastModel?.parts || []).map((part) => part.text).join(' '), 160),
+      turns: conv.history.filter((t) => t.role === 'user').length,
+      seed,
+    });
+  }
+  return rows.sort((a, b) => (b.conv.updatedAt || '').localeCompare(a.conv.updatedAt || ''));
+}
+
+function scheduleAiConvsBanner() {
+  clearTimeout(aiConvsBannerTimer);
+  aiConvsBannerTimer = setTimeout(() => void refreshAiConvsBanner(), 250);
+}
+
+async function refreshAiConvsBanner() {
+  const banner = $('#aiConvsBanner');
+  if (!banner) return;
+  try {
+    const rows = await loadAiConversationRows();
+    const bookCount = new Set(rows.map((r) => r.book.id)).size;
+    banner.classList.toggle('hidden', rows.length === 0);
+    const summary = $('#aiConvsSummary');
+    if (summary && rows.length) {
+      summary.textContent = `${rows.length} ${rows.length === 1 ? 'charla' : 'charlas'} en ${bookCount} ${bookCount === 1 ? 'libro' : 'libros'} · última: ${rows[0].book.title}`;
+    }
+  } catch {
+    banner.classList.add('hidden');
+  }
+}
+
+function renderAiConversationList() {
+  const host = $('#aiConvsList');
+  if (!host) return;
+  const q = ($<HTMLInputElement>('#aiConvsSearch')?.value || '').toLowerCase().trim();
+  const visible = aiConvRows.filter((r) =>
+    !q || `${r.book.title} ${r.book.author || ''} ${r.label} ${r.target} ${r.question} ${r.answer}`.toLowerCase().includes(q),
+  );
+  if (!visible.length) {
+    host.innerHTML = `<p class="muted ai-convs-empty">${q ? 'No hay conversaciones que coincidan.' : 'Todavía no hay conversaciones con la IA.'}</p>`;
+    return;
+  }
+  const groups = new Map<string, AiConvRow[]>();
+  for (const row of visible) {
+    if (!groups.has(row.book.id)) groups.set(row.book.id, []);
+    groups.get(row.book.id)!.push(row);
+  }
+  host.innerHTML = [...groups.values()]
+    .map((list) => {
+      const book = list[0].book;
+      return `<section class="ai-convs-group">
+        <h3>${esc(book.title)}${book.author ? `<small>${esc(book.author)}</small>` : ''}</h3>
+        ${list
+          .map((r) => {
+            const date = r.conv.updatedAt
+              ? new Date(r.conv.updatedAt).toLocaleDateString('es-AR', { day: 'numeric', month: 'short' })
+              : '';
+            return `<button type="button" class="ai-conv-row" data-conv-id="${esc(r.conv.id)}">
+              <span class="ai-conv-meta"><b>${esc(r.label)}</b><span>${r.turns} ${r.turns === 1 ? 'pregunta' : 'preguntas'}${date ? ` · ${esc(date)}` : ''}</span></span>
+              ${r.target ? `<span class="ai-conv-target">${esc(r.target)}</span>` : ''}
+              ${r.question ? `<span class="ai-conv-q"><em>Vos:</em> ${esc(r.question)}</span>` : ''}
+              ${r.answer ? `<span class="ai-conv-a"><em>IA:</em> ${esc(r.answer)}</span>` : ''}
+            </button>`;
+          })
+          .join('')}
+      </section>`;
+    })
+    .join('');
+}
+
+async function openAiConversations() {
+  const dialog = $<HTMLDialogElement>('#aiConvsDialog');
+  if (!dialog) return;
+  aiConvRows = await loadAiConversationRows();
+  renderAiConversationList();
+  if (!dialog.open) dialog.showModal();
+}
+
 async function openGemini(
   seed: {
     noteId?: string;
@@ -2956,6 +3119,7 @@ async function saveGeminiHistory() {
     updatedAt: new Date().toISOString(),
   });
   $('#clearGeminiHistory')?.classList.toggle('hidden', !geminiHistory.length);
+  scheduleAiConvsBanner();
 }
 
 async function clearGeminiHistory() {
@@ -2973,6 +3137,7 @@ async function clearGeminiHistory() {
   geminiConversationHadImages = false;
   $('#geminiMessages')!.replaceChildren();
   $('#clearGeminiHistory')?.classList.add('hidden');
+  scheduleAiConvsBanner();
 }
 
 async function sendGeminiQuestion(e: Event) {
@@ -3897,6 +4062,21 @@ function wireEvents() {
     geminiAttachedImage = null;
     geminiDialog.style.height = '';
     geminiDialog.style.top = '';
+    // Si el chat se abrió desde la lista de conversaciones, al cerrarlo volvemos a ella.
+    if (aiConvsReturn) {
+      aiConvsReturn = false;
+      void openAiConversations();
+    }
+  });
+  $('#aiConvsBanner')?.addEventListener('click', () => void openAiConversations());
+  $('#aiConvsSearch')?.addEventListener('input', renderAiConversationList);
+  $('#aiConvsList')?.addEventListener('click', (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLElement>('[data-conv-id]');
+    const row = aiConvRows.find((r) => r.conv.id === button?.dataset.convId);
+    if (!row) return;
+    $<HTMLDialogElement>('#aiConvsDialog')?.close();
+    aiConvsReturn = true;
+    void openGemini(row.seed);
   });
   $('#aiAutofillBookBtn')?.addEventListener('click', () => void autofillBookWithAI());
 
