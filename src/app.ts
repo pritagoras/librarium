@@ -2861,7 +2861,7 @@ function createGeminiModelTurn(initialText = ''): { wrapper: HTMLElement; bubble
   const bubble = document.createElement('div');
   bubble.className = 'gemini-message model';
   if (initialText) bubble.innerHTML = renderGeminiMarkdown(initialText);
-  else bubble.textContent = 'Pensando…';
+  else bubble.innerHTML = '<span class="gemini-thinking" aria-label="Pensando">Pensando<span>.</span><span>.</span><span>.</span></span>';
   wrapper.append(bubble);
   $('#geminiMessages')!.append(wrapper);
   wrapper.scrollIntoView({ block: 'nearest' });
@@ -2966,6 +2966,14 @@ async function sendGeminiQuestion(e: Event) {
 
   const controller = new AbortController();
   geminiStreamController = controller;
+  // Si la conexión se cuelga (sin respuesta inicial o sin nuevos datos), cortamos en vez de quedarnos en "Pensando…".
+  let stalled = false;
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+  const armWatchdog = (ms: number) => {
+    clearTimeout(watchdog);
+    watchdog = setTimeout(() => { stalled = true; controller.abort(); }, ms);
+  };
+  armWatchdog(90000);
   let modelTurn: { wrapper: HTMLElement; bubble: HTMLElement } | null = null;
   let answer = '';
   let usedModel: string = aiSettings.model;
@@ -3072,6 +3080,7 @@ async function sendGeminiQuestion(e: Event) {
       throw Error(message);
     }
     usedModel = response.headers.get('X-Librarium-Model') || usedModel;
+    armWatchdog(60000);
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -3106,6 +3115,7 @@ async function sendGeminiQuestion(e: Event) {
       } else if (eventName === 'message' && Array.isArray(payload.candidates)) {
         const piece = payload.candidates
           .flatMap((candidate: any) => candidate.content?.parts || [])
+          .filter((part: any) => !part.thought)
           .map((part: any) => part.text || '')
           .join('');
         if (piece) {
@@ -3115,6 +3125,8 @@ async function sendGeminiQuestion(e: Event) {
             messagesBox.scrollTop = messagesBox.scrollHeight;
           }
         }
+      } else if (eventName === 'message' && payload.promptFeedback?.blockReason && !answer.trim()) {
+        streamError = `La consulta fue bloqueada por Gemini (${payload.promptFeedback.blockReason}).`;
       } else if (eventName === 'message' && payload.error) {
         streamError = payload.error.message || 'Error al generar respuesta.';
       } else if (eventName === 'done') {
@@ -3128,7 +3140,9 @@ async function sendGeminiQuestion(e: Event) {
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
-      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+      armWatchdog(45000);
+      // Normalizamos sobre el buffer completo: un "\r\n" partido entre dos pedazos no se reconocía y el mensaje quedaba trabado.
+      buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n');
       const blocks = buffer.split('\n\n');
       buffer = blocks.pop() || '';
       for (const block of blocks) {
@@ -3152,12 +3166,15 @@ async function sendGeminiQuestion(e: Event) {
     );
     await saveGeminiHistory();
   } catch (err: any) {
-    if (err?.name === 'AbortError') {
+    if (err?.name === 'AbortError' && stalled && !answer.trim()) {
+      modelTurn?.wrapper.remove();
+      addGeminiMessage('error', 'La IA tardó demasiado en responder. Probá de nuevo; si pasa seguido, elegí un nivel de razonamiento más bajo en Ajustes de IA.');
+    } else if (err?.name === 'AbortError') {
       const partial = answer.trim();
       if (partial && modelTurn) {
         modelTurn.bubble.innerHTML = renderGeminiMarkdown(partial);
         attachGeminiMessageActions(modelTurn.wrapper, partial);
-        addGeminiMessage('system', 'Respuesta detenida.');
+        addGeminiMessage('system', stalled ? 'La respuesta se cortó por falta de datos.' : 'Respuesta detenida.');
       } else {
         modelTurn?.wrapper.remove();
         addGeminiMessage('system', 'Consulta detenida.');
@@ -3167,6 +3184,7 @@ async function sendGeminiQuestion(e: Event) {
       addGeminiMessage('error', `No pude consultar Gemini: ${err.message}`);
     }
   } finally {
+    clearTimeout(watchdog);
     if (geminiStreamController === controller) geminiStreamController = null;
     button.disabled = false;
     stopBtn?.classList.add('hidden');
