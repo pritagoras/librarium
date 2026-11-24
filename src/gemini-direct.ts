@@ -2,7 +2,7 @@ type Payload = Record<string, any>;
 
 const API_ROOT = 'https://generativelanguage.googleapis.com/v1beta/models';
 const DEFAULT_MODEL = 'gemini-3.8-flash';
-const FALLBACK_MODELS = [DEFAULT_MODEL, 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
+export const FALLBACK_MODELS = [DEFAULT_MODEL, 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
 
 function apiError(data: any, status: number): Error & { status?: number } {
   const error = new Error(data?.error?.message || `Google Gemini respondió HTTP ${status}.`) as Error & {
@@ -145,7 +145,8 @@ export async function directGeminiRequest(
     }
     const preferred = modelFor(payload);
     if (route === 'chat-stream') {
-      const models = [preferred, ...FALLBACK_MODELS.filter((model) => model !== preferred)];
+      // singleModel: la app maneja los reintentos entre modelos (también a mitad de respuesta).
+      const models = payload.singleModel ? [preferred] : [preferred, ...FALLBACK_MODELS.filter((model) => model !== preferred)];
       let lastError: any;
       for (const model of models) {
         try {
