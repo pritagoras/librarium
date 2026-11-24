@@ -1,0 +1,10 @@
+{
+  "name": "Librarium",
+  "short_name": "Librarium",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f4efe5",
+  "theme_color": "#48382d",
+  "lang": "es",
+  "icons": []
+}
