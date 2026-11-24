@@ -1,6 +1,6 @@
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const statusNames={pending:"Pendiente",reading:"En lectura",paused:"Pausado",finished:"Terminado"};
-let books=[],activeBook=null,detailTab="notes",pendingImport=null,coverData=null,photoData=null,catalogMode=false,geminiHistory=[],geminiItem=null,geminiAttachedImage=null,geminiExtraContext="";
+let books=[],activeBook=null,detailTab="notes",pendingImport=null,coverData=null,photoData=null,catalogMode=false,geminiHistory=[],geminiItem=null,geminiAttachedImage=null,geminiExtraContext="",geminiConversationId=null,geminiConversationHadImages=false;
 const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fileData=f=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(f)});
@@ -45,13 +45,13 @@ $("#importNotes")?.addEventListener("click",()=>{pendingImport=null;$("#jsonText
 $("#addManualNote")?.addEventListener("click",()=>{$("#manualNoteForm").reset();$("#manualBookTitle").textContent=b.title;$("#manualNoteError").textContent="";$("#manualReferencePage").disabled=true;$("#manualReferencePage").required=false;$("#manualReferenceLabel").classList.add("hidden");$("#manualNoteDialog").showModal()});
 $("#exportNotes")?.addEventListener("click",async()=>{let ns=(await all("notes")).filter(n=>n.bookId===b.id);download({schema_version:1,book:{title:b.title,author:b.author},notes:ns.map(n=>({number:n.number,...((n.section||1)>1?{section:n.section}:{}),reference_page:n.referencePage,end_page:n.endPage,text:n.text,comment:n.comment,read:n.read}))},`${slug(b.title)}-notas.json`)});
 $$("[data-toggle-note]").forEach(x=>x.onclick=async()=>{let n=await get("notes",x.dataset.toggleNote);n.read=!n.read;await put("notes",n);renderDetail()});
-$$("[data-delete-note]").forEach(x=>x.onclick=async()=>{if(confirm("¿Eliminar esta nota?")){await del("notes",x.dataset.deleteNote);renderDetail()}});
+$$("[data-delete-note]").forEach(x=>x.onclick=async()=>{if(confirm("¿Eliminar esta nota?")){await del("notes",x.dataset.deleteNote);await del("conversations",`note:${x.dataset.deleteNote}`);renderDetail()}});
 $$(`[data-comment-note]`).forEach(x=>x.onclick=async()=>{const n=await get("notes",x.dataset.commentNote);if(!n)return;$("#commentNoteId").value=n.id;$("#commentNoteLabel").textContent=`Nota ${n.number}${n.section>1?` · Sección ${n.section}`:""}`;$("#noteCommentText").value=n.comment||"";$("#noteCommentDialog").showModal()});
 $$(`[data-open-photo]`).forEach(x=>x.onclick=()=>openPhoto(x.dataset.openPhoto));
 $$(`[data-edit-entry]`).forEach(x=>x.onclick=async()=>{const entry=await get("entries",x.dataset.editEntry);if(entry)openAnnotation(entry.bookId,entry)});
 $$("[data-ask-note]").forEach(x=>x.onclick=()=>openGemini({noteId:x.dataset.askNote}));$$("[data-ask-entry]").forEach(x=>x.onclick=()=>openGemini({entryId:x.dataset.askEntry}));
-$$("[data-delete-entry]").forEach(x=>x.onclick=async()=>{if(confirm("¿Eliminar este registro?")){await del("entries",x.dataset.deleteEntry);renderDetail()}});
-$("#deleteBook")?.addEventListener("click",async()=>{if(confirm("¿Eliminar el libro y todos sus registros?")){await del("books",b.id);for(let n of notes)await del("notes",n.id);for(let x of entries)await del("entries",x.id);books=await all("books");render();$("#detailDialog").close()}});
+$$("[data-delete-entry]").forEach(x=>x.onclick=async()=>{if(confirm("¿Eliminar este registro?")){await del("entries",x.dataset.deleteEntry);await del("conversations",`entry:${x.dataset.deleteEntry}`);renderDetail()}});
+$("#deleteBook")?.addEventListener("click",async()=>{if(confirm("¿Eliminar el libro y todos sus registros?")){await del("books",b.id);for(let n of notes){await del("notes",n.id);await del("conversations",`note:${n.id}`)}for(let x of entries){await del("entries",x.id);await del("conversations",`entry:${x.id}`)}books=await all("books");render();$("#detailDialog").close()}});
 }
 function slug(s){return (s||"librarium").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")}
 function download(obj,name){let a=document.createElement("a"),u=URL.createObjectURL(new Blob([JSON.stringify(obj,null,2)],{type:"application/json"}));a.href=u;a.download=name;a.click();URL.revokeObjectURL(u)}
@@ -74,13 +74,19 @@ $("#askCommentGemini").onclick=async()=>{const n=await get("notes",$("#commentNo
 $("#askAnnotationGemini").onclick=()=>{const bookId=$("#annotationBook").value,entryId=$("#annotationId").value||null,page=$("#annotationPage").value,title=$("#annotationHeading").value.trim(),text=$("#annotationText").value.trim(),image=photoData;const extraText=`Anotación que estoy editando${page?` (página ${page})`:""}${title?`: ${title}`:""}.\n${text||"(todavía no escribí un comentario)"}`;$("#annotationDialog").close();openGemini({bookId,entryId,image,extraText})};
 $("#journalList").onclick=async e=>{const photo=e.target.closest("[data-open-photo]"),edit=e.target.closest("[data-edit-entry]"),ask=e.target.closest("[data-ask-entry]");if(photo)openPhoto(photo.dataset.openPhoto);else if(edit){const entry=await get("entries",edit.dataset.editEntry);if(entry)openAnnotation(entry.bookId,entry)}else if(ask){const entry=await get("entries",ask.dataset.askEntry);if(entry)openGemini({bookId:entry.bookId,entryId:entry.id,image:entry.photo||null})}};
 async function renderJournal(){let entries=await all("entries");entries.sort((a,b)=>b.createdAt.localeCompare(a.createdAt));$("#journalList").innerHTML=entries.map(x=>{let b=books.find(b=>b.id===x.bookId);return `<article class="journal-item" data-ai-entry="${x.id}"><small>${esc(b?.title||"Libro eliminado")} · PÁGINA ${x.page}</small><h3>${esc(x.title||"Sin título")}</h3><p>${esc(x.text||"")}</p>${x.photo?`<img class="annotation-photo-thumb" data-open-photo="${x.id}" src="${x.photo}" alt="Abrir fotografía">`:""}<div class="annotation-actions"><button class="mini" data-edit-entry="${x.id}">Editar anotación</button><button class="mini" data-ask-entry="${x.id}">Preguntar a la IA</button></div></article>`}).join("")||'<p class="empty-inline">Tus anotaciones y fotografías aparecerán acá.</p>'}
-$("#backupBtn").onclick=async()=>{let data={app:"Librarium",version:1,exportedAt:new Date().toISOString(),books:await all("books"),notes:await all("notes"),entries:await all("entries")};download(data,"librarium-copia-"+new Date().toISOString().slice(0,10)+".json")};
+$("#backupBtn").onclick=async()=>{let data={app:"Librarium",version:1,exportedAt:new Date().toISOString(),books:await all("books"),notes:await all("notes"),entries:await all("entries"),conversations:await all("conversations")};download(data,"librarium-copia-"+new Date().toISOString().slice(0,10)+".json")};
 $("#restoreBtn").onclick=()=>$("#restoreFile").click();
-$("#restoreFile").onchange=async e=>{const file=e.target.files[0];if(!file)return;try{let d=JSON.parse(await file.text());if(!Array.isArray(d.books)||!Array.isArray(d.notes)||!Array.isArray(d.entries))throw Error("Copia no reconocida");if(!confirm("Se incorporarán los datos de la copia. Los registros con el mismo ID se actualizarán. ¿Continuar?"))return;for(let b of d.books)await put("books",b);for(let n of d.notes)await put("notes",n);for(let x of d.entries)await put("entries",x);books=await all("books");render();alert("Copia restaurada.")}catch(err){alert("No se pudo restaurar: "+err.message)}finally{e.target.value=""}};
+$("#restoreFile").onchange=async e=>{const file=e.target.files[0];if(!file)return;try{let d=JSON.parse(await file.text());if(!Array.isArray(d.books)||!Array.isArray(d.notes)||!Array.isArray(d.entries))throw Error("Copia no reconocida");if(!confirm("Se incorporarán los datos de la copia. Los registros con el mismo ID se actualizarán. ¿Continuar?"))return;for(let b of d.books)await put("books",b);for(let n of d.notes)await put("notes",n);for(let x of d.entries)await put("entries",x);for(let c of (Array.isArray(d.conversations)?d.conversations:[]))await put("conversations",c);books=await all("books");render();alert("Copia restaurada.")}catch(err){alert("No se pudo restaurar: "+err.message)}finally{e.target.value=""}};
 const GEMINI_KEY="librarium-gemini-key";
+const AI_SETTINGS_KEY="librarium-ai-settings";
+const AI_SETTINGS_DEFAULTS={model:"gemini-3.8-flash",thinking:"auto",style:"natural",customStyle:""};
 const getGeminiKey=()=>{try{return(localStorage.getItem(GEMINI_KEY)||"").trim()}catch{return""}};
+function getAISettings(){try{return{...AI_SETTINGS_DEFAULTS,...JSON.parse(localStorage.getItem(AI_SETTINGS_KEY)||"{}")}}catch{return{...AI_SETTINGS_DEFAULTS}}}
+function saveAISettings(){const settings={model:$("#aiModel").value,thinking:$("#aiThinking").value,style:$("#aiStyle").value,customStyle:$("#aiCustomStyle").value.trim().slice(0,600)};try{localStorage.setItem(AI_SETTINGS_KEY,JSON.stringify(settings));$("#aiSettingsStatus").textContent="Preferencias guardadas en este navegador."}catch{$("#aiSettingsStatus").textContent="No se pudieron guardar las preferencias."}$("#aiCustomStyleWrap").classList.toggle("hidden",settings.style!=="custom")}
+function aiStyleInstruction(settings=getAISettings()){const styles={natural:"Respondé en español, con claridad y tono natural. Explicá los términos difíciles cuando ayude.",concise:"Respondé en español de forma breve y directa. Priorizá la respuesta principal y evitá repeticiones.",detailed:"Respondé en español con detalle y análisis ordenado. Desarrollá las ideas importantes sin agregar datos no respaldados.",socratic:"Respondé en español con preguntas orientadoras que ayuden a pensar el pasaje, junto con una explicación útil."};const base=styles[settings.style]||styles.natural;return settings.style==="custom"&&settings.customStyle?`${base}\nPreferencias adicionales: ${settings.customStyle}`:base}
 function setKeyStatus(text,ok){const s=$("#geminiKeyStatus");s.textContent=text;s.dataset.state=ok?"ok":"warn"}
 function initSettings(){
+  const ai=getAISettings();$("#aiModel").value=ai.model;$("#aiThinking").value=ai.thinking;$("#aiStyle").value=ai.style;$("#aiCustomStyle").value=ai.customStyle;$("#aiCustomStyleWrap").classList.toggle("hidden",ai.style!=="custom");["#aiModel","#aiThinking","#aiStyle"].forEach(selector=>$(selector).addEventListener("change",saveAISettings));$("#aiCustomStyle").addEventListener("input",saveAISettings);
   $("#settingsOpen").onclick=()=>{const key=getGeminiKey();$("#geminiApiKey").value=key;$("#geminiApiKey").type="password";$("#toggleGeminiKey").textContent="Mostrar";setKeyStatus(key?"Clave guardada en este navegador.":"Todavía no hay clave guardada.",!!key);$("#settingsDialog").showModal()};
   $("#toggleGeminiKey").onclick=()=>{const input=$("#geminiApiKey"),show=input.type==="password";input.type=show?"text":"password";$("#toggleGeminiKey").textContent=show?"Ocultar":"Mostrar"};
   $("#saveGeminiKey").onclick=()=>{const key=$("#geminiApiKey").value.trim();if(!key){setKeyStatus("Pegá una clave válida primero.",false);return}try{localStorage.setItem(GEMINI_KEY,key);Promise.resolve(navigator.storage?.persist?.()).catch(()=>{});setKeyStatus("Clave guardada en este navegador.",true)}catch{setKeyStatus("El navegador no permitió guardar la clave.",false)}};
@@ -92,6 +98,7 @@ function initSettings(){
 function initGemini(){
   $("#geminiImage").onchange=async e=>{const f=e.target.files?.[0];geminiAttachedImage=null;if(!f){$("#geminiImageStatus").textContent="También podés adjuntar una foto de un pasaje.";return}if(!f.type.startsWith("image/")){e.target.value="";$("#geminiImageStatus").textContent="Elegí un archivo de imagen.";return}if(f.size>15*1024*1024){e.target.value="";$("#geminiImageStatus").textContent="La imagen supera 15 MB; elegí una más liviana.";return}geminiAttachedImage=await fileData(f);$("#geminiImageStatus").textContent=`Imagen lista: ${f.name}`};
   $("#geminiForm").onsubmit=sendGeminiQuestion;
+  $("#clearGeminiHistory").onclick=clearGeminiHistory;
   $("#geminiDialog").addEventListener("close",()=>{geminiAttachedImage=null;$("#geminiImage").value=""});
   $$("[data-ai-prompt]").forEach(b=>b.onclick=()=>{$("#geminiQuestion").value=b.dataset.aiPrompt;$("#geminiForm").requestSubmit()});
   $("#geminiQuestion").addEventListener("keydown",e=>{if(e.key==="Enter"&&(e.ctrlKey||e.metaKey)){e.preventDefault();$("#geminiForm").requestSubmit()}});
@@ -113,9 +120,12 @@ function initAskGesture(){
 }
 async function openGemini(seed={}){
   const note=seed.noteId?await get("notes",seed.noteId):null,entry=seed.entryId?await get("entries",seed.entryId):null;
-  const bookId=note?.bookId||entry?.bookId||seed.bookId,book=books.find(b=>b.id===bookId)||null;
-  geminiItem={book,note,entry};geminiHistory=[];geminiExtraContext=seed.extraText||"";geminiAttachedImage=seed.image??entry?.photo??null;
+  const bookId=note?.bookId||entry?.bookId||seed.bookId,book=(bookId?await get("books",bookId):null)||books.find(b=>b.id===bookId)||null;
+  geminiItem={book,note,entry};geminiConversationId=note?`note:${note.id}`:entry?`entry:${entry.id}`:null;geminiHistory=[];geminiConversationHadImages=false;geminiExtraContext=seed.extraText||"";geminiAttachedImage=seed.image??entry?.photo??null;
   $("#geminiMessages").replaceChildren();$("#geminiQuestion").value="";$("#geminiImage").value="";
+  const saved=geminiConversationId?await get("conversations",geminiConversationId):null;
+  if(saved){geminiHistory=saved.history||[];geminiConversationHadImages=!!saved.hadImages;if(geminiHistory.length)geminiAttachedImage=null;restoreGeminiTranscript(geminiHistory);if(geminiConversationHadImages)addGeminiMessage("system","Se recuperó la conversación. Las imágenes consultadas antes no se guardan en el historial para ahorrar espacio; podés volver a adjuntarlas.")}
+  $("#clearGeminiHistory").classList.toggle("hidden",!geminiConversationId||!geminiHistory.length);
   renderGeminiContextCard();
   $("#geminiImageStatus").textContent=geminiAttachedImage?"Se incluirá la foto de esta anotación. También podés elegir otra.":"También podés adjuntar una foto de un pasaje.";
   $("#geminiNoKey").classList.toggle("hidden",!!getGeminiKey());
@@ -127,42 +137,48 @@ function renderGeminiContextCard(){
   else if(entry){label=`Anotación · pág. ${entry.page}${entry.title?` · ${entry.title}`:""}`;body=entry.text||""}
   else{label="Anotación nueva";body=geminiExtraContext}
   const comment=note?.comment?`<p class="ctx-comment"><strong>Mi comentario:</strong> ${esc(note.comment)}</p>`:"";
-  const img=geminiAttachedImage?`<img class="ctx-thumb" src="${esc(geminiAttachedImage)}" alt="Foto de la anotación">`:"";
+  const contextImage=geminiAttachedImage||entry?.photo||null,img=contextImage?`<img class="ctx-thumb" src="${esc(contextImage)}" alt="Foto de la anotación">`:"";
   $("#geminiContextCard").innerHTML=`${img}<div class="ctx-body"><p class="eyebrow">${esc(book?.title||"Libro")} · ${esc(label)}</p><p class="ctx-text">${esc(body)||"<em>(sin texto)</em>"}</p>${comment}</div>`;
 }
 function renderGeminiInline(text){let html=esc(text),code=[];html=html.replace(/`([^`]+)`/g,(_,value)=>{const token=`\uE000${code.length}\uE001`;code.push(`<code>${value}</code>`);return token});html=html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,(_,label,url)=>`<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`);html=html.replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/__(.+?)__/g,"<strong>$1</strong>").replace(/~~(.+?)~~/g,"<del>$1</del>").replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g,"$1<em>$2</em>").replace(/(^|[^_])_([^_\n]+)_(?!_)/g,"$1<em>$2</em>");return html.replace(/\uE000(\d+)\uE001/g,(_,i)=>code[Number(i)]||"")}
 function renderGeminiMarkdown(text){const lines=String(text).replace(/\r/g,"").split("\n"),html=[];let paragraph=[],list="",codeLines=null;const flushParagraph=()=>{if(paragraph.length){html.push(`<p>${renderGeminiInline(paragraph.join(" "))}</p>`);paragraph=[]}},closeList=()=>{if(list){html.push(`</${list}>`);list=""}},closeBlocks=()=>{flushParagraph();closeList()};for(const line of lines){if(/^\s*```/.test(line)){if(codeLines){html.push(`<pre><code>${esc(codeLines.join("\n"))}</code></pre>`);codeLines=null}else{closeBlocks();codeLines=[]}continue}if(codeLines){codeLines.push(line);continue}if(!line.trim()){closeBlocks();continue}const heading=line.match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);if(heading){closeBlocks();const level=heading[1].length;html.push(`<h${level}>${renderGeminiInline(heading[2])}</h${level}>`);continue}if(/^\s{0,3}(---+|\*\*\*+)\s*$/.test(line)){closeBlocks();html.push("<hr>");continue}const bullet=line.match(/^\s*[-*+]\s+(.+)$/),numbered=line.match(/^\s*\d+[.)]\s+(.+)$/);if(bullet||numbered){flushParagraph();const type=bullet?"ul":"ol";if(list!==type){closeList();html.push(`<${type}>`);list=type}html.push(`<li>${renderGeminiInline((bullet||numbered)[1])}</li>`);continue}const quote=line.match(/^\s*&gt;\s?(.*)$/);if(quote){closeBlocks();html.push(`<blockquote>${renderGeminiInline(quote[1])}</blockquote>`);continue}closeList();paragraph.push(line.trim())}if(codeLines)html.push(`<pre><code>${esc(codeLines.join("\n"))}</code></pre>`);closeBlocks();return html.join("")}
 function addGeminiMessage(role,text){const p=document.createElement("div");p.className=`gemini-message ${role}`;if(role==="model")p.innerHTML=renderGeminiMarkdown(text);else p.textContent=text;$("#geminiMessages").append(p);p.scrollIntoView({block:"nearest"})}
+function restoreGeminiTranscript(history){for(const item of history){if(item.role!=="user"&&item.role!=="model")continue;const texts=(item.parts||[]).map(part=>part.text).filter(Boolean);if(!texts.length)continue;addGeminiMessage(item.role,item.role==="user"?texts[texts.length-1]:texts.join("\n"))}}
+function boundedGeminiHistory(history){const normalized=history.map(item=>({role:item.role,parts:(item.parts||[]).filter(part=>typeof part.text==="string").map(part=>({text:part.text.slice(0,12000)}))})).filter(item=>item.parts.length);let limited=normalized.length>40?[normalized[0],...normalized.slice(-39)]:normalized;while(JSON.stringify(limited).length>180000&&limited.length>2)limited.splice(1,2);return limited}
+async function saveGeminiHistory(){if(!geminiConversationId)return;await put("conversations",{id:geminiConversationId,history:boundedGeminiHistory(geminiHistory),hadImages:geminiConversationHadImages,updatedAt:new Date().toISOString()});$("#clearGeminiHistory").classList.toggle("hidden",!geminiHistory.length)}
+async function clearGeminiHistory(){if(!geminiConversationId)return;if(!confirm("¿Borrar el historial guardado de esta nota o anotación?"))return;await del("conversations",geminiConversationId);geminiHistory=[];geminiConversationHadImages=false;$("#geminiMessages").replaceChildren();$("#clearGeminiHistory").classList.add("hidden")}
 const geminiModelFallbacks=["gemini-3.8-flash","gemini-3.6-flash","gemini-3.5-flash-lite"];
 const waitMs=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-async function callGeminiModel(contents,key,model){const response=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{method:"POST",headers:{"Content-Type":"application/json","x-goog-api-key":key},body:JSON.stringify({contents,generationConfig:{temperature:0.6,maxOutputTokens:2048}})});let data;try{data=await response.json()}catch{data={}}if(!response.ok){const error=new Error(data.error?.message||`Gemini respondió con el código ${response.status}.`);error.status=response.status;error.apiStatus=data.error?.status;throw error}return data}
-async function requestGeminiWithFallback(contents,key){let lastError;for(let i=0;i<geminiModelFallbacks.length;i++){const model=geminiModelFallbacks[i];try{return {data:await callGeminiModel(contents,key,model),model}}catch(error){lastError=error;if(error.status!==503)throw error;if(i===0)await waitMs(1200)}}throw new Error(`Los modelos de Gemini están temporalmente saturados. ${lastError?.message||"Probá de nuevo en unos minutos."}`)}
+async function callGeminiModel(contents,key,model,settings){const generationConfig={temperature:0.6,maxOutputTokens:2048};if(settings.thinking!=="auto")generationConfig.thinkingConfig={thinkingLevel:settings.thinking};const response=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{method:"POST",headers:{"Content-Type":"application/json","x-goog-api-key":key},body:JSON.stringify({contents,systemInstruction:{parts:[{text:aiStyleInstruction(settings)}]},generationConfig})});let data;try{data=await response.json()}catch{data={}}if(!response.ok){const error=new Error(data.error?.message||`Gemini respondió con el código ${response.status}.`);error.status=response.status;error.apiStatus=data.error?.status;throw error}return data}
+async function requestGeminiWithFallback(contents,key,settings=getAISettings()){const models=[settings.model,...geminiModelFallbacks.filter(model=>model!==settings.model)];let lastError;for(let i=0;i<models.length;i++){const model=models[i];try{return {data:await callGeminiModel(contents,key,model,settings),model}}catch(error){lastError=error;if(error.status!==503)throw error;if(i===0)await waitMs(1200)}}throw new Error(`Los modelos de Gemini están temporalmente saturados. ${lastError?.message||"Probá de nuevo en unos minutos."}`)}
 async function sendGeminiQuestion(e){
   e.preventDefault();
   const key=getGeminiKey();
   if(!key){$("#geminiNoKey").classList.remove("hidden");return}
   const question=$("#geminiQuestion").value.trim();if(!question)return;
   const button=$("#geminiSend");button.disabled=true;button.textContent="Consultando…";
+  const aiSettings=getAISettings();
   addGeminiMessage("user",question);$("#geminiQuestion").value="";
   try{
     const parts=[];
     if(!geminiHistory.length){
       const {book,note,entry}=geminiItem||{},context=[];
-      if(book)context.push(`Contexto del libro: ${book.title} — ${book.author||"autor desconocido"}.`);
+      if(book)context.push(`Libro asociado: «${book.title}». Tené en cuenta este título para interpretar la nota o el pasaje. No inventes detalles de una edición que no se proporcionó.`);
       if(note){context.push(`Nota final ${note.number}${(note.section||1)>1?` (sección ${note.section})`:""}${note.referencePage!=null?`, referencia p. ${note.referencePage}`:""}${note.endPage!=null?`, aparece en p. ${note.endPage}`:""}:`,note.text);if(note.comment)context.push(`Comentario personal: ${note.comment}`)}
       else if(entry){context.push(`Anotación de la página ${entry.page}: ${entry.title||"Sin título"}`,entry.text||"(sin comentario)");if(entry.photo)context.push("Se adjunta también la fotografía asociada.")}
       if(geminiExtraContext)context.push(geminiExtraContext);
       if(context.length){context.push("Usá este material como contexto. Si algo no está en él, aclaralo en vez de inventarlo.");parts.push({text:context.filter(Boolean).join("\n\n")})}
     }
+    if(geminiHistory.length&&geminiItem?.book)parts.push({text:`Libro asociado a esta conversación: «${geminiItem.book.title}». Tené en cuenta el título al responder.`});
     parts.push({text:question});
     const image=geminiAttachedImage||(!geminiHistory.length?geminiItem?.entry?.photo:null)||null;
-    if(image){const [header,data]=image.split(",",2);const mime=header.match(/data:(.*?);base64/)?.[1]||"image/jpeg";parts.push({inlineData:{mimeType:mime,data}})}
+    if(image){const [header,data]=image.split(",",2);const mime=header.match(/data:(.*?);base64/)?.[1]||"image/jpeg";parts.push({inlineData:{mimeType:mime,data}});geminiConversationHadImages=true}
     geminiAttachedImage=null;$("#geminiImage").value="";$("#geminiImageStatus").textContent="También podés adjuntar una foto de un pasaje.";
     const contents=[...geminiHistory,{role:"user",parts}];
-    const {data,model}=await requestGeminiWithFallback(contents,key);
+    const {data,model}=await requestGeminiWithFallback(contents,key,aiSettings);
     const answer=data.candidates?.[0]?.content?.parts?.map(x=>x.text||"").join("").trim();
     if(!answer)throw Error("Gemini no devolvió texto. Puede que la respuesta haya sido bloqueada o esté vacía.");
-    geminiHistory=[...contents,{role:"model",parts:[{text:answer}]}];geminiExtraContext="";if(model!==geminiModelFallbacks[0])addGeminiMessage("system",`Respondió ${model}; el modelo principal estaba saturado.`);addGeminiMessage("model",answer);
+    geminiHistory=[...contents,{role:"model",parts:[{text:answer}]}];geminiExtraContext="";if(model!==aiSettings.model)addGeminiMessage("system",`Respondió ${model}; tu modelo preferido estaba saturado.`);addGeminiMessage("model",answer);await saveGeminiHistory();
   }catch(err){addGeminiMessage("error",`No pude consultar Gemini: ${err.message}`)}
   finally{button.disabled=false;button.textContent="Enviar"}
 }
