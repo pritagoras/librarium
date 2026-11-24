@@ -106,6 +106,44 @@ function getPrivateGeminiKey(): string {
   }
 }
 
+function isAIKeyError(err: any): boolean {
+  if (!getPrivateGeminiKey()) return true;
+  if ([401, 403].includes(Number(err?.status))) return true;
+  const msg = String(err?.message || err || '');
+  return /api key|api_key|clave personal|ajustes de ia|no es válida|permission/i.test(msg);
+}
+
+function openAISettingsGuide() {
+  const dlg = $<HTMLDialogElement>('#settingsDialog');
+  if (!dlg) return;
+  if (!dlg.open) dlg.showModal();
+  const guide = $<HTMLDetailsElement>('#privateKeyGuide');
+  if (guide) guide.open = true;
+  const section = $('.private-key-settings');
+  if (section) {
+    section.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    section.classList.add('private-key-highlight');
+    setTimeout(() => section.classList.remove('private-key-highlight'), 2400);
+  }
+  setTimeout(() => $<HTMLInputElement>('#privateGeminiKeyInput')?.focus(), 120);
+}
+
+function syncGeminiNoKeyBanner() {
+  $('#geminiNoKeyBanner')?.classList.toggle('hidden', Boolean(getPrivateGeminiKey()));
+}
+
+function renderInlineKeyCTA(statusEl: HTMLElement | null, message: string) {
+  if (!statusEl) return;
+  statusEl.replaceChildren();
+  statusEl.append(document.createTextNode(message + ' '));
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'ai-key-cta';
+  btn.textContent = 'Configurar mi API key';
+  btn.onclick = () => openAISettingsGuide();
+  statusEl.append(btn);
+}
+
 function requestGeminiFeature(route: string, payload: Record<string, any>, signal?: AbortSignal): Promise<Response> {
   const apiKey = getPrivateGeminiKey();
   if (apiKey) return directGeminiRequest(route, payload, apiKey, signal);
@@ -427,7 +465,11 @@ function setupServiceWorkerUpdates() {
 }
 
 function switchView(v: string) {
-  $$('.tab').forEach((b) => b.classList.toggle('active', b.dataset.view === v));
+  $$('.tab').forEach((b) => {
+    const active = b.dataset.view === v;
+    b.classList.toggle('active', active);
+    b.setAttribute('aria-selected', String(active));
+  });
   $$('.view').forEach((s) => s.classList.toggle('active', s.id === `${v}View`));
   if (v === 'notebook') void renderJournal();
   if (v === 'quotes') void renderQuoteCollection();
@@ -436,7 +478,7 @@ function switchView(v: string) {
 function coverHTML(b: Book): string {
   const src = b.cover || b.coverUrl;
   return src
-    ? `<img class="cover" src="${esc(src)}" alt="Portada de ${esc(b.title)}" referrerpolicy="no-referrer">`
+    ? `<img class="cover" src="${esc(src)}" data-cover-title="${esc(b.title)}" alt="Portada de ${esc(b.title)}" loading="lazy" referrerpolicy="no-referrer">`
     : `<div class="cover cover-placeholder">${esc(b.title)}</div>`;
 }
 
@@ -447,7 +489,7 @@ function card(b: Book): string {
   const ratingText = b.rating ? `★ ${b.rating}/5` : '';
   const tagsList = (b.tags || []).slice(0, 3).join(' · ');
   const metaExtras = [ratingText, tagsList].filter(Boolean).join(' · ');
-  return `<article class="book-card" data-id="${esc(b.id)}">
+  return `<article class="book-card" data-id="${esc(b.id)}" tabindex="0" role="button" aria-label="Abrir ${esc(b.title)}">
     ${coverHTML(b)}
     <div class="book-meta">
       <span class="status">${statusNames[b.status] || 'Pendiente'}</span>
@@ -671,6 +713,11 @@ async function autofillBookWithAI() {
     return;
   }
 
+  if (!getPrivateGeminiKey()) {
+    renderInlineKeyCTA(status, 'Necesitás guardar tu API key personal de Gemini para autocompletar fichas.');
+    return;
+  }
+
   const originalText = btn.textContent || '✦ Completar ficha y etiquetas con IA';
   btn.disabled = true;
   btn.textContent = 'Consultando IA…';
@@ -688,7 +735,11 @@ async function autofillBookWithAI() {
         thinking: ai.thinking,
       });
     const data = await res.json();
-    if (!res.ok) throw Error(data.error || `Error HTTP ${res.status}`);
+    if (!res.ok) {
+      const err: any = Error(data.error || `Error HTTP ${res.status}`);
+      err.status = res.status;
+      throw err;
+    }
 
     const s = data.suggestion || {};
     if (!titleInput.value.trim() && s.title) titleInput.value = s.title;
@@ -704,7 +755,11 @@ async function autofillBookWithAI() {
 
     status.textContent = 'Ficha y etiquetas sugeridas. Revisá los campos antes de guardar.';
   } catch (err: any) {
-    status.textContent = `No se pudo completar con IA: ${err?.message || err}`;
+    if (isAIKeyError(err)) {
+      renderInlineKeyCTA(status, err?.message || 'Revisá tu API key personal de Gemini.');
+    } else {
+      status.textContent = `No se pudo completar con IA: ${err?.message || err}`;
+    }
   } finally {
     btn.disabled = false;
     btn.textContent = originalText;
@@ -1020,6 +1075,12 @@ async function renderDetail() {
       const statusEl = $('#detailReviewStatus')!;
       const textarea = $<HTMLTextAreaElement>('#detailReviewText')!;
       const tagsBox = $('#reviewSuggestedTags')!;
+
+      if (!getPrivateGeminiKey()) {
+        renderInlineKeyCTA(statusEl, 'Necesitás guardar tu API key personal de Gemini para sugerir un borrador.');
+        return;
+      }
+
       const original = btn.textContent || '✦ Sugerir borrador con IA';
 
       btn.disabled = true;
@@ -1041,7 +1102,11 @@ async function renderDetail() {
             thinking: ai.thinking,
           });
         const data = await res.json();
-        if (!res.ok) throw Error(data.error || `Error HTTP ${res.status}`);
+        if (!res.ok) {
+          const err: any = Error(data.error || `Error HTTP ${res.status}`);
+          err.status = res.status;
+          throw err;
+        }
         const draft = String(data.reviewDraft || '').trim();
         if (!draft) throw Error('Gemini no devolvió un borrador.');
 
@@ -1097,7 +1162,11 @@ async function renderDetail() {
           tagsBox.innerHTML = '';
         }
       } catch (err: any) {
-        statusEl.textContent = `No se pudo generar el borrador: ${err?.message || err}`;
+        if (isAIKeyError(err)) {
+          renderInlineKeyCTA(statusEl, err?.message || 'Revisá tu API key personal de Gemini.');
+        } else {
+          statusEl.textContent = `No se pudo generar el borrador: ${err?.message || err}`;
+        }
       } finally {
         btn.disabled = false;
         btn.textContent = original;
@@ -1512,6 +1581,18 @@ async function runBookSynthesis(book: Book) {
     return;
   }
 
+  if (!getPrivateGeminiKey()) {
+    const goSettings = await showConfirmDialog({
+      eyebrow: 'SÍNTESIS LITERARIA CON IA',
+      title: 'Configurá tu API key personal',
+      message: 'Para analizar conexiones con IA necesitás guardar tu API key gratuita de Google AI Studio en Ajustes.',
+      confirmLabel: 'Ir a Ajustes de IA',
+      cancelLabel: 'Cerrar',
+    });
+    if (goSettings) openAISettingsGuide();
+    return;
+  }
+
   isAnalyzingBook = true;
   await renderDetail();
 
@@ -1526,7 +1607,11 @@ async function runBookSynthesis(book: Book) {
         thinking: aiSettings.thinking,
       });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || `Error HTTP ${res.status}`);
+    if (!res.ok) {
+      const err: any = new Error(data.error || `Error HTTP ${res.status}`);
+      err.status = res.status;
+      throw err;
+    }
 
     const analysisRecord: BookAnalysis = {
       id: `analysis__${sanitizeId(book.id)}`,
@@ -1543,12 +1628,23 @@ async function runBookSynthesis(book: Book) {
 
     await pushAnalysisToCloud(analysisRecord);
   } catch (err: any) {
-    await showConfirmDialog({
-      eyebrow: 'SÍNTESIS LITERARIA',
-      title: 'No se pudo completar el análisis',
-      message: String(err?.message || err),
-      noticeOnly: true,
-    });
+    if (isAIKeyError(err)) {
+      const goSettings = await showConfirmDialog({
+        eyebrow: 'SÍNTESIS LITERARIA CON IA',
+        title: 'Revisá tu API key de Gemini',
+        message: String(err?.message || err),
+        confirmLabel: 'Ir a Ajustes de IA',
+        cancelLabel: 'Cerrar',
+      });
+      if (goSettings) openAISettingsGuide();
+    } else {
+      await showConfirmDialog({
+        eyebrow: 'SÍNTESIS LITERARIA',
+        title: 'No se pudo completar el análisis',
+        message: String(err?.message || err),
+        noticeOnly: true,
+      });
+    }
   } finally {
     isAnalyzingBook = false;
     await renderDetail();
@@ -1755,14 +1851,20 @@ function optimizeQuotePhoto(file: File): Promise<string> {
 async function transcribeQuotePhoto(index: number, button: HTMLButtonElement) {
   const image = quotePhotoData[index];
   if (!image) return;
+  const statusEl = $('#quotePhotoStatus');
+  if (!getPrivateGeminiKey()) {
+    renderInlineKeyCTA(statusEl, 'Necesitás tu API key personal de Gemini para extraer texto de fotos.');
+    return;
+  }
   const generation = quoteOCRGeneration;
   const label = button.textContent || 'Extraer texto';
   $$<HTMLButtonElement>('[data-transcribe-quote-photo],[data-remove-quote-photo]').forEach(
     (item) => (item.disabled = true),
   );
   button.textContent = 'Leyendo…';
-  $('#quotePhotoStatus')!.textContent =
-    'Gemini está leyendo la foto. Después vas a poder corregir el texto.';
+  if (statusEl) {
+    statusEl.textContent = 'Gemini está leyendo la foto. Después vas a poder corregir el texto.';
+  }
   try {
     const [header, data] = image.split(',', 2);
     const mimeType = header.match(/data:(.*?);base64/)?.[1] || 'image/jpeg';
@@ -1771,7 +1873,11 @@ async function transcribeQuotePhoto(index: number, button: HTMLButtonElement) {
       mimeType, data, model: aiSettings.model, thinking: aiSettings.thinking,
     });
     const result = await res.json();
-    if (!res.ok) throw Error(result.error || `Error HTTP ${res.status}`);
+    if (!res.ok) {
+      const err: any = Error(result.error || `Error HTTP ${res.status}`);
+      err.status = res.status;
+      throw err;
+    }
     const transcript = String(result.text || '').trim();
     if (!transcript) throw Error('Gemini no devolvió una transcripción.');
     if (generation !== quoteOCRGeneration || !$<HTMLDialogElement>('#quoteDialog')?.open) return;
@@ -1786,16 +1892,20 @@ async function transcribeQuotePhoto(index: number, button: HTMLButtonElement) {
         confirmLabel: 'Reemplazar',
       });
       if (!ok) {
-        $('#quotePhotoStatus')!.textContent = 'Conservé el texto que ya tenías.';
+        if (statusEl) statusEl.textContent = 'Conservé el texto que ya tenías.';
         return;
       }
     }
     quoteText.value = transcript;
     quoteText.focus();
-    $('#quotePhotoStatus')!.textContent = 'Texto extraído. Revisalo y corregilo antes de guardar la cita.';
+    if (statusEl) statusEl.textContent = 'Texto extraído. Revisalo y corregilo antes de guardar la cita.';
   } catch (error: any) {
     if (generation === quoteOCRGeneration && $<HTMLDialogElement>('#quoteDialog')?.open) {
-      $('#quotePhotoStatus')!.textContent = `No se pudo extraer el texto: ${error.message}`;
+      if (isAIKeyError(error)) {
+        renderInlineKeyCTA(statusEl, error?.message || 'Revisá tu API key personal de Gemini.');
+      } else if (statusEl) {
+        statusEl.textContent = `No se pudo extraer el texto: ${error.message}`;
+      }
     }
   } finally {
     if (generation === quoteOCRGeneration && $<HTMLDialogElement>('#quoteDialog')?.open) {
@@ -2304,6 +2414,7 @@ function initSettings() {
       localStorage.setItem(PRIVATE_GEMINI_KEY, key);
       if (privateKeyInput) privateKeyInput.value = '';
       if (privateKeyStatus) privateKeyStatus.textContent = 'Clave guardada solo en este navegador. La IA usará conexiones directas con Google.';
+      syncGeminiNoKeyBanner();
       void refreshAIModels();
     } catch {
       if (privateKeyStatus) privateKeyStatus.textContent = 'No se pudo guardar la clave en el almacenamiento local de este navegador.';
@@ -2314,6 +2425,7 @@ function initSettings() {
       localStorage.removeItem(PRIVATE_GEMINI_KEY);
       if (privateKeyInput) privateKeyInput.value = '';
       if (privateKeyStatus) privateKeyStatus.textContent = 'Clave eliminada. La IA queda desactivada hasta que guardes otra clave personal.';
+      syncGeminiNoKeyBanner();
     } catch {
       if (privateKeyStatus) privateKeyStatus.textContent = 'No se pudo eliminar la clave de este navegador.';
     }
@@ -2356,17 +2468,39 @@ function initSettings() {
   });
 }
 
+function isInAppBrowser(): boolean {
+  return /FBAN|FBAV|Instagram|WhatsApp|Telegram|Line\/|MicroMessenger/i.test(navigator.userAgent || '');
+}
+
 async function handleGoogleSignIn() {
   const statusEl = $('#syncStatusText');
   const dlg = $<HTMLDialogElement>('#settingsDialog');
+  if (isInAppBrowser()) {
+    if (statusEl) {
+      statusEl.textContent =
+        'Estás usando un navegador interno (WhatsApp/Instagram). Abrí Librarium en Chrome o Safari desde el menú ⋮ para iniciar sesión con Google.';
+    }
+    if (dlg && !dlg.open) dlg.showModal();
+    return;
+  }
   try {
     await signInWithGoogle();
   } catch (err: any) {
     if (statusEl) {
       if (err?.code === 'auth/popup-closed-by-user') {
         statusEl.textContent = 'Se cerró la ventana de inicio de sesión.';
+      } else if (err?.code === 'auth/popup-blocked') {
+        statusEl.textContent =
+          'El navegador bloqueó la ventana de Google. Permití las ventanas emergentes e intentá de nuevo.';
+      } else if (err?.code === 'auth/cancelled-popup-request') {
+        statusEl.textContent = 'Se canceló el intento anterior. Volvé a tocar Continuar con Google.';
+      } else if (err?.code === 'auth/disallowed-useragent') {
+        statusEl.textContent =
+          'Este navegador no admite inicio de sesión con Google. Abrí Librarium en Chrome o Safari.';
+      } else if (err?.code === 'auth/network-request-failed') {
+        statusEl.textContent = 'Sin conexión para conectar con Google. Verificá tu internet e intentá nuevamente.';
       } else if (err?.code === 'auth/unauthorized-domain') {
-        statusEl.textContent = `El dominio actual (${window.location.hostname}) no está autorizado en Firebase Auth. Agregalo en Firebase Console → Authentication → Settings → Authorized domains (proyecto celtic-aloe-r9brs).`;
+        statusEl.textContent = `El dominio actual (${window.location.hostname}) no está autorizado en Firebase Auth.`;
       } else {
         statusEl.textContent = `No se pudo iniciar sesión: ${err?.message || err}`;
       }
@@ -2700,6 +2834,7 @@ async function openGemini(
 
   $('#clearGeminiHistory')?.classList.toggle('hidden', !geminiConversationId || !geminiHistory.length);
   renderGeminiContextCard();
+  syncGeminiNoKeyBanner();
   $<HTMLDialogElement>('#geminiDialog')?.showModal();
   fitGeminiToViewport();
   scrollGeminiToBottom(false);
@@ -3427,7 +3562,22 @@ async function sendGeminiQuestion(e: Event) {
       }
     } else {
       modelTurn?.wrapper.remove();
-      addGeminiMessage('error', `No pude consultar Gemini: ${err.message}`);
+      if (isAIKeyError(err)) {
+        const box = document.createElement('div');
+        box.className = 'gemini-message error gemini-error-box';
+        const span = document.createElement('span');
+        span.textContent = err?.message || 'Configurá tu API key personal de Gemini para conversar.';
+        const cta = document.createElement('button');
+        cta.type = 'button';
+        cta.className = 'ai-key-cta';
+        cta.textContent = 'Configurar mi API key';
+        cta.onclick = () => openAISettingsGuide();
+        box.append(span, cta);
+        $('#geminiMessages')!.append(box);
+        box.scrollIntoView({ block: 'nearest' });
+      } else {
+        addGeminiMessage('error', `No pude consultar Gemini: ${err.message}`);
+      }
     }
   } finally {
     clearTimeout(watchdog);
@@ -3436,6 +3586,135 @@ async function sendGeminiQuestion(e: Event) {
     stopBtn?.classList.add('hidden');
     actionsWrap?.classList.remove('streaming');
   }
+}
+
+let isLoadingSampleBook = false;
+
+async function loadSampleBook() {
+  if (isLoadingSampleBook) return;
+  isLoadingSampleBook = true;
+  const btn = $<HTMLButtonElement>('#emptySampleBtn');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Cargando ejemplo…';
+  }
+  try {
+    const sampleId = 'sample_meditaciones';
+    const existing = await get<Book>('books', sampleId);
+    if (existing) {
+      await openDetail(existing.id);
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const book = await pushBookToCloud({
+      id: sampleId,
+      title: 'Meditaciones',
+      author: 'Marco Aurelio',
+      publisher: 'Libro de ejemplo',
+      year: '180',
+      edition: 'Edición de prueba',
+      isbn: '',
+      totalPages: 224,
+      currentPage: 68,
+      status: 'reading',
+      cover: null,
+      coverUrl: null,
+      tags: ['Filosofía', 'Estoicismo', 'Clásico'],
+      rating: 5,
+      review:
+        'Un libro para volver en momentos de ruido: recordatorios breves y directos sobre qué depende de uno y cómo sostener la calma cotidiana.',
+      readingLog: { [localDayKey()]: 14 },
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await pushNoteToCloud({
+      id: 'sample_meditaciones_note_1',
+      bookId: book.id,
+      number: 1,
+      section: 1,
+      referencePage: 34,
+      endPage: 205,
+      text: 'El término griego «hegemonikón» designa el principio rector o facultad racional que gobierna el juicio interior frente a las impresiones externas.',
+      comment: 'Clave para entender por qué distingue entre el hecho externo y el juicio que agregamos encima.',
+      read: true,
+      createdAt: now,
+    });
+
+    await pushNoteToCloud({
+      id: 'sample_meditaciones_note_2',
+      bookId: book.id,
+      number: 2,
+      section: 1,
+      referencePage: 65,
+      endPage: 206,
+      text: 'Alusión a Heráclito sobre el cambio continuo de todas las cosas y la aceptación serena de lo transitorio.',
+      comment: '',
+      read: false,
+      createdAt: now,
+    });
+
+    await pushQuoteToCloud({
+      id: 'sample_meditaciones_quote_1',
+      bookId: book.id,
+      text: 'Tienes poder sobre tu mente, no sobre los acontecimientos externos. Date cuenta de esto y encontrarás fuerza.',
+      chapter: 'Libro IV',
+      page: 64,
+      analysis: 'Idea central del cuaderno: separar lo que puedo decidir hoy de lo que escapa a mi control.',
+      photos: [],
+      photoMediaIds: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await pushEntryToCloud({
+      id: 'sample_meditaciones_entry_1',
+      bookId: book.id,
+      page: 68,
+      title: 'Notas al margen sobre la atención',
+      text: 'Marco Aurelio escribe para sí mismo, sin tono de tratado académico; por eso funcionan tan bien las frases cortas como ejercicio diario.',
+      comment: 'Probar releer estas anotaciones al terminar el Libro VI.',
+      photo: null,
+      createdAt: now,
+    });
+
+    books = await all<Book>('books');
+    render();
+    await openDetail(book.id);
+  } finally {
+    isLoadingSampleBook = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Probar con un libro de ejemplo';
+    }
+  }
+}
+
+function initEnvironmentNotices() {
+  const inAppBanner = $('#inAppBrowserNotice');
+  const dismissInApp = $('#dismissInAppNotice');
+  if (inAppBanner && isInAppBrowser()) {
+    let dismissed = false;
+    try {
+      dismissed = sessionStorage.getItem('librarium-inapp-dismissed') === '1';
+    } catch {}
+    if (!dismissed) inAppBanner.classList.remove('hidden');
+  }
+  dismissInApp?.addEventListener('click', () => {
+    inAppBanner?.classList.add('hidden');
+    try {
+      sessionStorage.setItem('librarium-inapp-dismissed', '1');
+    } catch {}
+  });
+
+  const offlineBanner = $('#offlineNotice');
+  const syncOfflineBanner = () => {
+    offlineBanner?.classList.toggle('hidden', navigator.onLine !== false);
+  };
+  syncOfflineBanner();
+  window.addEventListener('online', syncOfflineBanner);
+  window.addEventListener('offline', syncOfflineBanner);
 }
 
 function wireEvents() {
@@ -3469,6 +3748,8 @@ function wireEvents() {
   });
 
   $('#emptyAdd')!.onclick = $('#addBookBtn')!.onclick = () => openBookForm();
+  $('#emptySampleBtn')?.addEventListener('click', () => void loadSampleBook());
+  $('#geminiOpenKeySettings')?.addEventListener('click', () => openAISettingsGuide());
   $$('[data-close]').forEach((b) => {
     b.onclick = () => b.closest('dialog')?.close();
   });
@@ -3636,6 +3917,29 @@ function wireEvents() {
     const c = (e.target as HTMLElement).closest<HTMLElement>('[data-id]');
     if (c) void openDetail(c.dataset.id!);
   };
+  const onGridKeydown = (e: KeyboardEvent) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const c = (e.target as HTMLElement).closest<HTMLElement>('.book-card[data-id]');
+    if (!c) return;
+    e.preventDefault();
+    void openDetail(c.dataset.id!);
+  };
+  $('#bookGrid')?.addEventListener('keydown', onGridKeydown);
+  $('#readingGrid')?.addEventListener('keydown', onGridKeydown);
+
+  document.addEventListener(
+    'error',
+    (e) => {
+      const target = e.target;
+      if (target instanceof HTMLImageElement && target.classList.contains('cover')) {
+        const placeholder = document.createElement('div');
+        placeholder.className = 'cover cover-placeholder';
+        placeholder.textContent = target.dataset.coverTitle || 'Librarium';
+        target.replaceWith(placeholder);
+      }
+    },
+    true,
+  );
 
   $('#readingProgressForm')!.onsubmit = async (e) => {
     e.preventDefault();
@@ -4106,6 +4410,7 @@ export async function initApp() {
   await openDB();
   books = await all<Book>('books');
   wireEvents();
+  initEnvironmentNotices();
   render();
   initSettings();
   initInstall();

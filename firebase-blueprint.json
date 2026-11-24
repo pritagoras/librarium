@@ -211,6 +211,10 @@
           "type": "string",
           "maxLength": 20000
         },
+        "comment": {
+          "type": "string",
+          "maxLength": 10000
+        },
         "photoMediaId": {
           "type": "string",
           "maxLength": 128

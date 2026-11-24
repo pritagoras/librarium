@@ -5,10 +5,31 @@ const DEFAULT_MODEL = 'gemini-3.8-flash';
 export const FALLBACK_MODELS = [DEFAULT_MODEL, 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
 
 function apiError(data: any, status: number): Error & { status?: number } {
-  const error = new Error(data?.error?.message || `Google Gemini respondió HTTP ${status}.`) as Error & {
-    status?: number;
-  };
-  error.status = status;
+  const rawMessage = String(data?.error?.message || '').trim();
+  const keyIssue =
+    status === 401 ||
+    status === 403 ||
+    (status === 400 && /api[_ ]?key|invalid argument/i.test(rawMessage));
+
+  let friendly = rawMessage;
+  if (keyIssue) {
+    friendly =
+      'Tu API key de Gemini no es válida o no tiene permisos. Revisala en Ajustes → Ajustes de IA.';
+  } else if (status === 429) {
+    friendly =
+      'Alcanzaste el límite temporal de consultas de tu clave en Google Gemini. Esperá unos segundos y volvé a intentar.';
+  } else if (status === 404) {
+    friendly =
+      'El modelo elegido no está disponible para tu clave. Probá actualizar la lista de modelos en Ajustes.';
+  } else if (status >= 500) {
+    friendly =
+      'Google Gemini tuvo un problema temporal al responder. Intentá nuevamente en unos segundos.';
+  } else if (!friendly) {
+    friendly = `Google Gemini respondió HTTP ${status}.`;
+  }
+
+  const error = new Error(friendly) as Error & { status?: number };
+  error.status = keyIssue ? 401 : status;
   return error;
 }
 
@@ -126,8 +147,14 @@ function responseJSON(data: any) {
 }
 
 function errorJSON(error: any) {
-  const status = Number(error?.status) || 500;
-  return new Response(JSON.stringify({ error: error?.message || 'No se pudo consultar Gemini.' }), {
+  const rawMessage = String(error?.message || '');
+  const isNetwork =
+    error instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(rawMessage);
+  const status = isNetwork ? 503 : Number(error?.status) || 500;
+  const message = isNetwork
+    ? 'Sin conexión con Google Gemini. Verificá tu acceso a internet e intentá de nuevo.'
+    : rawMessage || 'No se pudo consultar Gemini.';
+  return new Response(JSON.stringify({ error: message }), {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
