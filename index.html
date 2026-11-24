@@ -165,7 +165,7 @@
   </section>
 </main>
 
-<footer>LIBRARIUM <span>·</span> Tu biblioteca, tu historia de lectura.</footer>
+<footer>LIBRARIUM <span>·</span> Tu biblioteca, tu historia de lectura. <span aria-hidden="true">·</span> <button type="button" id="footerFeedbackBtn" class="footer-link">Reportar o sugerir</button></footer>
 
 <aside id="updateNotice" class="update-notice hidden" role="status" aria-live="polite">
   <span>Hay una actualización disponible.</span>
@@ -566,6 +566,25 @@ Notas finales:
         <span id="installAppHelp" class="muted" aria-live="polite"></span>
       </div>
     </section>
+
+    <section class="settings-section">
+      <h3>Reportes y propuestas</h3>
+      <p class="muted">¿Encontraste un fallo o tenés una idea para mejorar Librarium? Contanos directo desde acá.</p>
+      <div class="panel-actions">
+        <button id="openFeedbackBtn" type="button" class="secondary">Reportar error o proponer cambio</button>
+      </div>
+      <div id="adminFeedbackCard" class="admin-feedback-card hidden">
+        <div class="admin-feedback-info">
+          <p class="eyebrow">PANEL DE ADMINISTRACIÓN</p>
+          <strong>Reportes y usuarios</strong>
+          <p id="adminFeedbackSummary" class="muted">Revisá los envíos y el progreso de lectura de las cuentas conectadas.</p>
+        </div>
+        <div class="admin-card-actions">
+          <button id="openUsersDirectoryBtn" type="button" class="secondary">Usuarios y lecturas</button>
+          <button id="openFeedbackInboxBtn" type="button" class="primary">Buzón de reportes</button>
+        </div>
+      </div>
+    </section>
   </section>
 </dialog>
 
@@ -634,6 +653,95 @@ Notas finales:
       <button type="button" class="primary" id="confirmOkBtn">Confirmar</button>
     </div>
   </div>
+</dialog>
+
+<dialog id="feedbackDialog" class="feedback-dialog">
+  <form id="feedbackForm" method="dialog">
+    <div class="dialog-head">
+      <div>
+        <p class="eyebrow">COMUNIDAD Y MEJORAS</p>
+        <h2>Reportar o sugerir</h2>
+      </div>
+      <button type="button" class="close" data-close aria-label="Cerrar">×</button>
+    </div>
+    <div class="choice-row" id="feedbackKindRow" role="group" aria-label="Tipo de mensaje">
+      <button type="button" class="choice active" data-feedback-kind="bug">Error o falla</button>
+      <button type="button" class="choice" data-feedback-kind="idea">Propuesta de cambio</button>
+      <button type="button" class="choice" data-feedback-kind="other">Otro comentario</button>
+    </div>
+    <label for="feedbackMessage">Contanos qué pasó o qué mejorarías *
+      <textarea id="feedbackMessage" rows="5" maxlength="2000" required placeholder="Describí el problema (qué estabas haciendo y qué ocurrió) o contanos tu propuesta para mejorar Librarium…"></textarea>
+    </label>
+    <label class="feedback-tech-check">
+      <input id="feedbackIncludeTech" type="checkbox" checked>
+      <span>Incluir info técnica básica (pantalla, navegador y versión; nunca tus libros ni tu API key)</span>
+    </label>
+    <div id="feedbackAuthNotice" class="feedback-auth-notice hidden">
+      <p>Para enviarlo directo desde la app y ver su seguimiento, iniciá sesión con Google. Si preferís, también podés copiar el texto para compartirlo en el grupo.</p>
+      <div class="panel-actions">
+        <button type="button" id="feedbackSignInBtn" class="primary">Continuar con Google</button>
+        <button type="button" id="feedbackCopyFallbackBtn" class="secondary">Copiar texto para grupo</button>
+      </div>
+    </div>
+    <p id="feedbackStatus" class="muted" aria-live="polite"></p>
+    <div class="dialog-actions">
+      <button type="button" class="secondary" data-close>Cerrar</button>
+      <button type="button" id="feedbackCopyBtn" class="secondary">Copiar texto</button>
+      <button type="submit" id="feedbackSubmitBtn" class="primary">Enviar</button>
+    </div>
+    <section id="myFeedbackSection" class="my-feedback-section hidden">
+      <p class="eyebrow">TUS ENVÍOS ANTERIORES</p>
+      <div id="myFeedbackList" class="feedback-list"></div>
+    </section>
+  </form>
+</dialog>
+
+<dialog id="feedbackInboxDialog" class="feedback-inbox-dialog">
+  <section class="settings-shell">
+    <div class="dialog-head">
+      <div>
+        <p class="eyebrow">ADMINISTRACIÓN</p>
+        <h2>Buzón de reportes</h2>
+      </div>
+      <button type="button" class="close" data-close aria-label="Cerrar">×</button>
+    </div>
+    <div class="feedback-inbox-toolbar">
+      <div class="choice-row" id="feedbackInboxFilters" role="group" aria-label="Filtrar reportes">
+        <button type="button" class="choice active" data-inbox-filter="all">Todos</button>
+        <button type="button" class="choice" data-inbox-filter="open">Pendientes</button>
+        <button type="button" class="choice" data-inbox-filter="bug">Errores</button>
+        <button type="button" class="choice" data-inbox-filter="idea">Propuestas</button>
+        <button type="button" class="choice" data-inbox-filter="resolved">Resueltos</button>
+      </div>
+      <button type="button" id="refreshFeedbackInboxBtn" class="secondary">Actualizar</button>
+    </div>
+    <p id="feedbackInboxStatus" class="muted" aria-live="polite"></p>
+    <div id="feedbackInboxList" class="feedback-list"></div>
+  </section>
+</dialog>
+
+<dialog id="usersDirectoryDialog" class="feedback-inbox-dialog users-directory-dialog">
+  <section class="settings-shell">
+    <div class="dialog-head">
+      <div>
+        <p class="eyebrow">ADMINISTRACIÓN</p>
+        <h2>Usuarios y lecturas</h2>
+      </div>
+      <button type="button" class="close" data-close aria-label="Cerrar">×</button>
+    </div>
+    <p class="muted users-directory-privacy-note">Vista de solo lectura con cuentas registradas, última actividad y avance porcentual por libro. Sin notas, comentarios ni reseñas.</p>
+    <div class="feedback-inbox-toolbar">
+      <div class="choice-row" id="usersDirectoryFilters" role="group" aria-label="Filtrar usuarios">
+        <button type="button" class="choice active" data-users-filter="all">Todos</button>
+        <button type="button" class="choice" data-users-filter="active">Activos ahora</button>
+        <button type="button" class="choice" data-users-filter="reading">Leyendo</button>
+      </div>
+      <button type="button" id="refreshUsersDirectoryBtn" class="secondary">Actualizar</button>
+    </div>
+    <input id="usersDirectorySearch" class="users-directory-search" type="search" placeholder="Buscar por usuario, correo o libro…" aria-label="Buscar usuarios o libros">
+    <p id="usersDirectoryStatus" class="muted" aria-live="polite"></p>
+    <div id="usersDirectoryList" class="user-dir-list"></div>
+  </section>
 </dialog>
 
 <input id="restoreFile" type="file" accept=".json,application/json" hidden>

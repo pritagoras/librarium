@@ -14,6 +14,16 @@ import {
   pushQuoteToCloud,
   sanitizeId,
 } from './sync';
+import {
+  buildSafeAppContext,
+  deleteFeedbackReport,
+  fetchAdminUserDirectory,
+  fetchAllFeedbackReports,
+  fetchMyFeedbackReports,
+  isFeedbackAdmin,
+  submitFeedbackReport,
+  updateFeedbackReport,
+} from './feedback';
 import type {
   AISettings,
   Book,
@@ -22,10 +32,14 @@ import type {
   Conversation,
   ConversationTurn,
   Entry,
+  FeedbackItem,
+  FeedbackKind,
+  FeedbackStatus,
   Note,
   Quote,
   SortOption,
   SyncStatus,
+  UserDirectoryEntry,
 } from './types';
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string): T | null =>
@@ -2370,6 +2384,18 @@ function updateAccountUI(_status: SyncStatus, message: string, user: any) {
     signedOutView?.classList.remove('hidden');
     signedInView?.classList.add('hidden');
   }
+
+  const adminCard = $('#adminFeedbackCard');
+  if (adminCard) {
+    const isAdmin = isFeedbackAdmin(user);
+    adminCard.classList.toggle('hidden', !isAdmin);
+    if (isAdmin) void refreshAdminFeedbackSummary();
+  }
+
+  if ($<HTMLDialogElement>('#feedbackDialog')?.open) {
+    syncFeedbackAuthUI();
+    void renderMyFeedbackList();
+  }
 }
 
 function initSettings() {
@@ -4402,7 +4428,533 @@ function wireEvents() {
       $<HTMLFormElement>('#geminiForm')?.requestSubmit();
     }
   });
+
+  $('#footerFeedbackBtn')?.addEventListener('click', () => openFeedbackDialog('bug'));
+  $('#openFeedbackBtn')?.addEventListener('click', () => openFeedbackDialog('bug'));
+  $('#openFeedbackInboxBtn')?.addEventListener('click', () => void openFeedbackInboxDialog());
+  $('#openUsersDirectoryBtn')?.addEventListener('click', () => void openUsersDirectoryDialog());
+  $('#refreshFeedbackInboxBtn')?.addEventListener('click', () => void loadFeedbackInbox());
+  $('#refreshUsersDirectoryBtn')?.addEventListener('click', () => void loadUsersDirectory());
+  $('#usersDirectorySearch')?.addEventListener('input', () => renderUsersDirectory());
+  $('#usersDirectoryFilters')?.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-users-filter]');
+    if (!btn) return;
+    usersDirectoryFilter = (btn.dataset.usersFilter as typeof usersDirectoryFilter) || 'all';
+    $$('#usersDirectoryFilters [data-users-filter]').forEach((item) =>
+      item.classList.toggle('active', item === btn),
+    );
+    renderUsersDirectory();
+  });
+  $('#feedbackKindRow')?.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-feedback-kind]');
+    if (!btn) return;
+    setFeedbackKind((btn.dataset.feedbackKind as FeedbackKind) || 'bug');
+  });
+  $('#feedbackInboxFilters')?.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-inbox-filter]');
+    if (!btn) return;
+    feedbackInboxFilter = (btn.dataset.inboxFilter as typeof feedbackInboxFilter) || 'all';
+    $$('#feedbackInboxFilters [data-inbox-filter]').forEach((item) =>
+      item.classList.toggle('active', item === btn),
+    );
+    renderFeedbackInboxList();
+  });
+  $('#feedbackSignInBtn')?.addEventListener('click', () => void handleFeedbackSignIn());
+  $('#feedbackCopyBtn')?.addEventListener('click', () => void copyFeedbackAsText());
+  $('#feedbackCopyFallbackBtn')?.addEventListener('click', () => void copyFeedbackAsText());
+  $('#feedbackForm')?.addEventListener('submit', (e) => void handleFeedbackSubmit(e));
+
   initAskGesture();
+}
+
+const FEEDBACK_KIND_LABELS: Record<FeedbackKind, string> = {
+  bug: 'Error o falla',
+  idea: 'Propuesta de cambio',
+  other: 'Comentario',
+};
+
+const FEEDBACK_STATUS_LABELS: Record<FeedbackStatus, string> = {
+  open: 'Pendiente',
+  reviewed: 'En revisión',
+  resolved: 'Resuelto',
+  dismissed: 'Descartado',
+};
+
+let activeFeedbackKind: FeedbackKind = 'bug';
+let inboxFeedbackItems: FeedbackItem[] = [];
+let feedbackInboxFilter: 'all' | 'open' | 'bug' | 'idea' | 'resolved' = 'all';
+
+function setFeedbackKind(kind: FeedbackKind) {
+  activeFeedbackKind = kind;
+  $$('#feedbackKindRow [data-feedback-kind]').forEach((btn) =>
+    btn.classList.toggle('active', btn.dataset.feedbackKind === kind),
+  );
+  const textarea = $<HTMLTextAreaElement>('#feedbackMessage');
+  if (textarea) {
+    textarea.placeholder =
+      kind === 'bug'
+        ? 'Contanos qué estabas haciendo, qué pasó y si viste algún mensaje de error…'
+        : kind === 'idea'
+          ? '¿Qué función te gustaría sumar o qué parte de Librarium mejorarías?'
+          : 'Dejanos tu comentario o duda sobre Librarium…';
+  }
+}
+
+function syncFeedbackAuthUI() {
+  const { user } = getSyncState();
+  const signedIn = Boolean(user && user.emailVerified);
+  $('#feedbackAuthNotice')?.classList.toggle('hidden', signedIn);
+  const submitBtn = $<HTMLButtonElement>('#feedbackSubmitBtn');
+  if (submitBtn) submitBtn.disabled = !signedIn;
+}
+
+function openFeedbackDialog(defaultKind: FeedbackKind = 'bug') {
+  setFeedbackKind(defaultKind);
+  const statusEl = $('#feedbackStatus');
+  if (statusEl) statusEl.textContent = '';
+  syncFeedbackAuthUI();
+  $<HTMLDialogElement>('#feedbackDialog')?.showModal();
+  void renderMyFeedbackList();
+}
+
+async function copyFeedbackAsText() {
+  const statusEl = $('#feedbackStatus');
+  const message = ($<HTMLTextAreaElement>('#feedbackMessage')?.value || '').trim();
+  if (!message) {
+    if (statusEl) statusEl.textContent = 'Escribí primero tu reporte o propuesta para poder copiarlo.';
+    $<HTMLTextAreaElement>('#feedbackMessage')?.focus();
+    return;
+  }
+  const includeTech = Boolean($<HTMLInputElement>('#feedbackIncludeTech')?.checked);
+  const lines = [
+    `[Librarium · ${FEEDBACK_KIND_LABELS[activeFeedbackKind]}]`,
+    message,
+  ];
+  if (includeTech) lines.push(`Contexto: ${buildSafeAppContext()}`);
+  const ok = await copyPlainText(lines.join('\n\n'));
+  if (statusEl) {
+    statusEl.textContent = ok
+      ? 'Texto copiado al portapapeles. Ya podés pegarlo en el grupo.'
+      : 'No se pudo copiar automáticamente; podés seleccionar el texto manualmente.';
+  }
+}
+
+async function handleFeedbackSignIn() {
+  const statusEl = $('#feedbackStatus');
+  if (isInAppBrowser()) {
+    if (statusEl) {
+      statusEl.textContent =
+        'Abriste Librarium desde un navegador interno (WhatsApp/Instagram). Abrila en Chrome o Safari desde ⋮ para iniciar sesión con Google, o usá «Copiar texto para grupo».';
+    }
+    return;
+  }
+  try {
+    await signInWithGoogle();
+    syncFeedbackAuthUI();
+    if (statusEl) statusEl.textContent = 'Sesión iniciada. Ya podés enviar tu mensaje directo.';
+    await renderMyFeedbackList();
+  } catch (err: any) {
+    if (statusEl) {
+      statusEl.textContent =
+        err?.code === 'auth/popup-closed-by-user'
+          ? 'Se cerró la ventana de Google antes de completar el ingreso.'
+          : `No se pudo iniciar sesión: ${err?.message || err}`;
+    }
+  }
+}
+
+async function handleFeedbackSubmit(e: Event) {
+  e.preventDefault();
+  const statusEl = $('#feedbackStatus');
+  const submitBtn = $<HTMLButtonElement>('#feedbackSubmitBtn');
+  const textarea = $<HTMLTextAreaElement>('#feedbackMessage');
+  if (!textarea || !submitBtn) return;
+
+  const message = textarea.value.trim();
+  if (!message) {
+    textarea.focus();
+    return;
+  }
+
+  const includeTech = Boolean($<HTMLInputElement>('#feedbackIncludeTech')?.checked);
+  submitBtn.disabled = true;
+  const originalLabel = submitBtn.textContent || 'Enviar';
+  submitBtn.textContent = 'Enviando…';
+  if (statusEl) statusEl.textContent = 'Enviando tu mensaje…';
+
+  try {
+    await submitFeedbackReport(activeFeedbackKind, message, includeTech);
+    textarea.value = '';
+    if (statusEl) statusEl.textContent = '¡Gracias! Tu mensaje quedó guardado para revisarlo pronto.';
+    await renderMyFeedbackList();
+    if (isFeedbackAdmin(getSyncState().user)) void refreshAdminFeedbackSummary();
+  } catch (err: any) {
+    if (statusEl) {
+      statusEl.textContent =
+        navigator.onLine === false
+          ? 'Sin conexión. Podés usar «Copiar texto» o reintentar cuando vuelva internet.'
+          : `No se pudo enviar: ${err?.message || 'error de conexión'}`;
+    }
+  } finally {
+    submitBtn.textContent = originalLabel;
+    syncFeedbackAuthUI();
+  }
+}
+
+async function renderMyFeedbackList() {
+  const section = $('#myFeedbackSection');
+  const host = $('#myFeedbackList');
+  if (!section || !host) return;
+  const { user } = getSyncState();
+  if (!user || !user.emailVerified) {
+    section.classList.add('hidden');
+    host.replaceChildren();
+    return;
+  }
+  try {
+    const items = await fetchMyFeedbackReports();
+    if (!items.length) {
+      section.classList.add('hidden');
+      host.replaceChildren();
+      return;
+    }
+    section.classList.remove('hidden');
+    host.innerHTML = items
+      .map((item) => {
+        const date = new Date(item.createdAt).toLocaleDateString('es-AR', {
+          day: 'numeric',
+          month: 'short',
+        });
+        return `<article class="feedback-card">
+          <div class="feedback-card-head">
+            <div class="feedback-badges">
+              <span class="feedback-badge kind-${esc(item.kind)}">${esc(FEEDBACK_KIND_LABELS[item.kind])}</span>
+              <span class="feedback-badge status-${esc(item.status)}">${esc(FEEDBACK_STATUS_LABELS[item.status])}</span>
+            </div>
+            <span class="feedback-meta">${esc(date)}</span>
+          </div>
+          <p class="feedback-body">${esc(item.message)}</p>
+          ${item.adminNote ? `<p class="feedback-admin-reply"><strong>Respuesta:</strong> ${esc(item.adminNote)}</p>` : ''}
+        </article>`;
+      })
+      .join('');
+  } catch {
+    section.classList.add('hidden');
+  }
+}
+
+async function refreshAdminFeedbackSummary() {
+  const summaryEl = $('#adminFeedbackSummary');
+  if (!summaryEl || !isFeedbackAdmin(getSyncState().user)) return;
+  try {
+    const items = await fetchAllFeedbackReports();
+    const openCount = items.filter((item) => item.status === 'open').length;
+    summaryEl.textContent = items.length
+      ? `${openCount} ${openCount === 1 ? 'pendiente' : 'pendientes'} · ${items.length} ${items.length === 1 ? 'envío total' : 'envíos totales'}.`
+      : 'Todavía no hay reportes ni propuestas.';
+  } catch {
+    summaryEl.textContent = 'Revisá los envíos de las personas que usan Librarium.';
+  }
+}
+
+async function openFeedbackInboxDialog() {
+  const dlg = $<HTMLDialogElement>('#feedbackInboxDialog');
+  if (!dlg || !isFeedbackAdmin(getSyncState().user)) return;
+  if (!dlg.open) dlg.showModal();
+  await loadFeedbackInbox();
+}
+
+async function loadFeedbackInbox() {
+  const statusEl = $('#feedbackInboxStatus');
+  const listEl = $('#feedbackInboxList');
+  if (!listEl) return;
+  if (statusEl) statusEl.textContent = 'Cargando envíos…';
+  try {
+    inboxFeedbackItems = await fetchAllFeedbackReports();
+    renderFeedbackInboxList();
+    void refreshAdminFeedbackSummary();
+  } catch (err: any) {
+    if (statusEl) statusEl.textContent = `No se pudieron cargar los reportes: ${err?.message || err}`;
+    listEl.replaceChildren();
+  }
+}
+
+function renderFeedbackInboxList() {
+  const statusEl = $('#feedbackInboxStatus');
+  const listEl = $('#feedbackInboxList');
+  if (!listEl) return;
+
+  const filtered = inboxFeedbackItems.filter((item) => {
+    if (feedbackInboxFilter === 'all') return true;
+    if (feedbackInboxFilter === 'open' || feedbackInboxFilter === 'resolved') {
+      return item.status === feedbackInboxFilter;
+    }
+    return item.kind === feedbackInboxFilter;
+  });
+
+  if (statusEl) {
+    const openCount = inboxFeedbackItems.filter((item) => item.status === 'open').length;
+    statusEl.textContent = `${filtered.length} ${filtered.length === 1 ? 'elemento mostrado' : 'elementos mostrados'} (${openCount} ${openCount === 1 ? 'pendiente' : 'pendientes'} en total).`;
+  }
+
+  if (!filtered.length) {
+    listEl.innerHTML = '<p class="empty-inline">No hay reportes en esta vista.</p>';
+    return;
+  }
+
+  listEl.innerHTML = filtered
+    .map((item) => {
+      const date = new Date(item.createdAt).toLocaleString('es-AR', {
+        day: 'numeric',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+      return `<article class="feedback-card" data-inbox-id="${esc(item.id)}">
+        <div class="feedback-card-head">
+          <div class="feedback-badges">
+            <span class="feedback-badge kind-${esc(item.kind)}">${esc(FEEDBACK_KIND_LABELS[item.kind])}</span>
+            <span class="feedback-badge status-${esc(item.status)}">${esc(FEEDBACK_STATUS_LABELS[item.status])}</span>
+          </div>
+          <span class="feedback-meta">${esc(date)}</span>
+        </div>
+        <div class="feedback-meta"><strong>${esc(item.authorName)}</strong>${item.authorEmail ? ` · ${esc(item.authorEmail)}` : ''}</div>
+        <p class="feedback-body">${esc(item.message)}</p>
+        ${item.appContext ? `<p class="feedback-tech">${esc(item.appContext)}</p>` : ''}
+        <div class="feedback-admin-controls">
+          <div class="feedback-admin-row">
+            <select data-inbox-status aria-label="Estado del reporte">
+              <option value="open" ${item.status === 'open' ? 'selected' : ''}>Pendiente</option>
+              <option value="reviewed" ${item.status === 'reviewed' ? 'selected' : ''}>En revisión</option>
+              <option value="resolved" ${item.status === 'resolved' ? 'selected' : ''}>Resuelto</option>
+              <option value="dismissed" ${item.status === 'dismissed' ? 'selected' : ''}>Descartado</option>
+            </select>
+            <input type="text" data-inbox-note maxlength="1000" value="${esc(item.adminNote)}" placeholder="Nota o respuesta opcional visible para quien lo envió…">
+          </div>
+          <div class="feedback-admin-actions">
+            <button type="button" class="danger-btn" data-inbox-delete="${esc(item.id)}">Eliminar</button>
+            <button type="button" class="secondary" data-inbox-save="${esc(item.id)}">Guardar</button>
+          </div>
+        </div>
+      </article>`;
+    })
+    .join('');
+
+  listEl.querySelectorAll<HTMLButtonElement>('[data-inbox-save]').forEach((btn) => {
+    btn.onclick = async () => {
+      const id = btn.dataset.inboxSave!;
+      const cardEl = btn.closest<HTMLElement>('[data-inbox-id]');
+      const statusSelect = cardEl?.querySelector<HTMLSelectElement>('[data-inbox-status]');
+      const noteInput = cardEl?.querySelector<HTMLInputElement>('[data-inbox-note]');
+      if (!statusSelect || !noteInput) return;
+      const nextStatus = statusSelect.value as FeedbackStatus;
+      const nextNote = noteInput.value;
+      btn.disabled = true;
+      btn.textContent = 'Guardando…';
+      try {
+        await updateFeedbackReport(id, nextStatus, nextNote);
+        const target = inboxFeedbackItems.find((x) => x.id === id);
+        if (target) {
+          target.status = nextStatus;
+          target.adminNote = nextNote.trim();
+        }
+        renderFeedbackInboxList();
+        void refreshAdminFeedbackSummary();
+      } catch (err: any) {
+        if (statusEl) statusEl.textContent = `No se pudo actualizar: ${err?.message || err}`;
+        btn.disabled = false;
+        btn.textContent = 'Guardar';
+      }
+    };
+  });
+
+  listEl.querySelectorAll<HTMLButtonElement>('[data-inbox-delete]').forEach((btn) => {
+    btn.onclick = async () => {
+      const id = btn.dataset.inboxDelete!;
+      const ok = await showConfirmDialog({
+        eyebrow: 'BUZÓN DE REPORTES',
+        title: '¿Eliminar este reporte?',
+        message: 'Se borrará de Firestore de forma permanente.',
+        confirmLabel: 'Eliminar',
+        danger: true,
+      });
+      if (!ok) return;
+      btn.disabled = true;
+      try {
+        await deleteFeedbackReport(id);
+        inboxFeedbackItems = inboxFeedbackItems.filter((x) => x.id !== id);
+        renderFeedbackInboxList();
+        void refreshAdminFeedbackSummary();
+      } catch (err: any) {
+        if (statusEl) statusEl.textContent = `No se pudo eliminar: ${err?.message || err}`;
+        btn.disabled = false;
+      }
+    };
+  });
+}
+
+let usersDirectoryItems: UserDirectoryEntry[] = [];
+let usersDirectoryFilter: 'all' | 'active' | 'reading' = 'all';
+
+function isUserOnlineNow(iso: string): boolean {
+  if (!iso) return false;
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return false;
+  return Date.now() - ms <= 5 * 60 * 1000;
+}
+
+function formatLastSeen(iso: string): string {
+  if (!iso) return 'Sin actividad reciente';
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return 'Sin actividad reciente';
+  const diffMin = Math.max(0, Math.floor((Date.now() - ms) / 60000));
+  if (diffMin <= 5) return 'Activo ahora';
+  if (diffMin < 60) return `Última vez hace ${diffMin} min`;
+  const diffHours = Math.floor(diffMin / 60);
+  if (diffHours < 24) return `Última vez hace ${diffHours} h`;
+  return `Última vez: ${new Date(ms).toLocaleString('es-AR', {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  })}`;
+}
+
+function formatShortDate(iso: string): string {
+  if (!iso) return '—';
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return '—';
+  return new Date(ms).toLocaleDateString('es-AR', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+async function openUsersDirectoryDialog() {
+  const dlg = $<HTMLDialogElement>('#usersDirectoryDialog');
+  if (!dlg || !isFeedbackAdmin(getSyncState().user)) return;
+  if (!dlg.open) dlg.showModal();
+  await loadUsersDirectory();
+}
+
+async function loadUsersDirectory() {
+  const statusEl = $('#usersDirectoryStatus');
+  const listEl = $('#usersDirectoryList');
+  if (!listEl) return;
+  if (statusEl) statusEl.textContent = 'Cargando usuarios y lecturas…';
+  try {
+    usersDirectoryItems = await fetchAdminUserDirectory();
+    renderUsersDirectory();
+  } catch (err: any) {
+    if (statusEl) statusEl.textContent = `No se pudieron cargar los usuarios: ${err?.message || err}`;
+    listEl.replaceChildren();
+  }
+}
+
+function renderUsersDirectory() {
+  const statusEl = $('#usersDirectoryStatus');
+  const listEl = $('#usersDirectoryList');
+  if (!listEl) return;
+
+  const q = ($<HTMLInputElement>('#usersDirectorySearch')?.value || '').trim().toLowerCase();
+  const filtered = usersDirectoryItems.filter((u) => {
+    if (usersDirectoryFilter === 'active' && !isUserOnlineNow(u.lastActiveAt)) return false;
+    if (
+      usersDirectoryFilter === 'reading' &&
+      !u.bookSummaries.some((b) => b.status === 'reading')
+    ) {
+      return false;
+    }
+    if (!q) return true;
+    const hay = [
+      u.displayName,
+      u.email,
+      ...u.bookSummaries.map((b) => `${b.title} ${b.author}`),
+    ]
+      .join(' ')
+      .toLowerCase();
+    return hay.includes(q);
+  });
+
+  if (statusEl) {
+    const activeCount = usersDirectoryItems.filter((u) => isUserOnlineNow(u.lastActiveAt)).length;
+    const totalBooks = usersDirectoryItems.reduce(
+      (acc, u) => acc + Math.max(u.booksCount, u.bookSummaries.length),
+      0,
+    );
+    statusEl.textContent = `${filtered.length} de ${usersDirectoryItems.length} ${usersDirectoryItems.length === 1 ? 'usuario' : 'usuarios'} · ${activeCount} ${activeCount === 1 ? 'activo ahora' : 'activos ahora'} · ${totalBooks} ${totalBooks === 1 ? 'libro registrado' : 'libros registrados'}.`;
+  }
+
+  if (!filtered.length) {
+    listEl.innerHTML = '<p class="empty-inline">No hay usuarios que coincidan con este filtro.</p>';
+    return;
+  }
+
+  listEl.innerHTML = filtered
+    .map((u) => {
+      const online = isUserOnlineNow(u.lastActiveAt);
+      const presenceLabel = formatLastSeen(u.lastActiveAt);
+      const initial = (u.displayName || u.email || 'L').trim().charAt(0).toUpperCase() || 'L';
+      const avatarHtml = u.photoURL
+        ? `<img class="user-dir-avatar" src="${esc(u.photoURL)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
+        : `<span class="user-dir-avatar-fallback" aria-hidden="true">${esc(initial)}</span>`;
+
+      const bookCount = Math.max(u.booksCount, u.bookSummaries.length);
+      const readingCount = u.bookSummaries.filter((b) => b.status === 'reading').length;
+      const finishedCount = u.bookSummaries.filter((b) => b.status === 'finished').length;
+
+      const booksHtml = u.bookSummaries.length
+        ? `<div class="user-books-list">
+            ${u.bookSummaries
+              .map((b) => {
+                const pct = Math.max(0, Math.min(100, Math.round(b.percent || 0)));
+                const pagesText =
+                  b.totalPages > 0 ? ` · ${b.currentPage}/${b.totalPages} p.` : '';
+                return `<div class="user-book-row">
+                  <div class="user-book-head">
+                    <div class="user-book-title-wrap">
+                      <span class="user-book-title">${esc(b.title)}</span>
+                      ${b.author ? `<span class="user-book-author">${esc(b.author)}</span>` : ''}
+                    </div>
+                    <div class="user-book-progress-meta">
+                      <span class="user-book-status status-${esc(b.status)}">${esc(statusNames[b.status] || b.status)}</span>
+                      <span class="user-book-pct">${pct}%${esc(pagesText)}</span>
+                    </div>
+                  </div>
+                  <div class="user-book-bar" aria-hidden="true"><i style="width:${pct}%"></i></div>
+                </div>`;
+              })
+              .join('')}
+          </div>`
+        : `<p class="empty-inline">Todavía no sincronizó libros o aún no abrió la app después de esta actualización.</p>`;
+
+      return `<article class="user-dir-card">
+        <div class="user-dir-head">
+          <div class="user-dir-identity">
+            ${avatarHtml}
+            <div class="user-dir-who">
+              <span class="user-dir-name">${esc(u.displayName || 'Lector')}</span>
+              ${u.email ? `<span class="user-dir-email">${esc(u.email)}</span>` : ''}
+            </div>
+          </div>
+          <div class="user-dir-meta">
+            <span class="user-presence ${online ? 'online' : 'offline'}">
+              <span class="user-presence-dot" aria-hidden="true"></span>
+              ${esc(presenceLabel)}
+            </span>
+            <span>Alta: ${esc(formatShortDate(u.createdAt))}</span>
+          </div>
+        </div>
+        <div class="user-dir-stats">
+          <span><strong>${bookCount}</strong> ${bookCount === 1 ? 'libro' : 'libros'}</span>
+          <span><strong>${readingCount}</strong> en lectura</span>
+          <span><strong>${finishedCount}</strong> ${finishedCount === 1 ? 'terminado' : 'terminados'}</span>
+        </div>
+        ${booksHtml}
+      </article>`;
+    })
+    .join('');
 }
 
 export async function initApp() {

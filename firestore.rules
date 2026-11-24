@@ -18,6 +18,10 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.email_verified == true;
     }
 
+    function isAdmin() {
+      return isVerifiedUser() && request.auth.token.email == '[redacted]';
+    }
+
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
@@ -46,6 +50,10 @@ service cloud.firestore {
       return !(field in data) || data[field] == null || (data[field] is int && data[field] >= 0);
     }
 
+    function isOptionalTimestamp(data, field) {
+      return !(field in data) || data[field] == null || data[field] is timestamp;
+    }
+
     function bookExists(userId, bookId) {
       return isValidId(bookId) && exists(/databases/$(database)/documents/users/$(userId)/books/$(bookId));
     }
@@ -55,12 +63,23 @@ service cloud.firestore {
     // -----------------------------------------------------------------------
     function isValidUserProfile(data, userId) {
       return data.keys().hasAll(['uid', 'displayName', 'email', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['uid', 'displayName', 'email', 'photoURL', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'uid', 'displayName', 'email', 'photoURL',
+          'lastActiveAt', 'booksCount', 'bookSummaries',
+          'createdAt', 'updatedAt'
+        ])
         && data.uid == userId
         && data.uid == request.auth.uid
         && data.displayName is string && data.displayName.size() <= 120
         && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
         && isOptionalString(data, 'photoURL', 1000)
+        && isOptionalTimestamp(data, 'lastActiveAt')
+        && isOptionalNonNegInt(data, 'booksCount')
+        && (!('bookSummaries' in data) || data.bookSummaries == null || (
+          data.bookSummaries is list &&
+          data.bookSummaries.size() <= 100 &&
+          (data.bookSummaries.size() == 0 || data.bookSummaries[0] is map)
+        ))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -203,15 +222,38 @@ service cloud.firestore {
         && data.createdAt is timestamp;
     }
 
+    function isValidFeedback(data, feedbackId) {
+      return data.keys().hasAll([
+          'id', 'userId', 'authorName', 'authorEmail', 'kind',
+          'message', 'appContext', 'status', 'adminNote', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'userId', 'authorName', 'authorEmail', 'kind',
+          'message', 'appContext', 'status', 'adminNote', 'createdAt', 'updatedAt'
+        ])
+        && data.id == feedbackId
+        && isValidId(data.userId)
+        && data.authorName is string && data.authorName.size() <= 120
+        && data.authorEmail is string && data.authorEmail.size() <= 254
+        && data.kind in ['bug', 'idea', 'other']
+        && data.message is string && data.message.size() >= 1 && data.message.size() <= 2000
+        && data.appContext is string && data.appContext.size() <= 300
+        && data.status in ['open', 'reviewed', 'resolved', 'dismissed']
+        && data.adminNote is string && data.adminNote.size() <= 1000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     // -----------------------------------------------------------------------
     // User Profile & Private Library Collections
     // -----------------------------------------------------------------------
     match /users/{userId} {
-      allow get: if isOwner(userId) && isValidId(userId);
-      allow list: if false;
+      allow get: if (isOwner(userId) || isAdmin()) && isValidId(userId);
+      allow list: if isAdmin();
       allow create: if isVerifiedOwner(userId)
         && isValidId(userId)
         && isValidUserProfile(incoming(), userId)
+        && (!('lastActiveAt' in incoming()) || incoming().lastActiveAt == request.time)
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
       allow update: if isVerifiedOwner(userId)
@@ -220,7 +262,12 @@ service cloud.firestore {
         && incoming().uid == existing().uid
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
-        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'photoURL', 'updatedAt']);
+        && (!('lastActiveAt' in incoming()) || incoming().lastActiveAt == request.time || incoming().lastActiveAt == existing().lastActiveAt)
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'email', 'photoURL',
+          'lastActiveAt', 'booksCount', 'bookSummaries',
+          'updatedAt'
+        ]);
       allow delete: if isVerifiedOwner(userId) && isValidId(userId);
 
       match /books/{bookId} {
@@ -372,6 +419,39 @@ service cloud.firestore {
         allow update: if false;
         allow delete: if isVerifiedOwner(userId) && isValidId(mediaId);
       }
+    }
+
+    // -----------------------------------------------------------------------
+    // Community Feedback & Feature Suggestions
+    // -----------------------------------------------------------------------
+    match /feedback/{feedbackId} {
+      allow get: if isValidId(feedbackId) && (
+        (isVerifiedUser() && existing().userId == request.auth.uid) ||
+        isAdmin()
+      );
+      allow list: if isAdmin() || (isVerifiedUser() && resource.data.userId == request.auth.uid);
+      allow create: if isVerifiedUser()
+        && isValidId(feedbackId)
+        && isValidFeedback(incoming(), feedbackId)
+        && incoming().userId == request.auth.uid
+        && incoming().status == 'open'
+        && incoming().adminNote == ''
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(feedbackId)
+        && isValidFeedback(incoming(), feedbackId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().authorName == existing().authorName
+        && incoming().authorEmail == existing().authorEmail
+        && incoming().kind == existing().kind
+        && incoming().message == existing().message
+        && incoming().appContext == existing().appContext
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'adminNote', 'updatedAt']);
+      allow delete: if isAdmin() && isValidId(feedbackId);
     }
   }
 }
