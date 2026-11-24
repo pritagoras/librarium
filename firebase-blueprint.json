@@ -28,6 +28,10 @@
           "type": "string",
           "format": "date-time"
         },
+        "visitCount": {
+          "type": "integer",
+          "description": "Total recorded visit sessions for this user."
+        },
         "booksCount": {
           "type": "integer"
         },

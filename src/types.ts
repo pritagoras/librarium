@@ -170,8 +170,26 @@ export interface UserDirectoryEntry {
   createdAt: string;
   updatedAt: string;
   lastActiveAt: string;
+  visitCount: number;
   booksCount: number;
   bookSummaries: BookProgressSummary[];
+}
+
+export interface SiteVisitStats {
+  startedAt: string;
+  totalVisits: number;
+  anonVisits: number;
+  authVisits: number;
+  todayDate: string;
+  todayVisits: number;
+  todayAnonVisits: number;
+  todayAuthVisits: number;
+  recentDays: Array<{
+    date: string;
+    total: number;
+    anon: number;
+    auth: number;
+  }>;
 }
 
 

@@ -17,6 +17,7 @@ import {
 import {
   buildSafeAppContext,
   deleteFeedbackReport,
+  fetchAdminSiteVisits,
   fetchAdminUserDirectory,
   fetchAllFeedbackReports,
   fetchMyFeedbackReports,
@@ -37,6 +38,7 @@ import type {
   FeedbackStatus,
   Note,
   Quote,
+  SiteVisitStats,
   SortOption,
   SyncStatus,
   UserDirectoryEntry,
@@ -4794,13 +4796,27 @@ function renderFeedbackInboxList() {
 }
 
 let usersDirectoryItems: UserDirectoryEntry[] = [];
-let usersDirectoryFilter: 'all' | 'active' | 'reading' = 'all';
+let siteVisitStats: SiteVisitStats | null = null;
+let usersDirectoryFilter: 'all' | 'active' | 'today' | 'reading' = 'all';
 
 function isUserOnlineNow(iso: string): boolean {
   if (!iso) return false;
   const ms = Date.parse(iso);
   if (!Number.isFinite(ms)) return false;
   return Date.now() - ms <= 5 * 60 * 1000;
+}
+
+function isSameLocalDay(iso: string): boolean {
+  if (!iso) return false;
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return false;
+  const d = new Date(ms);
+  const now = new Date();
+  return (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  );
 }
 
 function formatLastSeen(iso: string): string {
@@ -4842,9 +4858,14 @@ async function loadUsersDirectory() {
   const statusEl = $('#usersDirectoryStatus');
   const listEl = $('#usersDirectoryList');
   if (!listEl) return;
-  if (statusEl) statusEl.textContent = 'Cargando usuarios y lecturas…';
+  if (statusEl) statusEl.textContent = 'Cargando usuarios, visitas y lecturas…';
   try {
-    usersDirectoryItems = await fetchAdminUserDirectory();
+    const [users, visits] = await Promise.all([
+      fetchAdminUserDirectory(),
+      fetchAdminSiteVisits(),
+    ]);
+    usersDirectoryItems = users;
+    siteVisitStats = visits;
     renderUsersDirectory();
   } catch (err: any) {
     if (statusEl) statusEl.textContent = `No se pudieron cargar los usuarios: ${err?.message || err}`;
@@ -4852,14 +4873,54 @@ async function loadUsersDirectory() {
   }
 }
 
+function renderUsersVisitsSummary() {
+  const host = $('#usersVisitsSummary');
+  if (!host) return;
+  const totalUserVisits = usersDirectoryItems.reduce(
+    (acc, u) => acc + (u.visitCount > 0 ? u.visitCount : 1),
+    0,
+  );
+  const usersToday = usersDirectoryItems.filter((u) => isSameLocalDay(u.lastActiveAt)).length;
+  const activeNow = usersDirectoryItems.filter((u) => isUserOnlineNow(u.lastActiveAt)).length;
+
+  const cards: string[] = [
+    `<div class="users-visit-stat">
+      <span class="users-visit-stat-label">Visitas de cuentas (nube)</span>
+      <strong>${totalUserVisits}</strong>
+      <span class="users-visit-sub">${usersDirectoryItems.length} ${usersDirectoryItems.length === 1 ? 'cuenta' : 'cuentas'} · ${usersToday} hoy · ${activeNow} ahora</span>
+    </div>`,
+  ];
+
+  if (siteVisitStats) {
+    cards.push(
+      `<div class="users-visit-stat">
+        <span class="users-visit-stat-label">Visitas al enlace (servidor)</span>
+        <strong>${siteVisitStats.totalVisits}</strong>
+        <span class="users-visit-sub">Hoy: ${siteVisitStats.todayVisits} (${siteVisitStats.todayAuthVisits} con cuenta · ${siteVisitStats.todayAnonVisits} sin cuenta)</span>
+      </div>`,
+      `<div class="users-visit-stat">
+        <span class="users-visit-stat-label">Visitantes sin cuenta</span>
+        <strong>${siteVisitStats.anonVisits}</strong>
+        <span class="users-visit-sub">${siteVisitStats.authVisits} sesiones con Google desde ${esc(formatShortDate(siteVisitStats.startedAt))}</span>
+      </div>`,
+    );
+  }
+
+  host.innerHTML = cards.join('');
+  host.classList.remove('hidden');
+}
+
 function renderUsersDirectory() {
   const statusEl = $('#usersDirectoryStatus');
   const listEl = $('#usersDirectoryList');
   if (!listEl) return;
 
+  renderUsersVisitsSummary();
+
   const q = ($<HTMLInputElement>('#usersDirectorySearch')?.value || '').trim().toLowerCase();
   const filtered = usersDirectoryItems.filter((u) => {
     if (usersDirectoryFilter === 'active' && !isUserOnlineNow(u.lastActiveAt)) return false;
+    if (usersDirectoryFilter === 'today' && !isSameLocalDay(u.lastActiveAt)) return false;
     if (
       usersDirectoryFilter === 'reading' &&
       !u.bookSummaries.some((b) => b.status === 'reading')
@@ -4878,12 +4939,11 @@ function renderUsersDirectory() {
   });
 
   if (statusEl) {
-    const activeCount = usersDirectoryItems.filter((u) => isUserOnlineNow(u.lastActiveAt)).length;
     const totalBooks = usersDirectoryItems.reduce(
       (acc, u) => acc + Math.max(u.booksCount, u.bookSummaries.length),
       0,
     );
-    statusEl.textContent = `${filtered.length} de ${usersDirectoryItems.length} ${usersDirectoryItems.length === 1 ? 'usuario' : 'usuarios'} · ${activeCount} ${activeCount === 1 ? 'activo ahora' : 'activos ahora'} · ${totalBooks} ${totalBooks === 1 ? 'libro registrado' : 'libros registrados'}.`;
+    statusEl.textContent = `Mostrando ${filtered.length} de ${usersDirectoryItems.length} ${usersDirectoryItems.length === 1 ? 'usuario' : 'usuarios'} · ${totalBooks} ${totalBooks === 1 ? 'libro registrado' : 'libros registrados'}.`;
   }
 
   if (!filtered.length) {
@@ -4900,6 +4960,10 @@ function renderUsersDirectory() {
         ? `<img class="user-dir-avatar" src="${esc(u.photoURL)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
         : `<span class="user-dir-avatar-fallback" aria-hidden="true">${esc(initial)}</span>`;
 
+      const visitsLabel =
+        u.visitCount > 0
+          ? `<strong>${u.visitCount}</strong> ${u.visitCount === 1 ? 'visita' : 'visitas'}`
+          : '<strong>1+</strong> visitas';
       const bookCount = Math.max(u.booksCount, u.bookSummaries.length);
       const readingCount = u.bookSummaries.filter((b) => b.status === 'reading').length;
       const finishedCount = u.bookSummaries.filter((b) => b.status === 'finished').length;
@@ -4947,6 +5011,7 @@ function renderUsersDirectory() {
           </div>
         </div>
         <div class="user-dir-stats">
+          <span>${visitsLabel}</span>
           <span><strong>${bookCount}</strong> ${bookCount === 1 ? 'libro' : 'libros'}</span>
           <span><strong>${readingCount}</strong> en lectura</span>
           <span><strong>${finishedCount}</strong> ${finishedCount === 1 ? 'terminado' : 'terminados'}</span>

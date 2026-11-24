@@ -10,7 +10,7 @@
 7. Media payloads (`media.dataUrl`) are bounded to `750000` characters to stay safely below the 1MB Firestore document limit.
 8. Strict key allowlisting via `keys().hasAll(...) && keys().hasOnly(...)` on `create` and `diff().affectedKeys().hasOnly(...)` on `update` prevents shadow fields.
 9. Community reports & feature suggestions reside under `/feedback/{feedbackId}`: any verified signed-in user (`request.auth.token.email_verified == true`) can `create` a report with `userId == request.auth.uid`, initial `status == 'open'`, empty `adminNote == ''`, and `createdAt == request.time`; users may read (`get`/`list`) only their own reports (`resource.data.userId == request.auth.uid`). Only the verified admin (`[redacted]`) can read all reports, update `status`/`adminNote`, or delete reports.
-10. `/users/{userId}` stores account login metadata (`displayName`, `email`, `createdAt`, `lastActiveAt`) and a strictly non-private bounded reading summary (`booksCount`, `bookSummaries` <= 100 items with title/status/pages/percent only — zero comments, notes, quotes, reviews, or media). Only the owner or verified admin (`isAdmin()`) may `get` a `/users/{userId}` document, and only `isAdmin()` may `list /users`. Private subcollections (`/books`, `/notes`, `/entries`, `/quotes`, `/analyses`, `/conversations`, `/media`) remain strictly owner-only.
+10. `/users/{userId}` stores account login metadata (`displayName`, `email`, `createdAt`, `lastActiveAt`, `visitCount`) and a strictly non-private bounded reading summary (`booksCount`, `bookSummaries` <= 100 items with title/status/pages/percent only — zero comments, notes, quotes, reviews, or media). `visitCount` is a bounded integer (`1..1000000`, `1` on create, monotonically `existing` or `existing + 1` on update). Only the owner or verified admin (`isAdmin()`) may `get` a `/users/{userId}` document, and only `isAdmin()` may `list /users`. Private subcollections (`/books`, `/notes`, `/entries`, `/quotes`, `/analyses`, `/conversations`, `/media`) remain strictly owner-only.
 
 ## 2. The "Dirty Dozen" Payloads (Must Return PERMISSION_DENIED)
 1. **Unauthenticated read/write**: `GET /users/alice/books/b1` or `CREATE /feedback/f1` with `auth = null`.
@@ -24,6 +24,6 @@
 9. **Immutable field tampering**: `UPDATE /users/alice/books/b1` attempting to modify `createdAt` or `userId`, or non-admin `UPDATE /feedback/f1` attempting to forge `status: "resolved"`.
 10. **Unbounded array / DoW**: `CREATE /users/alice/books/b1` with 15 `tags`, `quotes/q1` with 6 `photoMediaIds`, or `users/alice` with 101 `bookSummaries`.
 11. **Oversized string / DoW**: `CREATE /users/alice/media/m1` with `dataUrl` exceeding 750,000 bytes, or `feedback.message` > 2000 chars.
-12. **Invalid rating / status value**: `UPDATE /users/alice/books/b1` with `rating: 99` or `status: "hacked"`.
+12. **Invalid rating / status / counter value**: `UPDATE /users/alice/books/b1` with `rating: 99` or `status: "hacked"`, or `UPDATE /users/alice` jumping `visitCount` by `+100` or negative value.
 
 

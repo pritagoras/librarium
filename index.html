@@ -734,11 +734,13 @@ Notas finales:
       <div class="choice-row" id="usersDirectoryFilters" role="group" aria-label="Filtrar usuarios">
         <button type="button" class="choice active" data-users-filter="all">Todos</button>
         <button type="button" class="choice" data-users-filter="active">Activos ahora</button>
+        <button type="button" class="choice" data-users-filter="today">Hoy</button>
         <button type="button" class="choice" data-users-filter="reading">Leyendo</button>
       </div>
       <button type="button" id="refreshUsersDirectoryBtn" class="secondary">Actualizar</button>
     </div>
     <input id="usersDirectorySearch" class="users-directory-search" type="search" placeholder="Buscar por usuario, correo o libro…" aria-label="Buscar usuarios o libros">
+    <div id="usersVisitsSummary" class="users-visits-summary hidden" aria-live="polite"></div>
     <p id="usersDirectoryStatus" class="muted" aria-live="polite"></p>
     <div id="usersDirectoryList" class="user-dir-list"></div>
   </section>

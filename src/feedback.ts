@@ -19,11 +19,12 @@ import type {
   FeedbackItem,
   FeedbackKind,
   FeedbackStatus,
+  SiteVisitStats,
   UserDirectoryEntry,
 } from './types';
 
 export const FEEDBACK_ADMIN_EMAIL = '[redacted]';
-const APP_CLIENT_VERSION = 'v37';
+const APP_CLIENT_VERSION = 'v38';
 
 export function isFeedbackAdmin(user: User | null | undefined): boolean {
   return Boolean(
@@ -265,6 +266,10 @@ export async function fetchAdminUserDirectory(): Promise<UserDirectoryEntry[]> {
           createdAt: toIso(data.createdAt),
           updatedAt,
           lastActiveAt,
+          visitCount:
+            typeof data.visitCount === 'number' && data.visitCount >= 1
+              ? Math.floor(data.visitCount)
+              : 0,
           booksCount:
             typeof data.booksCount === 'number' && data.booksCount >= 0
               ? Math.floor(data.booksCount)
@@ -275,5 +280,20 @@ export async function fetchAdminUserDirectory(): Promise<UserDirectoryEntry[]> {
       .sort((a, b) => b.lastActiveAt.localeCompare(a.lastActiveAt));
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, 'users');
+  }
+}
+
+export async function fetchAdminSiteVisits(): Promise<SiteVisitStats | null> {
+  const user = auth.currentUser;
+  if (!isFeedbackAdmin(user) || !user) return null;
+  try {
+    const idToken = await user.getIdToken();
+    const resp = await fetch('/api/visits', {
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+    if (!resp.ok) return null;
+    return (await resp.json()) as SiteVisitStats;
+  } catch {
+    return null;
   }
 }

@@ -3,6 +3,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  increment,
   onSnapshot,
   query,
   serverTimestamp,
@@ -179,6 +180,67 @@ async function hydrateQuoteFromLocalMedia(quote: Quote): Promise<Quote> {
 let summarySyncTimer: ReturnType<typeof setTimeout> | null = null;
 let presenceHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let lastPresenceTouchAt = 0;
+let lastHiddenAt = 0;
+let fallbackSiteSessionId = '';
+
+const VISIT_COOLDOWN_MS = 15 * 60 * 1000;
+const PWA_RESUME_VISIT_MS = 30 * 60 * 1000;
+
+function getSiteVisitSessionId(): string {
+  const key = 'librarium-site-visit-sid';
+  try {
+    const existing = sessionStorage.getItem(key);
+    if (existing && /^[a-zA-Z0-9_-]{8,64}$/.test(existing)) return existing;
+    const created = `v_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    sessionStorage.setItem(key, created);
+    return created;
+  } catch {
+    if (!fallbackSiteSessionId) {
+      fallbackSiteSessionId = `v_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    }
+    return fallbackSiteSessionId;
+  }
+}
+
+export async function reportSiteVisit(authenticated: boolean): Promise<void> {
+  if (typeof window === 'undefined') return;
+  try {
+    await fetch('/api/visits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: getSiteVisitSessionId(),
+        authenticated,
+      }),
+      keepalive: true,
+    });
+  } catch {
+    // Ignore offline/network errors
+  }
+}
+
+function shouldCountUserVisit(uid: string): boolean {
+  try {
+    if (sessionStorage.getItem(`librarium-visited-${uid}`) === '1') return false;
+    const lastMs = Number(localStorage.getItem(`librarium-last-visit-${uid}`) || 0);
+    if (Number.isFinite(lastMs) && Date.now() - lastMs < VISIT_COOLDOWN_MS) {
+      sessionStorage.setItem(`librarium-visited-${uid}`, '1');
+      return false;
+    }
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+function markUserVisitCounted(uid: string) {
+  try {
+    sessionStorage.setItem(`librarium-visited-${uid}`, '1');
+    localStorage.setItem(`librarium-last-visit-${uid}`, String(Date.now()));
+  } catch {
+    // Ignore storage errors
+  }
+}
 
 function stopListeners() {
   unsubscribers.forEach((u) => u());
@@ -260,15 +322,20 @@ function scheduleBookSummarySync() {
   }, 1200);
 }
 
-async function touchPresenceHeartbeat(force = false) {
+async function touchPresenceHeartbeat(force = false, countVisit = false) {
   if (!currentUser || !currentUser.emailVerified || document.visibilityState !== 'visible') return;
-  if (!force && Date.now() - lastPresenceTouchAt < 60000) return;
+  if (!force && !countVisit && Date.now() - lastPresenceTouchAt < 60000) return;
   lastPresenceTouchAt = Date.now();
   try {
-    await updateDoc(doc(db, 'users', currentUser.uid), {
+    const patch: Record<string, unknown> = {
       lastActiveAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
-    });
+    };
+    if (countVisit) {
+      patch.visitCount = increment(1);
+      markUserVisitCounted(currentUser.uid);
+    }
+    await updateDoc(doc(db, 'users', currentUser.uid), patch);
   } catch {
     // Ignore transient network errors during background heartbeat
   }
@@ -277,14 +344,18 @@ async function touchPresenceHeartbeat(force = false) {
 function startPresenceHeartbeat() {
   stopPresenceTracking();
   presenceHeartbeatTimer = setInterval(() => {
-    void touchPresenceHeartbeat(false);
+    void touchPresenceHeartbeat(false, false);
   }, 3 * 60 * 1000);
 }
 
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      void touchPresenceHeartbeat(false);
+    if (document.visibilityState === 'hidden') {
+      lastHiddenAt = Date.now();
+    } else if (document.visibilityState === 'visible') {
+      const resumedAfterBreak = lastHiddenAt > 0 && Date.now() - lastHiddenAt >= PWA_RESUME_VISIT_MS;
+      lastHiddenAt = 0;
+      void touchPresenceHeartbeat(resumedAfterBreak, resumedAfterBreak);
     }
   });
 }
@@ -304,11 +375,20 @@ async function upsertUserProfile(user: User) {
   try {
     lastPresenceTouchAt = Date.now();
     const snap = await getDoc(docRef);
+    const countThisVisit = shouldCountUserVisit(user.uid);
     if (snap.exists()) {
+      const existingData = snap.data() as Record<string, unknown>;
+      const rawVisits = Number(existingData.visitCount);
+      const hasVisitCount = Number.isFinite(rawVisits) && rawVisits >= 1;
+      const baseVisits = hasVisitCount ? Math.floor(rawVisits) : 0;
+      const nextVisitCount = hasVisitCount
+        ? Math.min(1000000, countThisVisit ? baseVisits + 1 : baseVisits)
+        : 1;
       await updateDoc(docRef, {
         displayName: payload.displayName,
         email: payload.email,
         photoURL: payload.photoURL,
+        visitCount: nextVisitCount,
         booksCount: payload.booksCount,
         bookSummaries: payload.bookSummaries,
         lastActiveAt: serverTimestamp(),
@@ -317,11 +397,13 @@ async function upsertUserProfile(user: User) {
     } else {
       await setDoc(docRef, {
         ...payload,
+        visitCount: 1,
         lastActiveAt: serverTimestamp(),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
     }
+    markUserVisitCounted(user.uid);
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, path);
   }
@@ -1134,10 +1216,13 @@ export function initSync(
     if (!user) {
       stopListeners();
       stopPresenceTracking();
+      void reportSiteVisit(false);
       setSyncState('local', 'Modo local. Iniciá sesión para sincronizar en la nube.');
       onDataChangedCb?.();
       return;
     }
+
+    void reportSiteVisit(true);
 
     try {
       const prevUid = localStorage.getItem(LAST_UID_KEY);
