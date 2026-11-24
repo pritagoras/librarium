@@ -65,6 +65,18 @@ let geminiAttachedImage: string | null = null;
 let geminiExtraContext = '';
 let geminiConversationId: string | null = null;
 let geminiConversationHadImages = false;
+let geminiStreamController: AbortController | null = null;
+
+const ttsAudioCache = new Map<string, string>();
+let activeTtsAudio: HTMLAudioElement | null = null;
+let activeTtsButton: HTMLButtonElement | null = null;
+let activeTtsDefaultLabel = '🔊 Escuchar';
+
+let activeRecorder: MediaRecorder | null = null;
+let activeDictationStream: MediaStream | null = null;
+let activeDictationTimer: ReturnType<typeof setInterval> | null = null;
+let activeDictationBtn: HTMLButtonElement | null = null;
+let activeDictationOriginalLabel = '🎙 Dictar';
 
 const AI_SETTINGS_KEY = 'librarium-ai-settings';
 const AI_SETTINGS_DEFAULTS: AISettings = {
@@ -72,6 +84,7 @@ const AI_SETTINGS_DEFAULTS: AISettings = {
   thinking: 'auto',
   style: 'natural',
   customStyle: '',
+  ttsVoice: 'Kore',
 };
 
 const uid = () =>
@@ -139,6 +152,272 @@ function showConfirmDialog(options: {
     if (!dlg.open) dlg.showModal();
     okBtn.focus();
   });
+}
+
+async function copyPlainText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const box = document.createElement('textarea');
+    box.value = text;
+    box.style.position = 'fixed';
+    box.style.opacity = '0';
+    document.body.append(box);
+    box.select();
+    const ok = document.execCommand('copy');
+    box.remove();
+    return ok;
+  }
+}
+
+function stripMarkdownForSpeech(text: string): string {
+  return String(text || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/[#*_~>]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function stopTtsPlayback() {
+  if (activeTtsAudio) {
+    activeTtsAudio.pause();
+    activeTtsAudio.currentTime = 0;
+    activeTtsAudio = null;
+  }
+  if (activeTtsButton) {
+    activeTtsButton.classList.remove('playing');
+    activeTtsButton.textContent = activeTtsDefaultLabel;
+    activeTtsButton.disabled = false;
+    activeTtsButton = null;
+  }
+}
+
+async function toggleSpeakText(
+  rawText: string,
+  button: HTMLButtonElement,
+  defaultLabel = '🔊 Escuchar',
+) {
+  const cleanText = stripMarkdownForSpeech(rawText);
+  if (!cleanText) return;
+
+  if (activeTtsButton === button && activeTtsAudio) {
+    stopTtsPlayback();
+    return;
+  }
+
+  stopTtsPlayback();
+  activeTtsButton = button;
+  activeTtsDefaultLabel = defaultLabel;
+  button.disabled = true;
+  button.textContent = 'Generando audio…';
+
+  try {
+    const voiceName = getAISettings().ttsVoice || 'Kore';
+    const cacheKey = `${voiceName}:${cleanText.slice(0, 3500)}`;
+    let audioUrl = ttsAudioCache.get(cacheKey);
+    if (!audioUrl) {
+      const res = await fetch('/api/gemini/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: cleanText, voiceName }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw Error(data.error || `Error HTTP ${res.status}`);
+      const binary = atob(String(data.audioBase64 || ''));
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: data.mimeType || 'audio/wav' });
+      audioUrl = URL.createObjectURL(blob);
+      ttsAudioCache.set(cacheKey, audioUrl);
+    }
+
+    if (activeTtsButton !== button) return;
+    const audio = new Audio(audioUrl);
+    activeTtsAudio = audio;
+    button.disabled = false;
+    button.classList.add('playing');
+    button.textContent = '⏸ Pausar';
+    audio.onended = () => {
+      if (activeTtsAudio === audio) stopTtsPlayback();
+    };
+    audio.onerror = () => {
+      if (activeTtsAudio === audio) stopTtsPlayback();
+    };
+    await audio.play();
+  } catch (err: any) {
+    if (activeTtsButton === button) {
+      stopTtsPlayback();
+      button.textContent = 'Error audio';
+      setTimeout(() => {
+        if (button.isConnected && button.textContent === 'Error audio') {
+          button.textContent = defaultLabel;
+        }
+      }, 2200);
+    }
+    console.error('TTS error:', err);
+  }
+}
+
+function getDictationStatusEl(button: HTMLButtonElement): HTMLElement | null {
+  const scope = button.closest('form, .gemini-shell, .review-panel, dialog') || document;
+  return scope.querySelector<HTMLElement>('.voice-status');
+}
+
+function stopVoiceDictation(cancel = false) {
+  if (activeDictationTimer) {
+    clearInterval(activeDictationTimer);
+    activeDictationTimer = null;
+  }
+  const recorder = activeRecorder;
+  activeRecorder = null;
+  if (recorder && recorder.state !== 'inactive') {
+    if (cancel) {
+      recorder.ondataavailable = null;
+      recorder.onstop = null;
+    }
+    try {
+      recorder.stop();
+    } catch {}
+  }
+  if (activeDictationStream) {
+    activeDictationStream.getTracks().forEach((t) => t.stop());
+    activeDictationStream = null;
+  }
+  if (cancel && activeDictationBtn) {
+    activeDictationBtn.classList.remove('recording');
+    activeDictationBtn.disabled = false;
+    activeDictationBtn.textContent = activeDictationOriginalLabel;
+    const statusEl = getDictationStatusEl(activeDictationBtn);
+    if (statusEl) statusEl.textContent = '';
+    activeDictationBtn = null;
+  }
+}
+
+async function handleVoiceDictateClick(button: HTMLButtonElement) {
+  if (activeRecorder && activeDictationBtn === button) {
+    stopVoiceDictation(false);
+    return;
+  }
+  if (activeRecorder) {
+    stopVoiceDictation(true);
+  }
+
+  const targetSelector = button.dataset.dictateTarget;
+  const target = targetSelector ? $<HTMLTextAreaElement>(targetSelector) : null;
+  if (!target) return;
+  const statusEl = getDictationStatusEl(button);
+
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+    if (statusEl) {
+      statusEl.textContent = 'Tu navegador no permite grabar audio desde la app.';
+    }
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const preferredTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
+    const mimeType = preferredTypes.find((t) => MediaRecorder.isTypeSupported?.(t)) || '';
+    const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    const chunks: Blob[] = [];
+
+    activeDictationStream = stream;
+    activeRecorder = recorder;
+    activeDictationBtn = button;
+    activeDictationOriginalLabel = button.textContent || '🎙 Dictar';
+
+    let seconds = 0;
+    button.classList.add('recording');
+    button.textContent = '⏹ Detener (0s)';
+    if (statusEl) statusEl.textContent = 'Escuchando… hablá cerca del micrófono y tocá Detener.';
+
+    activeDictationTimer = setInterval(() => {
+      seconds += 1;
+      button.textContent = `⏹ Detener (${seconds}s)`;
+      if (seconds >= 120) stopVoiceDictation(false);
+    }, 1000);
+
+    recorder.ondataavailable = (evt) => {
+      if (evt.data && evt.data.size > 0) chunks.push(evt.data);
+    };
+
+    recorder.onstop = async () => {
+      if (activeDictationTimer) {
+        clearInterval(activeDictationTimer);
+        activeDictationTimer = null;
+      }
+      stream.getTracks().forEach((t) => t.stop());
+      if (activeDictationStream === stream) activeDictationStream = null;
+      if (activeRecorder === recorder) activeRecorder = null;
+
+      button.classList.remove('recording');
+      if (!chunks.length) {
+        button.textContent = activeDictationOriginalLabel;
+        activeDictationBtn = null;
+        if (statusEl) statusEl.textContent = 'No se grabó audio.';
+        return;
+      }
+
+      button.disabled = true;
+      button.textContent = 'Transcribiendo…';
+      if (statusEl) statusEl.textContent = 'Transcribiendo dictado con Gemini…';
+
+      try {
+        const audioBlob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ''));
+          reader.onerror = reject;
+          reader.readAsDataURL(audioBlob);
+        });
+        const [header, base64] = dataUrl.split(',', 2);
+        const audioMime = header.match(/data:(.*?);base64/)?.[1] || 'audio/webm';
+        const res = await fetch('/api/gemini/transcribe-audio', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mimeType: audioMime, data: base64 }),
+        });
+        const result = await res.json();
+        if (!res.ok) throw Error(result.error || `Error HTTP ${res.status}`);
+        const transcript = String(result.text || '').trim();
+        if (!transcript) throw Error('No se reconoció voz.');
+
+        const currentVal = target.value;
+        const start = target.selectionStart ?? currentVal.length;
+        const end = target.selectionEnd ?? currentVal.length;
+        const before = currentVal.slice(0, start);
+        const after = currentVal.slice(end);
+        const needsSpaceBefore = before.length > 0 && !/[\s\n]$/.test(before);
+        const needsSpaceAfter = after.length > 0 && !/^[\s\n]/.test(after);
+        const insertion = `${needsSpaceBefore ? ' ' : ''}${transcript}${needsSpaceAfter ? ' ' : ''}`;
+        target.value = before + insertion + after;
+        const caret = before.length + insertion.length;
+        target.setSelectionRange?.(caret, caret);
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+        target.focus();
+        if (statusEl) statusEl.textContent = 'Dictado agregado. Podés revisarlo antes de guardar.';
+      } catch (err: any) {
+        if (statusEl) statusEl.textContent = `No se pudo transcribir: ${err?.message || err}`;
+      } finally {
+        button.disabled = false;
+        button.textContent = activeDictationOriginalLabel;
+        if (activeDictationBtn === button) activeDictationBtn = null;
+      }
+    };
+
+    recorder.start();
+  } catch (err: any) {
+    stopVoiceDictation(true);
+    if (statusEl) {
+      statusEl.textContent =
+        err?.name === 'NotAllowedError'
+          ? 'Permití el acceso al micrófono para poder dictar.'
+          : `No se pudo iniciar el micrófono: ${err?.message || err}`;
+    }
+  }
 }
 
 function parseTagsInput(raw: string): string[] {
@@ -555,10 +834,84 @@ function openBookForm(b: Book | null = null) {
   renderBookTagSuggestions();
 
   coverData = b?.cover || null;
+  const autofillStatus = $('#aiAutofillStatus');
+  if (autofillStatus) autofillStatus.textContent = '';
   $('#catalogPanel')?.classList.add('hidden');
   $('#manualMode')?.classList.add('active');
   $('#searchMode')?.classList.remove('active');
   $<HTMLDialogElement>('#bookDialog')?.showModal();
+}
+
+async function autofillBookWithAI() {
+  const btn = $<HTMLButtonElement>('#aiAutofillBookBtn');
+  const status = $('#aiAutofillStatus');
+  if (!btn || !status) return;
+
+  const titleInput = $<HTMLInputElement>('#title')!;
+  const authorInput = $<HTMLInputElement>('#author')!;
+  const publisherInput = $<HTMLInputElement>('#publisher')!;
+  const yearInput = $<HTMLInputElement>('#year')!;
+  const pagesInput = $<HTMLInputElement>('#totalPages')!;
+  const isbnInput = $<HTMLInputElement>('#isbn')!;
+  const tagsInput = $<HTMLInputElement>('#bookTagsInput')!;
+
+  const title = titleInput.value.trim();
+  const author = authorInput.value.trim();
+  const isbn = isbnInput.value.trim();
+
+  let coverImage: { mimeType: string; data: string } | null = null;
+  if (coverData && coverData.startsWith('data:image/')) {
+    const [header, data] = coverData.split(',', 2);
+    const mimeType = header.match(/data:(.*?);base64/)?.[1] || 'image/jpeg';
+    if (data) coverImage = { mimeType, data };
+  }
+
+  if (!title && !author && !isbn && !coverImage) {
+    status.textContent = 'Escribí el título, autor, ISBN o cargá una foto de portada primero.';
+    titleInput.focus();
+    return;
+  }
+
+  const originalText = btn.textContent || '✦ Completar ficha y etiquetas con IA';
+  btn.disabled = true;
+  btn.textContent = 'Consultando IA…';
+  status.textContent = 'Buscando ficha y etiquetas sugeridas…';
+
+  try {
+    const res = await fetch('/api/gemini/book-autofill', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title,
+        author,
+        isbn,
+        existingTags: getAllLibraryTags(),
+        coverImage,
+        model: getAISettings().model,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw Error(data.error || `Error HTTP ${res.status}`);
+
+    const s = data.suggestion || {};
+    if (!titleInput.value.trim() && s.title) titleInput.value = s.title;
+    if (!authorInput.value.trim() && s.author) authorInput.value = s.author;
+    if (!publisherInput.value.trim() && s.publisher) publisherInput.value = s.publisher;
+    if (!yearInput.value.trim() && s.year) yearInput.value = s.year;
+    if (!pagesInput.value.trim() && s.totalPages > 0) pagesInput.value = String(s.totalPages);
+
+    if (Array.isArray(s.tags) && s.tags.length) {
+      const merged = parseTagsInput([tagsInput.value, ...s.tags].filter(Boolean).join(', '));
+      tagsInput.value = merged.join(', ');
+    }
+
+    status.textContent = 'Ficha y etiquetas sugeridas. Revisá los campos antes de guardar.';
+  } catch (err: any) {
+    status.textContent = `No se pudo completar con IA: ${err?.message || err}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
 }
 
 function normalizeISBN(value: string): string | null {
@@ -827,16 +1180,23 @@ async function renderDetail() {
           <h2>Puntuación y reseña personal</h2>
           <p class="muted">Registrá tu valoración general y tus conclusiones al avanzar o terminar la lectura.</p>
         </div>
+        <div class="review-head-tools">
+          <button type="button" class="secondary" id="aiReviewDraftBtn">✦ Sugerir borrador con IA</button>
+          <button type="button" class="secondary" id="speakDetailReview">🔊 Escuchar</button>
+        </div>
       </div>
       <div class="review-panel">
         <div class="rating-field">
           <span class="field-label">Tu puntuación</span>
           <div id="detailStarsPicker" class="star-picker" role="group" aria-label="Puntuación del libro"></div>
         </div>
-        <label style="display:flex;flex-direction:column;gap:8px;font-size:12px;font-weight:600;color:var(--brown)">
-          Reseña o balance de lectura
-          <textarea id="detailReviewText" maxlength="10000" placeholder="¿Qué ideas te quedaron? ¿A quién se lo recomendarías?">${esc(b.review || '')}</textarea>
-        </label>
+        <div class="field-head">
+          <label for="detailReviewText">Reseña o balance de lectura</label>
+          <button type="button" class="mini voice-dictate-btn" data-dictate-target="#detailReviewText">🎙 Dictar</button>
+        </div>
+        <textarea id="detailReviewText" maxlength="10000" placeholder="¿Qué ideas te quedaron? ¿A quién se lo recomendarías?">${esc(b.review || '')}</textarea>
+        <small id="detailReviewDictateStatus" class="muted voice-status" aria-live="polite"></small>
+        <div id="reviewSuggestedTags" class="review-suggested-tags"></div>
         <div class="review-actions">
           <span id="detailReviewStatus" class="review-status" aria-live="polite"></span>
           <button type="button" class="primary" id="saveDetailReview">Guardar reseña</button>
@@ -860,6 +1220,110 @@ async function renderDetail() {
       });
     };
     renderDetailStars(tempRating);
+
+    $('#speakDetailReview')?.addEventListener('click', (evt) => {
+      const text = $<HTMLTextAreaElement>('#detailReviewText')?.value.trim() || '';
+      if (!text) {
+        const statusEl = $('#detailReviewStatus');
+        if (statusEl) statusEl.textContent = 'Escribí o generá una reseña primero para escucharla.';
+        return;
+      }
+      void toggleSpeakText(text, evt.currentTarget as HTMLButtonElement, '🔊 Escuchar');
+    });
+
+    $('#aiReviewDraftBtn')?.addEventListener('click', async () => {
+      if (!activeBook) return;
+      const btn = $<HTMLButtonElement>('#aiReviewDraftBtn')!;
+      const statusEl = $('#detailReviewStatus')!;
+      const textarea = $<HTMLTextAreaElement>('#detailReviewText')!;
+      const tagsBox = $('#reviewSuggestedTags')!;
+      const original = btn.textContent || '✦ Sugerir borrador con IA';
+
+      btn.disabled = true;
+      btn.textContent = 'Redactando…';
+      statusEl.textContent = 'Armando borrador con tus citas y anotaciones…';
+
+      try {
+        const ai = getAISettings();
+        const res = await fetch('/api/gemini/review-draft', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            bookTitle: activeBook.title,
+            bookAuthor: activeBook.author || '',
+            rating: tempRating,
+            existingTags: getAllLibraryTags(),
+            currentReview: textarea.value.trim(),
+            quotes: quotes.map((q) => ({ text: q.text, page: q.page, analysis: q.analysis })),
+            entries: entries.map((e) => ({ page: e.page, title: e.title, text: e.text })),
+            notes: notes.filter((n) => n.comment).map((n) => ({ number: n.number, comment: n.comment })),
+            model: ai.model,
+            thinking: ai.thinking,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw Error(data.error || `Error HTTP ${res.status}`);
+        const draft = String(data.reviewDraft || '').trim();
+        if (!draft) throw Error('Gemini no devolvió un borrador.');
+
+        if (textarea.value.trim()) {
+          const replace = await showConfirmDialog({
+            eyebrow: 'BORRADOR DE RESEÑA',
+            title: '¿Reemplazar la reseña actual?',
+            message: 'Ya escribiste texto en la reseña. ¿Querés reemplazarlo con el borrador sugerido por la IA?',
+            confirmLabel: 'Reemplazar',
+          });
+          if (!replace) {
+            statusEl.textContent = 'Conservé tu texto actual.';
+            return;
+          }
+        }
+
+        textarea.value = draft;
+        textarea.focus();
+        statusEl.textContent = 'Borrador listo. Revisalo y tocá Guardar reseña para conservarlo.';
+
+        const suggested: string[] = Array.isArray(data.suggestedTags) ? data.suggestedTags : [];
+        const missingTags = suggested.filter(
+          (tag) => !(activeBook?.tags || []).some((t) => t.toLowerCase() === tag.toLowerCase()),
+        );
+        if (missingTags.length) {
+          tagsBox.innerHTML =
+            '<span>Etiquetas sugeridas:</span>' +
+            missingTags
+              .map(
+                (t) =>
+                  `<button type="button" class="tag-suggestion-btn" data-add-review-tag="${esc(t)}">+ ${esc(t)}</button>`,
+              )
+              .join('');
+          tagsBox.querySelectorAll<HTMLButtonElement>('[data-add-review-tag]').forEach((tagBtn) => {
+            tagBtn.onclick = async () => {
+              if (!activeBook) return;
+              const nextTag = tagBtn.dataset.addReviewTag || '';
+              if (!nextTag) return;
+              const current = activeBook.tags || [];
+              if (current.length >= 10) return;
+              if (!current.some((t) => t.toLowerCase() === nextTag.toLowerCase())) {
+                activeBook.tags = [...current, nextTag];
+                activeBook.updatedAt = new Date().toISOString();
+                activeBook = await pushBookToCloud(activeBook);
+                books = await all<Book>('books');
+                render();
+                tagBtn.remove();
+                statusEl.textContent = `Etiqueta «${nextTag}» agregada al libro.`;
+              }
+            };
+          });
+        } else {
+          tagsBox.innerHTML = '';
+        }
+      } catch (err: any) {
+        statusEl.textContent = `No se pudo generar el borrador: ${err?.message || err}`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+    });
 
     $('#saveDetailReview')?.addEventListener('click', async () => {
       if (!activeBook) return;
@@ -1337,6 +1801,7 @@ function quoteCardHTML(
     ${quote.analysis ? `<p class="quote-analysis"><strong>Mi análisis:</strong> ${esc(quote.analysis)}</p>` : ''}
     ${photos ? `<div class="quote-photos">${photos}</div>` : ''}
     <div class="annotation-actions">
+      <button type="button" class="mini quote-speak-btn" data-speak-quote="${esc(quote.id)}">🔊 Escuchar</button>
       <button type="button" class="mini" data-edit-quote="${esc(quote.id)}">Editar cita</button>
       <button type="button" class="mini" data-ask-quote="${esc(quote.id)}">Conversar con IA</button>
       <button type="button" class="mini" data-delete-quote="${esc(quote.id)}">Eliminar</button>
@@ -1374,10 +1839,16 @@ async function renderQuoteCollection() {
 function bindQuoteActions(container: HTMLElement) {
   container.onclick = async (e) => {
     const target = e.target as HTMLElement;
+    const speak = target.closest<HTMLButtonElement>('[data-speak-quote]');
     const photo = target.closest<HTMLElement>('[data-open-quote-photo]');
     const edit = target.closest<HTMLElement>('[data-edit-quote]');
     const ask = target.closest<HTMLElement>('[data-ask-quote]');
     const remove = target.closest<HTMLElement>('[data-delete-quote]');
+    if (speak) {
+      const quote = await get<Quote>('quotes', speak.dataset.speakQuote!);
+      if (quote) void toggleSpeakText(quote.text, speak, '🔊 Escuchar');
+      return;
+    }
     if (photo) {
       await openQuotePhoto(photo.dataset.openQuotePhoto!, Number(photo.dataset.photoIndex));
       return;
@@ -1734,7 +2205,9 @@ function getAISettings(): AISettings {
     const parsed = JSON.parse(localStorage.getItem(AI_SETTINGS_KEY) || '{}');
     const model =
       parsed.model === 'gemini-3.1-flash-lite' ? 'gemini-3.1-flash-lite' : 'gemini-4-hydrogen';
-    return { ...AI_SETTINGS_DEFAULTS, ...parsed, model };
+    const validVoices = ['Kore', 'Puck', 'Charon', 'Fenrir', 'Zephyr'] as const;
+    const ttsVoice = validVoices.includes(parsed.ttsVoice) ? parsed.ttsVoice : 'Kore';
+    return { ...AI_SETTINGS_DEFAULTS, ...parsed, model, ttsVoice };
   } catch {
     return { ...AI_SETTINGS_DEFAULTS };
   }
@@ -1746,6 +2219,7 @@ function saveAISettings() {
     thinking: ($<HTMLSelectElement>('#aiThinking')?.value as AISettings['thinking']) || 'auto',
     style: ($<HTMLSelectElement>('#aiStyle')?.value as AISettings['style']) || 'natural',
     customStyle: ($<HTMLTextAreaElement>('#aiCustomStyle')?.value || '').trim().slice(0, 600),
+    ttsVoice: ($<HTMLSelectElement>('#aiTtsVoice')?.value as AISettings['ttsVoice']) || 'Kore',
   };
   try {
     localStorage.setItem(AI_SETTINGS_KEY, JSON.stringify(settings));
@@ -1813,10 +2287,11 @@ function initSettings() {
   ($<HTMLSelectElement>('#aiModel')!).value = ai.model;
   ($<HTMLSelectElement>('#aiThinking')!).value = ai.thinking;
   ($<HTMLSelectElement>('#aiStyle')!).value = ai.style;
+  if ($<HTMLSelectElement>('#aiTtsVoice')) $<HTMLSelectElement>('#aiTtsVoice')!.value = ai.ttsVoice;
   ($<HTMLTextAreaElement>('#aiCustomStyle')!).value = ai.customStyle;
   $('#aiCustomStyleWrap')?.classList.toggle('hidden', ai.style !== 'custom');
 
-  ['#aiModel', '#aiThinking', '#aiStyle'].forEach((selector) =>
+  ['#aiModel', '#aiThinking', '#aiStyle', '#aiTtsVoice'].forEach((selector) =>
     $(selector)?.addEventListener('change', saveAISettings),
   );
   $('#aiCustomStyle')?.addEventListener('input', saveAISettings);
@@ -2161,11 +2636,174 @@ function renderGeminiMarkdown(text: string): string {
   return html.join('');
 }
 
+function attachGeminiMessageActions(wrapper: HTMLElement, answer: string) {
+  wrapper.querySelector('.gemini-msg-actions')?.remove();
+  const bar = document.createElement('div');
+  bar.className = 'gemini-msg-actions';
+  const plainText = stripMarkdownForSpeech(answer);
+
+  const makeBtn = (label: string, onClick: (btn: HTMLButtonElement) => void | Promise<void>) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'gemini-msg-action';
+    btn.textContent = label;
+    btn.onclick = () => void onClick(btn);
+    bar.append(btn);
+    return btn;
+  };
+
+  const markSaved = (btn: HTMLButtonElement, savedText = 'Guardado ✓') => {
+    const prev = btn.textContent || '';
+    btn.classList.add('saved');
+    btn.textContent = savedText;
+    setTimeout(() => {
+      if (btn.isConnected) {
+        btn.classList.remove('saved');
+        btn.textContent = prev;
+      }
+    }, 2200);
+  };
+
+  makeBtn('🔊 Escuchar', (btn) => toggleSpeakText(plainText, btn, '🔊 Escuchar'));
+
+  makeBtn('Copiar', async (btn) => {
+    const ok = await copyPlainText(answer);
+    if (ok) markSaved(btn, 'Copiado ✓');
+  });
+
+  const ctx = geminiItem;
+  if (ctx?.note) {
+    const targetNote = ctx.note;
+    makeBtn('Guardar en comentario', async (btn) => {
+      const fresh = (await get<Note>('notes', targetNote.id)) || targetNote;
+      if (fresh.comment?.trim()) {
+        const ok = await showConfirmDialog({
+          eyebrow: 'NOTA FINAL',
+          title: '¿Agregar al comentario de la nota?',
+          message: 'Esta nota ya tiene un comentario guardado. Se añadirá esta respuesta al final.',
+          confirmLabel: 'Agregar al final',
+        });
+        if (!ok) return;
+        fresh.comment = `${fresh.comment.trim()}\n\n${answer}`;
+      } else {
+        fresh.comment = answer;
+      }
+      const saved = await pushNoteToCloud(fresh);
+      if (geminiItem?.note?.id === saved.id) geminiItem.note = saved;
+      renderGeminiContextCard();
+      if ($<HTMLDialogElement>('#detailDialog')?.open && activeBook?.id === saved.bookId) {
+        await renderDetail();
+      }
+      markSaved(btn, 'Guardado en nota ✓');
+    });
+  } else if (ctx?.quote) {
+    const targetQuote = ctx.quote;
+    makeBtn('Guardar en análisis', async (btn) => {
+      const fresh = (await get<Quote>('quotes', targetQuote.id)) || targetQuote;
+      if (fresh.analysis?.trim()) {
+        const ok = await showConfirmDialog({
+          eyebrow: 'CITAS FAVORITAS',
+          title: '¿Agregar al análisis de la cita?',
+          message: 'Esta cita ya tiene un análisis personal. Se añadirá esta respuesta al final.',
+          confirmLabel: 'Agregar al final',
+        });
+        if (!ok) return;
+        fresh.analysis = `${fresh.analysis.trim()}\n\n${answer}`;
+      } else {
+        fresh.analysis = answer;
+      }
+      const saved = await pushQuoteToCloud(fresh);
+      if (geminiItem?.quote?.id === saved.id) geminiItem.quote = saved;
+      renderGeminiContextCard();
+      if ($<HTMLDialogElement>('#detailDialog')?.open && activeBook?.id === saved.bookId) {
+        await renderDetail();
+      }
+      if ($('#quotesView')?.classList.contains('active')) await renderQuoteCollection();
+      markSaved(btn, 'Guardado en cita ✓');
+    });
+  } else if (ctx?.entry) {
+    const targetEntry = ctx.entry;
+    makeBtn('Guardar en anotación', async (btn) => {
+      const fresh = (await get<Entry>('entries', targetEntry.id)) || targetEntry;
+      if (fresh.text?.trim()) {
+        const ok = await showConfirmDialog({
+          eyebrow: 'ANOTACIÓN',
+          title: '¿Agregar a la anotación?',
+          message: 'Esta anotación ya tiene texto guardado. Se añadirá esta respuesta al final.',
+          confirmLabel: 'Agregar al final',
+        });
+        if (!ok) return;
+        fresh.text = `${fresh.text.trim()}\n\n${answer}`;
+      } else {
+        fresh.text = answer;
+      }
+      const saved = await pushEntryToCloud(fresh);
+      if (geminiItem?.entry?.id === saved.id) geminiItem.entry = saved;
+      renderGeminiContextCard();
+      if ($<HTMLDialogElement>('#detailDialog')?.open && activeBook?.id === saved.bookId) {
+        await renderDetail();
+      }
+      if ($('#notebookView')?.classList.contains('active')) await renderJournal();
+      markSaved(btn, 'Guardado ✓');
+    });
+  }
+
+  if (ctx?.book) {
+    const targetBook = ctx.book;
+    makeBtn('＋ Nueva anotación', async (btn) => {
+      const page =
+        ctx.note?.referencePage ??
+        ctx.quote?.page ??
+        ctx.entry?.page ??
+        targetBook.currentPage ??
+        0;
+      const heading = ctx.note
+        ? `IA · Nota ${ctx.note.number}`
+        : ctx.quote
+          ? `IA · Cita${ctx.quote.chapter ? ` (${ctx.quote.chapter})` : ''}`
+          : 'Nota del asistente de lectura';
+      await pushEntryToCloud({
+        id: uid(),
+        bookId: targetBook.id,
+        page: Math.max(0, Number(page) || 0),
+        title: heading.slice(0, 300),
+        text: answer.slice(0, 20000),
+        photo: null,
+        createdAt: new Date().toISOString(),
+      });
+      if ($<HTMLDialogElement>('#detailDialog')?.open && activeBook?.id === targetBook.id) {
+        await renderDetail();
+      }
+      if ($('#notebookView')?.classList.contains('active')) await renderJournal();
+      markSaved(btn, 'Anotación creada ✓');
+    });
+  }
+
+  wrapper.append(bar);
+}
+
+function createGeminiModelTurn(initialText = ''): { wrapper: HTMLElement; bubble: HTMLElement } {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'gemini-model-turn';
+  const bubble = document.createElement('div');
+  bubble.className = 'gemini-message model';
+  if (initialText) bubble.innerHTML = renderGeminiMarkdown(initialText);
+  else bubble.textContent = 'Pensando…';
+  wrapper.append(bubble);
+  $('#geminiMessages')!.append(wrapper);
+  wrapper.scrollIntoView({ block: 'nearest' });
+  return { wrapper, bubble };
+}
+
 function addGeminiMessage(role: 'user' | 'model' | 'system' | 'error', text: string) {
+  if (role === 'model') {
+    const { wrapper } = createGeminiModelTurn(text);
+    attachGeminiMessageActions(wrapper, text);
+    return;
+  }
   const p = document.createElement('div');
   p.className = `gemini-message ${role}`;
-  if (role === 'model') p.innerHTML = renderGeminiMarkdown(text);
-  else p.textContent = text;
+  p.textContent = text;
   $('#geminiMessages')!.append(p);
   p.scrollIntoView({ block: 'nearest' });
 }
@@ -2235,15 +2873,26 @@ async function clearGeminiHistory() {
 
 async function sendGeminiQuestion(e: Event) {
   e.preventDefault();
+  if (geminiStreamController) return;
   const qInput = $<HTMLTextAreaElement>('#geminiQuestion')!;
   const question = qInput.value.trim();
   if (!question) return;
   const button = $<HTMLButtonElement>('#geminiSend')!;
+  const stopBtn = $<HTMLButtonElement>('#geminiStopBtn');
+  const actionsWrap = $('.gemini-compose-actions');
   button.disabled = true;
-  button.textContent = 'Consultando…';
+  button.textContent = 'Respondiendo…';
+  stopBtn?.classList.remove('hidden');
+  actionsWrap?.classList.add('streaming');
   const aiSettings = getAISettings();
   addGeminiMessage('user', question);
   qInput.value = '';
+
+  const controller = new AbortController();
+  geminiStreamController = controller;
+  let modelTurn: { wrapper: HTMLElement; bubble: HTMLElement } | null = null;
+  let answer = '';
+  let usedModel: string = aiSettings.model;
 
   try {
     const parts: any[] = [];
@@ -2330,9 +2979,12 @@ async function sendGeminiQuestion(e: Event) {
     $('#geminiImageStatus')!.textContent = 'También podés adjuntar una foto de un pasaje.';
 
     const contents = [...geminiHistory, { role: 'user' as const, parts }];
-    const response = await fetch('/api/gemini/chat', {
+    modelTurn = createGeminiModelTurn();
+
+    const response = await fetch('/api/gemini/chat-stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
       body: JSON.stringify({
         contents,
         systemInstruction: aiStyleInstruction(aiSettings),
@@ -2340,23 +2992,93 @@ async function sendGeminiQuestion(e: Event) {
         thinking: aiSettings.thinking,
       }),
     });
-    const result = await response.json();
-    if (!response.ok) throw Error(result.error || `Error HTTP ${response.status}`);
 
-    const answer = String(result.text || '').trim();
-    if (!answer) throw Error('Gemini no devolvió texto.');
-    geminiHistory = [...contents, { role: 'model', parts: [{ text: answer }] }];
-    geminiExtraContext = '';
-    if (result.model && result.model !== aiSettings.model) {
-      addGeminiMessage('system', `Respondió ${result.model}; tu modelo preferido estaba saturado.`);
+    if (!response.ok || !response.body) {
+      throw Error(`Error HTTP ${response.status}`);
     }
-    addGeminiMessage('model', answer);
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let streamError: string | null = null;
+    const messagesBox = $('#geminiMessages')!;
+
+    const processEventBlock = (block: string) => {
+      const lines = block.split('\n');
+      let eventName = 'message';
+      const dataLines: string[] = [];
+      for (const line of lines) {
+        if (line.startsWith('event:')) eventName = line.slice(6).trim();
+        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+      }
+      if (!dataLines.length) return;
+      let payload: any = {};
+      try {
+        payload = JSON.parse(dataLines.join('\n'));
+      } catch {
+        return;
+      }
+
+      if (eventName === 'meta' && payload.model) {
+        usedModel = payload.model;
+      } else if (eventName === 'chunk' && payload.text) {
+        answer += payload.text;
+        if (modelTurn) {
+          modelTurn.bubble.innerHTML = renderGeminiMarkdown(answer);
+          messagesBox.scrollTop = messagesBox.scrollHeight;
+        }
+      } else if (eventName === 'done') {
+        if (payload.text && !answer.trim()) answer = String(payload.text);
+        if (payload.model) usedModel = payload.model;
+      } else if (eventName === 'error') {
+        streamError = payload.error || 'Error al generar respuesta.';
+      }
+    };
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const blocks = buffer.split('\n\n');
+      buffer = blocks.pop() || '';
+      for (const block of blocks) {
+        if (block.trim()) processEventBlock(block);
+      }
+    }
+    if (buffer.trim()) processEventBlock(buffer);
+    if (streamError && !answer.trim()) throw Error(streamError);
+
+    const finalAnswer = answer.trim();
+    if (!finalAnswer) throw Error('Gemini no devolvió texto.');
+    modelTurn.bubble.innerHTML = renderGeminiMarkdown(finalAnswer);
+    attachGeminiMessageActions(modelTurn.wrapper, finalAnswer);
+    geminiHistory = [...contents, { role: 'model', parts: [{ text: finalAnswer }] }];
+    geminiExtraContext = '';
+    if (usedModel && usedModel !== aiSettings.model) {
+      addGeminiMessage('system', `Respondió ${usedModel}; tu modelo preferido estaba saturado.`);
+    }
     await saveGeminiHistory();
   } catch (err: any) {
-    addGeminiMessage('error', `No pude consultar Gemini: ${err.message}`);
+    if (err?.name === 'AbortError') {
+      const partial = answer.trim();
+      if (partial && modelTurn) {
+        modelTurn.bubble.innerHTML = renderGeminiMarkdown(partial);
+        attachGeminiMessageActions(modelTurn.wrapper, partial);
+        addGeminiMessage('system', 'Respuesta detenida.');
+      } else {
+        modelTurn?.wrapper.remove();
+        addGeminiMessage('system', 'Consulta detenida.');
+      }
+    } else {
+      modelTurn?.wrapper.remove();
+      addGeminiMessage('error', `No pude consultar Gemini: ${err.message}`);
+    }
   } finally {
+    if (geminiStreamController === controller) geminiStreamController = null;
     button.disabled = false;
     button.textContent = 'Enviar';
+    stopBtn?.classList.add('hidden');
+    actionsWrap?.classList.remove('streaming');
   }
 }
 
@@ -2965,11 +3687,34 @@ function wireEvents() {
     $('#geminiImageStatus')!.textContent = `Imagen lista: ${f.name}`;
   });
   $('#geminiForm')!.onsubmit = sendGeminiQuestion;
+  $('#geminiStopBtn')?.addEventListener('click', () => {
+    geminiStreamController?.abort();
+  });
   $('#clearGeminiHistory')!.onclick = clearGeminiHistory;
   $('#geminiDialog')?.addEventListener('close', () => {
+    geminiStreamController?.abort();
+    stopTtsPlayback();
+    stopVoiceDictation(true);
     geminiAttachedImage = null;
     ($<HTMLInputElement>('#geminiImage')!).value = '';
   });
+  $('#annotationDialog')?.addEventListener('close', () => stopVoiceDictation(true));
+  $('#noteCommentDialog')?.addEventListener('close', () => stopVoiceDictation(true));
+  $('#quoteDialog')?.addEventListener('close', () => stopVoiceDictation(true));
+  $('#detailDialog')?.addEventListener('close', () => {
+    stopTtsPlayback();
+    stopVoiceDictation(true);
+  });
+  $('#aiAutofillBookBtn')?.addEventListener('click', () => void autofillBookWithAI());
+
+  document.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement | null;
+    const dictateBtn = target?.closest<HTMLButtonElement>('.voice-dictate-btn');
+    if (dictateBtn) {
+      void handleVoiceDictateClick(dictateBtn);
+    }
+  });
+
   $$('[data-ai-prompt]').forEach((b) => {
     b.onclick = () => {
       ($<HTMLTextAreaElement>('#geminiQuestion')!).value = b.dataset.aiPrompt || '';
