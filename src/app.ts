@@ -395,6 +395,29 @@ function render() {
     return matchesStatus && matchesTag && matchesQuery;
   });
 
+  const activeFiltersCount =
+    (statusFilter !== 'all' ? 1 : 0) +
+    (tagFilter !== 'all' ? 1 : 0) +
+    (sortBy !== 'recent' ? 1 : 0);
+  const toggleFiltersBtn = $('#toggleFiltersBtn');
+  if (toggleFiltersBtn) {
+    toggleFiltersBtn.textContent = activeFiltersCount
+      ? `Filtros (${activeFiltersCount})`
+      : 'Filtros';
+    toggleFiltersBtn.classList.toggle('has-active', activeFiltersCount > 0);
+  }
+  const clearFiltersBtn = $('#clearFiltersBtn');
+  if (clearFiltersBtn) {
+    clearFiltersBtn.classList.toggle('hidden', !activeFiltersCount && !q);
+  }
+  const libraryBar = $('.library-bar');
+  if (libraryBar) {
+    libraryBar.classList.toggle('hidden', books.length === 0);
+  }
+  if (books.length === 0) {
+    $('#libraryFilters')?.classList.add('hidden');
+  }
+
   const sorted = sortBooks(filtered, sortBy);
   const grid = $('#bookGrid');
   const empty = $('#emptyBooks');
@@ -869,18 +892,22 @@ async function renderDetail() {
         const heading = section !== lastSection ? `<h3 class="note-section">Sección ${section}</h3>` : '';
         lastSection = section;
         return `${heading}<div class="note-row ${n.read ? 'read' : ''}" data-ai-note="${esc(n.id)}">
-          <div class="note-num">${esc(n.number)}</div>
-          <button type="button" class="note-body note-read-toggle" data-toggle-note="${esc(n.id)}" aria-pressed="${n.read}" title="${
+          <button type="button" class="note-read-toggle" data-toggle-note="${esc(n.id)}" aria-pressed="${n.read}" title="${
             n.read ? 'Marcar como no leída' : 'Marcar como leída'
           }">
-            <strong>Nota ${esc(n.number)}</strong>
-            <small> · ${
-              n.referencePage != null
-                ? 'Referencia p. ' + n.referencePage
-                : 'Sin página de referencia'
-            }${n.endPage != null ? ' · Nota p. ' + n.endPage : ''}</small>
-            <p>${esc(n.text)}</p>
-            ${n.comment ? `<p class="note-comment"><strong>Mi comentario:</strong> ${esc(n.comment)}</p>` : ''}
+            <span class="note-num" aria-hidden="true">${n.read ? '✓' : esc(n.number)}</span>
+            <span class="note-body">
+              <strong>Nota ${esc(n.number)}</strong>
+              <small> · ${
+                n.referencePage != null
+                  ? 'Referencia p. ' + n.referencePage
+                  : 'Sin página de referencia'
+              }${n.endPage != null ? ' · Nota p. ' + n.endPage : ''}${
+                n.read ? ' · Leída' : ''
+              }</small>
+              <span class="note-text">${esc(n.text)}</span>
+              ${n.comment ? `<span class="note-comment"><strong>Mi comentario:</strong> ${esc(n.comment)}</span>` : ''}
+            </span>
           </button>
           <div class="note-actions">
             <button type="button" class="ask-gemini" data-ask-note="${esc(n.id)}" title="Preguntar a la IA sobre esta nota">Preguntar a la IA</button>
@@ -992,9 +1019,17 @@ async function renderDetail() {
 
   $$('[data-toggle-note]').forEach((x) => {
     x.onclick = async () => {
-      const n = await get<Note>('notes', x.dataset.toggleNote!);
+      const noteId = x.dataset.toggleNote!;
+      const n =
+        (await get<Note>('notes', noteId)) ||
+        (await all<Note>('notes')).find((item) => item.id === noteId || sanitizeId(item.id) === sanitizeId(noteId));
       if (!n) return;
       n.read = !n.read;
+      const row = x.closest<HTMLElement>('.note-row');
+      if (row) row.classList.toggle('read', n.read);
+      x.setAttribute('aria-pressed', String(n.read));
+      const numBadge = x.querySelector('.note-num');
+      if (numBadge) numBadge.textContent = n.read ? '✓' : String(n.number);
       await pushNoteToCloud(n);
       await renderDetail();
     };
@@ -2228,6 +2263,26 @@ function wireEvents() {
   $('#bookFilter')?.addEventListener('change', render);
   $('#bookTagFilter')?.addEventListener('change', render);
   $('#bookSort')?.addEventListener('change', render);
+
+  $('#toggleFiltersBtn')?.addEventListener('click', () => {
+    const panel = $('#libraryFilters');
+    const btn = $('#toggleFiltersBtn');
+    if (!panel || !btn) return;
+    const isHidden = panel.classList.toggle('hidden');
+    btn.setAttribute('aria-expanded', String(!isHidden));
+  });
+
+  $('#clearFiltersBtn')?.addEventListener('click', () => {
+    const search = $<HTMLInputElement>('#bookSearch');
+    const status = $<HTMLSelectElement>('#bookFilter');
+    const tag = $<HTMLSelectElement>('#bookTagFilter');
+    const sort = $<HTMLSelectElement>('#bookSort');
+    if (search) search.value = '';
+    if (status) status.value = 'all';
+    if (tag) tag.value = 'all';
+    if (sort) sort.value = 'recent';
+    render();
+  });
 
   $('#emptyAdd')!.onclick = $('#addBookBtn')!.onclick = () => openBookForm();
   $$('[data-close]').forEach((b) => {

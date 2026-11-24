@@ -209,6 +209,30 @@ async function upsertUserProfile(user: User) {
   }
 }
 
+async function cloudDocExists(storeName: StoreName, uid: string, id: string): Promise<boolean> {
+  if (cloudIds[storeName].has(id)) return true;
+  try {
+    const snap = await getDoc(doc(db, 'users', uid, storeName, id));
+    if (snap.exists()) {
+      cloudIds[storeName].add(id);
+      return true;
+    }
+  } catch {
+    // Ignore probe error and let write attempt proceed
+  }
+  return false;
+}
+
+async function ensureParentBookInCloud(bookId: string, rawBookId?: string): Promise<void> {
+  if (!currentUser || cloudIds.books.has(bookId)) return;
+  const localBook =
+    (await get<Book>('books', bookId)) ||
+    (rawBookId && rawBookId !== bookId ? await get<Book>('books', rawBookId) : undefined);
+  if (localBook) {
+    await pushBookToCloud(localBook);
+  }
+}
+
 export async function pushBookToCloud(book: Book): Promise<Book> {
   const id = sanitizeId(book.id);
   const normalized: Book = {
@@ -225,12 +249,20 @@ export async function pushBookToCloud(book: Book): Promise<Book> {
     createdAt: book.createdAt || new Date().toISOString(),
   };
 
+  await put('books', normalized);
+  if (book.id !== id) await del('books', book.id);
+
   if (currentUser) {
     setSyncState('syncing', 'Sincronizando con la nube…');
     const uid = currentUser.uid;
     if (normalized.cover && normalized.cover.startsWith('data:image/')) {
-      normalized.coverMediaId = await ensureMediaUploaded(uid, normalized.cover, normalized.coverMediaId);
-      normalized.coverUrl = null;
+      try {
+        normalized.coverMediaId = await ensureMediaUploaded(uid, normalized.cover, normalized.coverMediaId);
+        normalized.coverUrl = null;
+        await put('books', normalized);
+      } catch (err) {
+        console.error('Cover media sync error:', err);
+      }
     } else if (normalized.cover && /^https?:\/\//i.test(normalized.cover)) {
       normalized.coverUrl = normalized.cover.slice(0, 2000);
       normalized.coverMediaId = null;
@@ -261,7 +293,8 @@ export async function pushBookToCloud(book: Book): Promise<Book> {
     };
 
     try {
-      if (cloudIds.books.has(id)) {
+      const exists = await cloudDocExists('books', uid, id);
+      if (exists) {
         await updateDoc(docRef, mutableFields);
       } else {
         await setDoc(docRef, {
@@ -275,31 +308,35 @@ export async function pushBookToCloud(book: Book): Promise<Book> {
       setSyncState('synced', `Sincronizado (${currentUser.email || 'cuenta Google'})`);
     } catch (error) {
       setSyncState('error', 'No se pudo sincronizar el libro.');
-      handleFirestoreError(error, OperationType.WRITE, path);
+      console.error('Firestore book sync error:', path, error);
     }
   }
 
-  await put('books', normalized);
   return normalized;
 }
 
 export async function pushNoteToCloud(note: Note): Promise<Note> {
   const id = sanitizeId(note.id);
   const bookId = sanitizeId(note.bookId);
+  const refNum = note.referencePage != null && note.referencePage !== ('' as any) ? Number(note.referencePage) : NaN;
+  const endNum = note.endPage != null && note.endPage !== ('' as any) ? Number(note.endPage) : NaN;
   const normalized: Note = {
     ...note,
     id,
     bookId,
-    number: Math.max(1, Math.floor(Number(note.number) || 1)),
-    section: Math.max(1, Math.floor(Number(note.section) || 1)),
-    referencePage: note.referencePage != null ? Math.max(0, Math.floor(Number(note.referencePage))) : null,
-    endPage: note.endPage != null ? Math.max(0, Math.floor(Number(note.endPage))) : null,
-    text: String(note.text || '').slice(0, 20000),
+    number: Math.min(100000, Math.max(1, Math.floor(Number(note.number) || 1))),
+    section: Math.min(1000, Math.max(1, Math.floor(Number(note.section) || 1))),
+    referencePage: Number.isFinite(refNum) ? Math.max(0, Math.floor(refNum)) : null,
+    endPage: Number.isFinite(endNum) ? Math.max(0, Math.floor(endNum)) : null,
+    text: String(note.text || '').slice(0, 20000) || '(Sin texto)',
     comment: String(note.comment || '').slice(0, 10000),
     read: Boolean(note.read),
     createdAt: note.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
+
+  await put('notes', normalized);
+  if (note.id !== id) await del('notes', note.id);
 
   if (currentUser) {
     setSyncState('syncing', 'Sincronizando notas…');
@@ -317,9 +354,11 @@ export async function pushNoteToCloud(note: Note): Promise<Note> {
       updatedAt: serverTimestamp(),
     };
     try {
-      if (cloudIds.notes.has(id)) {
+      const exists = await cloudDocExists('notes', uid, id);
+      if (exists) {
         await updateDoc(docRef, mutableFields);
       } else {
+        await ensureParentBookInCloud(bookId, note.bookId);
         await setDoc(docRef, {
           id,
           userId: uid,
@@ -332,11 +371,10 @@ export async function pushNoteToCloud(note: Note): Promise<Note> {
       setSyncState('synced', `Sincronizado (${currentUser.email || 'cuenta Google'})`);
     } catch (error) {
       setSyncState('error', 'No se pudo sincronizar la nota.');
-      handleFirestoreError(error, OperationType.WRITE, path);
+      console.error('Firestore note sync error:', path, error);
     }
   }
 
-  await put('notes', normalized);
   return normalized;
 }
 
@@ -347,18 +385,26 @@ export async function pushEntryToCloud(entry: Entry): Promise<Entry> {
     ...entry,
     id,
     bookId,
-    page: Math.max(0, Math.floor(Number(entry.page) || 0)),
+    page: Math.min(100000, Math.max(0, Math.floor(Number(entry.page) || 0))),
     title: String(entry.title || '').slice(0, 300),
     text: String(entry.text || '').slice(0, 20000),
     createdAt: entry.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
 
+  await put('entries', normalized);
+  if (entry.id !== id) await del('entries', entry.id);
+
   if (currentUser) {
     setSyncState('syncing', 'Sincronizando anotación…');
     const uid = currentUser.uid;
     if (normalized.photo && normalized.photo.startsWith('data:image/')) {
-      normalized.photoMediaId = await ensureMediaUploaded(uid, normalized.photo, normalized.photoMediaId);
+      try {
+        normalized.photoMediaId = await ensureMediaUploaded(uid, normalized.photo, normalized.photoMediaId);
+        await put('entries', normalized);
+      } catch (err) {
+        console.error('Entry media sync error:', err);
+      }
     } else if (!normalized.photo) {
       normalized.photoMediaId = null;
     }
@@ -373,9 +419,11 @@ export async function pushEntryToCloud(entry: Entry): Promise<Entry> {
       updatedAt: serverTimestamp(),
     };
     try {
-      if (cloudIds.entries.has(id)) {
+      const exists = await cloudDocExists('entries', uid, id);
+      if (exists) {
         await updateDoc(docRef, mutableFields);
       } else {
+        await ensureParentBookInCloud(bookId, entry.bookId);
         await setDoc(docRef, {
           id,
           userId: uid,
@@ -388,11 +436,10 @@ export async function pushEntryToCloud(entry: Entry): Promise<Entry> {
       setSyncState('synced', `Sincronizado (${currentUser.email || 'cuenta Google'})`);
     } catch (error) {
       setSyncState('error', 'No se pudo sincronizar la anotación.');
-      handleFirestoreError(error, OperationType.WRITE, path);
+      console.error('Firestore entry sync error:', path, error);
     }
   }
 
-  await put('entries', normalized);
   return normalized;
 }
 
@@ -400,13 +447,14 @@ export async function pushQuoteToCloud(quote: Quote): Promise<Quote> {
   const id = sanitizeId(quote.id);
   const bookId = sanitizeId(quote.bookId);
   const photos = Array.isArray(quote.photos) ? quote.photos.slice(0, 5) : [];
+  const pageNum = quote.page != null && quote.page !== ('' as any) ? Number(quote.page) : NaN;
   const normalized: Quote = {
     ...quote,
     id,
     bookId,
-    text: String(quote.text || '').slice(0, 20000),
+    text: String(quote.text || '').slice(0, 20000) || '(Sin texto)',
     chapter: String(quote.chapter || '').slice(0, 200),
-    page: quote.page != null ? Math.max(0, Math.floor(Number(quote.page))) : null,
+    page: Number.isFinite(pageNum) ? Math.max(0, Math.floor(pageNum)) : null,
     analysis: String(quote.analysis || '').slice(0, 10000),
     photos,
     photoMediaIds: Array.isArray(quote.photoMediaIds) ? quote.photoMediaIds.slice(0, 5) : [],
@@ -414,16 +462,24 @@ export async function pushQuoteToCloud(quote: Quote): Promise<Quote> {
     updatedAt: new Date().toISOString(),
   };
 
+  await put('quotes', normalized);
+  if (quote.id !== id) await del('quotes', quote.id);
+
   if (currentUser) {
     setSyncState('syncing', 'Sincronizando cita…');
     const uid = currentUser.uid;
     const mediaIds: string[] = [];
-    for (let i = 0; i < photos.length; i++) {
-      const existingMid = normalized.photoMediaIds?.[i] || null;
-      const mid = await ensureMediaUploaded(uid, photos[i], existingMid);
-      mediaIds.push(mid);
+    try {
+      for (let i = 0; i < photos.length; i++) {
+        const existingMid = normalized.photoMediaIds?.[i] || null;
+        const mid = await ensureMediaUploaded(uid, photos[i], existingMid);
+        mediaIds.push(mid);
+      }
+      normalized.photoMediaIds = mediaIds;
+      await put('quotes', normalized);
+    } catch (err) {
+      console.error('Quote media sync error:', err);
     }
-    normalized.photoMediaIds = mediaIds;
 
     const path = `users/${uid}/quotes/${id}`;
     const docRef = doc(db, 'users', uid, 'quotes', id);
@@ -432,13 +488,15 @@ export async function pushQuoteToCloud(quote: Quote): Promise<Quote> {
       chapter: normalized.chapter || '',
       page: normalized.page,
       analysis: normalized.analysis || '',
-      photoMediaIds: mediaIds,
+      photoMediaIds: normalized.photoMediaIds,
       updatedAt: serverTimestamp(),
     };
     try {
-      if (cloudIds.quotes.has(id)) {
+      const exists = await cloudDocExists('quotes', uid, id);
+      if (exists) {
         await updateDoc(docRef, mutableFields);
       } else {
+        await ensureParentBookInCloud(bookId, quote.bookId);
         await setDoc(docRef, {
           id,
           userId: uid,
@@ -451,11 +509,10 @@ export async function pushQuoteToCloud(quote: Quote): Promise<Quote> {
       setSyncState('synced', `Sincronizado (${currentUser.email || 'cuenta Google'})`);
     } catch (error) {
       setSyncState('error', 'No se pudo sincronizar la cita.');
-      handleFirestoreError(error, OperationType.WRITE, path);
+      console.error('Firestore quote sync error:', path, error);
     }
   }
 
-  await put('quotes', normalized);
   return normalized;
 }
 
@@ -466,15 +523,18 @@ export async function pushAnalysisToCloud(analysis: BookAnalysis): Promise<BookA
     ...analysis,
     id,
     bookId,
-    summary: String(analysis.summary || '').slice(0, 15000),
+    summary: String(analysis.summary || '').slice(0, 15000) || '(Sin resumen)',
     themes: (analysis.themes || []).map(String).slice(0, 12),
     connections: (analysis.connections || []).slice(0, 20),
     questions: (analysis.questions || []).map(String).slice(0, 10),
-    sourceCount: Math.max(0, Math.floor(Number(analysis.sourceCount) || 0)),
+    sourceCount: Math.min(10000, Math.max(0, Math.floor(Number(analysis.sourceCount) || 0))),
     model: String(analysis.model || 'gemini-4-hydrogen').slice(0, 80),
     createdAt: analysis.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
+
+  await put('analyses', normalized);
+  if (analysis.id !== id) await del('analyses', analysis.id);
 
   if (currentUser) {
     setSyncState('syncing', 'Guardando análisis del libro…');
@@ -491,9 +551,11 @@ export async function pushAnalysisToCloud(analysis: BookAnalysis): Promise<BookA
       updatedAt: serverTimestamp(),
     };
     try {
-      if (cloudIds.analyses.has(id)) {
+      const exists = await cloudDocExists('analyses', uid, id);
+      if (exists) {
         await updateDoc(docRef, mutableFields);
       } else {
+        await ensureParentBookInCloud(bookId, analysis.bookId);
         await setDoc(docRef, {
           id,
           userId: uid,
@@ -506,11 +568,10 @@ export async function pushAnalysisToCloud(analysis: BookAnalysis): Promise<BookA
       setSyncState('synced', `Sincronizado (${currentUser.email || 'cuenta Google'})`);
     } catch (error) {
       setSyncState('error', 'No se pudo guardar el análisis en la nube.');
-      handleFirestoreError(error, OperationType.WRITE, path);
+      console.error('Firestore analysis sync error:', path, error);
     }
   }
 
-  await put('analyses', normalized);
   return normalized;
 }
 
@@ -538,6 +599,9 @@ export async function pushConversationToCloud(conv: Conversation): Promise<Conve
     updatedAt: new Date().toISOString(),
   };
 
+  await put('conversations', normalized);
+  if (conv.id !== id) await del('conversations', conv.id);
+
   if (currentUser && bookId !== 'unknown') {
     const uid = currentUser.uid;
     const path = `users/${uid}/conversations/${id}`;
@@ -548,9 +612,11 @@ export async function pushConversationToCloud(conv: Conversation): Promise<Conve
       updatedAt: serverTimestamp(),
     };
     try {
-      if (cloudIds.conversations.has(id)) {
+      const exists = await cloudDocExists('conversations', uid, id);
+      if (exists) {
         await updateDoc(docRef, mutableFields);
       } else {
+        await ensureParentBookInCloud(bookId, conv.bookId);
         await setDoc(docRef, {
           id,
           userId: uid,
@@ -562,11 +628,10 @@ export async function pushConversationToCloud(conv: Conversation): Promise<Conve
         cloudIds.conversations.add(id);
       }
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, path);
+      console.error('Firestore conversation sync error:', path, error);
     }
   }
 
-  await put('conversations', normalized);
   return normalized;
 }
 

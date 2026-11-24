@@ -31,16 +31,12 @@
 
 <main>
   <section id="libraryView" class="view active">
-    <div class="intro">
-      <div>
-        <p class="eyebrow">UN LUGAR PARA TUS LECTURAS</p>
-        <h2>Tu biblioteca</h2>
-        <p class="muted">Libros, reseñas, notas y descubrimientos, sincronizados en un mismo lugar.</p>
-      </div>
-      <button id="addBookBtn" class="primary">＋ Añadir libro</button>
+    <div class="library-bar">
+      <input id="bookSearch" type="search" placeholder="Buscar libros, autores o etiquetas…" aria-label="Buscar libros, autores o etiquetas">
+      <button type="button" id="toggleFiltersBtn" class="quiet library-filter-btn" aria-expanded="false" aria-controls="libraryFilters">Filtros</button>
+      <button type="button" id="addBookBtn" class="primary library-add-btn" aria-label="Añadir libro" title="Añadir libro">＋ Añadir</button>
     </div>
-    <div class="toolbar">
-      <input id="bookSearch" placeholder="Buscar libros, autores o etiquetas…">
+    <div id="libraryFilters" class="toolbar library-filters hidden">
       <select id="bookFilter" aria-label="Filtrar por estado">
         <option value="all">Todos los libros</option>
         <option value="reading">En lectura</option>
@@ -59,6 +55,7 @@
         <option value="progress">Mayor avance</option>
         <option value="year">Año de publicación</option>
       </select>
+      <button type="button" id="clearFiltersBtn" class="mini library-clear-btn hidden">Limpiar</button>
     </div>
     <div id="bookGrid" class="book-grid"></div>
     <div id="emptyBooks" class="empty">
