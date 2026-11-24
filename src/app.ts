@@ -298,6 +298,7 @@ function setupServiceWorkerUpdates() {
   if (!notice || !applyBtn || !dismissBtn) return;
 
   const show = () => notice.classList.remove('hidden');
+  const hadController = Boolean(navigator.serviceWorker.controller);
   let refreshing = false;
   let registrationRef: ServiceWorkerRegistration | null = null;
   const inspectedWorkers = new WeakSet<ServiceWorker>();
@@ -319,7 +320,7 @@ function setupServiceWorkerUpdates() {
   };
 
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (refreshing) return;
+    if (!hadController || refreshing) return;
     refreshing = true;
     window.location.reload();
   });
