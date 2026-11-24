@@ -30,7 +30,7 @@ La versión publicada guarda los datos en IndexedDB del navegador bajo el domini
 - Marcado de notas leídas y exportación de notas.
 - Anotaciones y fotografías asociadas a páginas.
 - Copia de seguridad de libros, notas y registros.
-- Ajustes (botón ⚙ de la cabecera): modo oscuro, clave de Gemini API guardada en el navegador y copia de seguridad.
+- Ajustes (botón ⚙ de la cabecera): modo oscuro, preferencias de IA, API key personal de Gemini y copia de seguridad. La clave personal se guarda únicamente en el almacenamiento local del navegador, sin cifrar, y no se incluye en sincronizaciones ni copias. Cuando está configurada, chat, dictado, lectura en voz alta, transcripción de fotos, ficha bibliográfica, borradores y análisis se conectan directamente con Google, sin pasar por el servidor de Librarium. Google recibe la clave y el contenido enviado; el historial puede sincronizarse con la cuenta de Librarium si se activa esa función. Sin clave personal se usa el servicio de IA configurado para la aplicación.
 - Consulta a la IA por elemento: mantené apretada una nota, anotación o foto (o clic derecho en la computadora) para conversar con Gemini sobre ese contenido. También hay un botón "Preguntar a la IA" en cada una.
 
 ## Formato JSON de notas

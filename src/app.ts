@@ -1,5 +1,6 @@
 import { all, get, openDB } from './db';
 import { signInWithGoogle, signOutUser } from './firebase';
+import { directGeminiRequest } from './gemini-direct';
 import {
   deleteFromCloud,
   getSyncState,
@@ -79,6 +80,7 @@ let activeDictationBtn: HTMLButtonElement | null = null;
 let activeDictationOriginalLabel = '🎙 Dictar';
 
 const AI_SETTINGS_KEY = 'librarium-ai-settings';
+const PRIVATE_GEMINI_KEY = 'librarium-private-gemini-key';
 const AI_SETTINGS_DEFAULTS: AISettings = {
   model: 'gemini-4-hydrogen',
   thinking: 'auto',
@@ -86,6 +88,25 @@ const AI_SETTINGS_DEFAULTS: AISettings = {
   customStyle: '',
   ttsVoice: 'Kore',
 };
+
+function getPrivateGeminiKey(): string {
+  try {
+    return localStorage.getItem(PRIVATE_GEMINI_KEY)?.trim() || '';
+  } catch {
+    return '';
+  }
+}
+
+function requestGeminiFeature(route: string, payload: Record<string, any>, signal?: AbortSignal): Promise<Response> {
+  const apiKey = getPrivateGeminiKey();
+  if (apiKey) return directGeminiRequest(route, payload, apiKey, signal);
+  return fetch(`/api/gemini/${route}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal,
+  });
+}
 
 const uid = () =>
   crypto.randomUUID
@@ -219,11 +240,7 @@ async function toggleSpeakText(
     const cacheKey = `${voiceName}:${cleanText.slice(0, 3500)}`;
     let audioUrl = ttsAudioCache.get(cacheKey);
     if (!audioUrl) {
-      const res = await fetch('/api/gemini/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: cleanText, voiceName }),
-      });
+      const res = await requestGeminiFeature('tts', { text: cleanText, voiceName });
       const data = await res.json();
       if (!res.ok) throw Error(data.error || `Error HTTP ${res.status}`);
       const binary = atob(String(data.audioBase64 || ''));
@@ -375,11 +392,7 @@ async function handleVoiceDictateClick(button: HTMLButtonElement) {
         });
         const [header, base64] = dataUrl.split(',', 2);
         const audioMime = header.match(/data:(.*?);base64/)?.[1] || 'audio/webm';
-        const res = await fetch('/api/gemini/transcribe-audio', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mimeType: audioMime, data: base64 }),
-        });
+        const res = await requestGeminiFeature('transcribe-audio', { mimeType: audioMime, data: base64 });
         const result = await res.json();
         if (!res.ok) throw Error(result.error || `Error HTTP ${res.status}`);
         const transcript = String(result.text || '').trim();
@@ -878,18 +891,14 @@ async function autofillBookWithAI() {
   status.textContent = 'Buscando ficha y etiquetas sugeridas…';
 
   try {
-    const res = await fetch('/api/gemini/book-autofill', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const res = await requestGeminiFeature('book-autofill', {
         title,
         author,
         isbn,
         existingTags: getAllLibraryTags(),
         coverImage,
         model: getAISettings().model,
-      }),
-    });
+      });
     const data = await res.json();
     if (!res.ok) throw Error(data.error || `Error HTTP ${res.status}`);
 
@@ -1245,10 +1254,7 @@ async function renderDetail() {
 
       try {
         const ai = getAISettings();
-        const res = await fetch('/api/gemini/review-draft', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        const res = await requestGeminiFeature('review-draft', {
             bookTitle: activeBook.title,
             bookAuthor: activeBook.author || '',
             rating: tempRating,
@@ -1259,8 +1265,7 @@ async function renderDetail() {
             notes: notes.filter((n) => n.comment).map((n) => ({ number: n.number, comment: n.comment })),
             model: ai.model,
             thinking: ai.thinking,
-          }),
-        });
+          });
         const data = await res.json();
         if (!res.ok) throw Error(data.error || `Error HTTP ${res.status}`);
         const draft = String(data.reviewDraft || '').trim();
@@ -1702,18 +1707,14 @@ async function runBookSynthesis(book: Book) {
 
   try {
     const aiSettings = getAISettings();
-    const res = await fetch('/api/gemini/book-synthesis', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const res = await requestGeminiFeature('book-synthesis', {
         bookTitle: book.title,
         bookAuthor: book.author || '',
         bookTags: book.tags || [],
         items,
         model: aiSettings.model,
         thinking: aiSettings.thinking,
-      }),
-    });
+      });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `Error HTTP ${res.status}`);
 
@@ -1958,11 +1959,7 @@ async function transcribeQuotePhoto(index: number, button: HTMLButtonElement) {
   try {
     const [header, data] = image.split(',', 2);
     const mimeType = header.match(/data:(.*?);base64/)?.[1] || 'image/jpeg';
-    const res = await fetch('/api/gemini/transcribe', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mimeType, data, model: getAISettings().model }),
-    });
+    const res = await requestGeminiFeature('transcribe', { mimeType, data, model: getAISettings().model });
     const result = await res.json();
     if (!res.ok) throw Error(result.error || `Error HTTP ${res.status}`);
     const transcript = String(result.text || '').trim();
@@ -2284,6 +2281,8 @@ function updateAccountUI(_status: SyncStatus, message: string, user: any) {
 
 function initSettings() {
   const ai = getAISettings();
+  const privateKeyInput = $<HTMLInputElement>('#privateGeminiKeyInput');
+  const privateKeyStatus = $('#privateGeminiKeyStatus');
   ($<HTMLSelectElement>('#aiModel')!).value = ai.model;
   ($<HTMLSelectElement>('#aiThinking')!).value = ai.thinking;
   ($<HTMLSelectElement>('#aiStyle')!).value = ai.style;
@@ -2295,6 +2294,42 @@ function initSettings() {
     $(selector)?.addEventListener('change', saveAISettings),
   );
   $('#aiCustomStyle')?.addEventListener('input', saveAISettings);
+
+  if (privateKeyStatus) {
+    privateKeyStatus.textContent = getPrivateGeminiKey()
+      ? 'Clave guardada en este navegador. Las consultas de IA se envían directamente a Google.'
+      : 'No hay clave personal guardada; se usa el servicio de IA de la aplicación.';
+  }
+  $('#savePrivateGeminiKey')?.addEventListener('click', () => {
+    const key = privateKeyInput?.value.trim() || '';
+    if (!key) {
+      if (privateKeyStatus) privateKeyStatus.textContent = 'Pegá tu API key antes de guardarla.';
+      return;
+    }
+    try {
+      localStorage.setItem(PRIVATE_GEMINI_KEY, key);
+      if (privateKeyInput) privateKeyInput.value = '';
+      if (privateKeyStatus) privateKeyStatus.textContent = 'Clave guardada solo en este navegador. La IA usará conexiones directas con Google.';
+    } catch {
+      if (privateKeyStatus) privateKeyStatus.textContent = 'No se pudo guardar la clave en el almacenamiento local de este navegador.';
+    }
+  });
+  $('#removePrivateGeminiKey')?.addEventListener('click', () => {
+    try {
+      localStorage.removeItem(PRIVATE_GEMINI_KEY);
+      if (privateKeyInput) privateKeyInput.value = '';
+      if (privateKeyStatus) privateKeyStatus.textContent = 'Clave eliminada. La IA volverá a usar el servicio configurado por la aplicación.';
+    } catch {
+      if (privateKeyStatus) privateKeyStatus.textContent = 'No se pudo eliminar la clave de este navegador.';
+    }
+  });
+  $('#togglePrivateGeminiKey')?.addEventListener('click', (event) => {
+    if (!privateKeyInput) return;
+    const button = event.currentTarget as HTMLButtonElement;
+    const revealing = privateKeyInput.type === 'password';
+    privateKeyInput.type = revealing ? 'text' : 'password';
+    button.textContent = revealing ? 'Ocultar' : 'Mostrar';
+  });
 
   $('#settingsOpen')!.onclick = () => $<HTMLDialogElement>('#settingsDialog')?.showModal();
   $('#accountBtn')!.onclick = () => {
@@ -2981,21 +3016,19 @@ async function sendGeminiQuestion(e: Event) {
     const contents = [...geminiHistory, { role: 'user' as const, parts }];
     modelTurn = createGeminiModelTurn();
 
-    const response = await fetch('/api/gemini/chat-stream', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
+    const response = await requestGeminiFeature('chat-stream', {
         contents,
         systemInstruction: aiStyleInstruction(aiSettings),
         model: aiSettings.model,
         thinking: aiSettings.thinking,
-      }),
-    });
+      }, controller.signal);
 
     if (!response.ok || !response.body) {
-      throw Error(`Error HTTP ${response.status}`);
+      let message = `Error HTTP ${response.status}`;
+      try { message = (await response.json()).error || message; } catch {}
+      throw Error(message);
     }
+    usedModel = response.headers.get('X-Librarium-Model') || usedModel;
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -3027,6 +3060,20 @@ async function sendGeminiQuestion(e: Event) {
           modelTurn.bubble.innerHTML = renderGeminiMarkdown(answer);
           messagesBox.scrollTop = messagesBox.scrollHeight;
         }
+      } else if (eventName === 'message' && Array.isArray(payload.candidates)) {
+        const piece = payload.candidates
+          .flatMap((candidate: any) => candidate.content?.parts || [])
+          .map((part: any) => part.text || '')
+          .join('');
+        if (piece) {
+          answer += piece;
+          if (modelTurn) {
+            modelTurn.bubble.innerHTML = renderGeminiMarkdown(answer);
+            messagesBox.scrollTop = messagesBox.scrollHeight;
+          }
+        }
+      } else if (eventName === 'message' && payload.error) {
+        streamError = payload.error.message || 'Error al generar respuesta.';
       } else if (eventName === 'done') {
         if (payload.text && !answer.trim()) answer = String(payload.text);
         if (payload.model) usedModel = payload.model;
@@ -3038,7 +3085,7 @@ async function sendGeminiQuestion(e: Event) {
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
-      buffer += decoder.decode(value, { stream: true });
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
       const blocks = buffer.split('\n\n');
       buffer = blocks.pop() || '';
       for (const block of blocks) {

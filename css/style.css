@@ -248,3 +248,5 @@ main{padding:20px clamp(16px,5vw,40px) 64px}
 }
 
 
+
+.private-key-settings{display:flex;flex-direction:column;gap:8px;padding:13px;border:1px solid var(--line);border-radius:8px;background:var(--paper2)}.private-key-settings>label{font-size:13px;font-weight:600;color:var(--brown)}.private-key-row{display:flex;gap:8px;align-items:center}.private-key-row input{min-width:0;flex:1}.private-key-row button{flex:none}.private-key-settings .panel-actions{margin:0}.private-key-settings #privateGeminiKeyStatus{font-size:12px}.private-key-privacy{font-size:11px;line-height:1.5}.private-key-settings .mini{padding:8px 10px}
