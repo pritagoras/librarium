@@ -2855,6 +2855,37 @@ function attachGeminiMessageActions(wrapper: HTMLElement, answer: string) {
   wrapper.append(bar);
 }
 
+const GEMINI_FINISH_LABELS: Record<string, string> = {
+  MAX_TOKENS: 'llegó al límite de longitud',
+  SAFETY: 'Gemini la frenó por sus filtros de seguridad',
+  RECITATION: 'Gemini la frenó por posible texto copiado',
+  STALLED: 'se cortó la conexión',
+};
+
+function markGeminiIncomplete(wrapper: HTMLElement, reason: string) {
+  const label = GEMINI_FINISH_LABELS[reason] || (reason ? `motivo: ${reason}` : 'se cortó la conexión');
+  const note = document.createElement('div');
+  note.className = 'gemini-message system';
+  note.textContent = `La respuesta quedó incompleta (${label}).`;
+  wrapper.append(note);
+  let bar = wrapper.querySelector('.gemini-msg-actions');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.className = 'gemini-msg-actions';
+    wrapper.append(bar);
+  }
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'gemini-msg-action';
+  btn.textContent = 'Continuar respuesta';
+  btn.onclick = () => {
+    btn.remove();
+    ($<HTMLTextAreaElement>('#geminiQuestion')!).value = 'Continuá tu respuesta anterior exactamente desde donde quedó, sin repetir lo ya dicho.';
+    $<HTMLFormElement>('#geminiForm')?.requestSubmit();
+  };
+  bar.prepend(btn);
+}
+
 function createGeminiModelTurn(initialText = ''): { wrapper: HTMLElement; bubble: HTMLElement } {
   const wrapper = document.createElement('div');
   wrapper.className = 'gemini-model-turn';
@@ -2976,6 +3007,7 @@ async function sendGeminiQuestion(e: Event) {
   armWatchdog(90000);
   let modelTurn: { wrapper: HTMLElement; bubble: HTMLElement } | null = null;
   let answer = '';
+  let finishReason = '';
   let usedModel: string = aiSettings.model;
 
   try {
@@ -3113,6 +3145,8 @@ async function sendGeminiQuestion(e: Event) {
           messagesBox.scrollTop = messagesBox.scrollHeight;
         }
       } else if (eventName === 'message' && Array.isArray(payload.candidates)) {
+        const reason = payload.candidates.map((candidate: any) => candidate.finishReason).find(Boolean);
+        if (reason) finishReason = String(reason);
         const piece = payload.candidates
           .flatMap((candidate: any) => candidate.content?.parts || [])
           .filter((part: any) => !part.thought)
@@ -3156,6 +3190,8 @@ async function sendGeminiQuestion(e: Event) {
     if (!finalAnswer) throw Error('Gemini no devolvió texto.');
     modelTurn.bubble.innerHTML = renderGeminiMarkdown(finalAnswer);
     attachGeminiMessageActions(modelTurn.wrapper, finalAnswer);
+    // Una respuesta completa siempre termina con finishReason STOP. Si falta o es otro, quedó a mitad.
+    if (finishReason !== 'STOP') markGeminiIncomplete(modelTurn.wrapper, finishReason);
     geminiHistory = [...contents, { role: 'model', parts: [{ text: finalAnswer }] }];
     geminiExtraContext = '';
     addGeminiMessage(
@@ -3174,6 +3210,7 @@ async function sendGeminiQuestion(e: Event) {
       if (partial && modelTurn) {
         modelTurn.bubble.innerHTML = renderGeminiMarkdown(partial);
         attachGeminiMessageActions(modelTurn.wrapper, partial);
+        if (stalled) markGeminiIncomplete(modelTurn.wrapper, 'STALLED');
         addGeminiMessage('system', stalled ? 'La respuesta se cortó por falta de datos.' : 'Respuesta detenida.');
       } else {
         modelTurn?.wrapper.remove();
