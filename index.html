@@ -405,6 +405,19 @@ Notas finales:
     <section class="settings-section">
       <h3>Ajustes de IA</h3>
       <p class="muted">Estas preferencias se guardan en este navegador y se aplican tanto a consultas por nota o cita como al análisis completo de cada libro.</p>
+      <div class="private-key-settings">
+        <label for="privateGeminiKeyInput">Tu API key privada de Gemini</label>
+        <div class="private-key-row">
+          <input id="privateGeminiKeyInput" type="password" autocomplete="new-password" spellcheck="false" placeholder="Pegá tu API key de Google AI Studio">
+          <button id="togglePrivateGeminiKey" class="secondary" type="button" aria-label="Mostrar u ocultar API key">Mostrar</button>
+        </div>
+        <div class="panel-actions">
+          <button id="savePrivateGeminiKey" class="secondary" type="button">Guardar en este dispositivo</button>
+          <button id="removePrivateGeminiKey" class="mini" type="button">Eliminar clave</button>
+        </div>
+        <p id="privateGeminiKeyStatus" class="muted" aria-live="polite"></p>
+        <p class="muted private-key-privacy">La clave queda en el almacenamiento local de este navegador, sin cifrar; no se sube a Librarium, no se sincroniza ni se incluye en las copias de seguridad. Con ella, las consultas van directamente a Google, que recibe la clave y el contenido enviado. El historial de conversaciones puede sincronizarse con tu cuenta de Librarium si activaste la sincronización. Sin una clave guardada, se mantiene el servicio de IA configurado por la aplicación.</p>
+      </div>
       <div class="ai-settings-grid">
         <label>Modelo preferido
           <select id="aiModel">
