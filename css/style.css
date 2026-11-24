@@ -326,3 +326,12 @@ main{padding:20px clamp(16px,5vw,40px) 64px}
 .ai-conv-q,.ai-conv-a{font-size:13px;line-height:1.45;color:var(--ink);overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
 .ai-conv-a{color:var(--muted)}
 .ai-conv-q em,.ai-conv-a em{font-style:normal;font-weight:700;color:var(--brown)}
+
+/* ===== Ícono de IA (destellos) ===== */
+.ai-spark{display:inline-block;width:1.15em;height:1.15em;flex:none;vertical-align:-.2em}
+button:has(>.ai-spark:first-child):not(.ai-icon-btn){display:inline-flex;align-items:center;justify-content:center;gap:7px}
+button:has(>.ai-spark:first-child):not(.ai-icon-btn) .ai-spark{color:var(--green)}
+.ai-icon-btn{display:inline-grid;place-items:center;width:40px;height:40px;min-width:40px;padding:0;border:1px solid var(--line);border-radius:50%;background:var(--white);color:var(--green);cursor:pointer;transition:background .15s,border-color .15s,transform .1s}
+.ai-icon-btn .ai-spark{width:23px;height:23px}
+.ai-icon-btn:hover{border-color:var(--green);background:var(--paper2)}
+.ai-icon-btn:active{transform:scale(.94)}
