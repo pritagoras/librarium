@@ -30,6 +30,8 @@ La versión publicada guarda los datos en IndexedDB del navegador bajo el domini
 - Marcado de notas leídas y exportación de notas.
 - Anotaciones y fotografías asociadas a páginas.
 - Copia de seguridad de libros, notas y registros.
+- Ajustes (botón ⚙ de la cabecera): modo oscuro, clave de Gemini API guardada en el navegador y copia de seguridad.
+- Consulta a la IA por elemento: mantené apretada una nota, anotación o foto (o clic derecho en la computadora) para conversar con Gemini sobre ese contenido. También hay un botón "Preguntar a la IA" en cada una.
 
 ## Formato JSON de notas
 ```json
@@ -51,7 +53,7 @@ La versión publicada guarda los datos en IndexedDB del navegador bajo el domini
 También acepta `referencePage` y `endPage` en formato camelCase. `reference_page` es opcional: omitilo (o usá `null`) cuando las notas no tengan una página de referencia en el texto principal. `end_page` es la página donde aparece la nota y también puede omitirse o ser `null`. Al importar, se agregan al libro abierto en ese momento. Si la numeración reinicia (por ejemplo, vuelve de 25 a 1), se crea una sección nueva y los números pueden repetirse en secciones distintas. La vista de notas muestra esas secciones por separado.
 
 ## Copias de seguridad
-El botón "Copia de seguridad" descarga un JSON con todos los libros, notas y anotaciones, incluidas las imágenes. Para restaurar, hacé clic derecho sobre ese botón y seleccioná la copia JSON. La restauración incorpora/actualiza registros por ID; no elimina los datos actuales.
+El botón "Copia de seguridad" descarga un JSON con todos los libros, notas y anotaciones, incluidas las imágenes. Para restaurar, usá "Restaurar copia" (ambos botones están en Ajustes) y seleccioná la copia JSON. La restauración incorpora/actualiza registros por ID; no elimina los datos actuales.
 
 ## Datos y privacidad
 Los datos se guardan en el perfil del navegador mediante IndexedDB. No se envían a un servidor. La búsqueda de catálogo consulta Open Library y las portadas URL se descargan desde el proveedor indicado. Evitá borrar los datos del sitio si no tenés una copia de seguridad.
