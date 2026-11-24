@@ -24,6 +24,7 @@ import { all, clearAllStores, del, get, put, type StoreName } from './db';
 import type {
   Book,
   BookAnalysis,
+  BookProgressSummary,
   Conversation,
   Entry,
   MediaItem,
@@ -175,33 +176,148 @@ async function hydrateQuoteFromLocalMedia(quote: Quote): Promise<Quote> {
   return quote;
 }
 
+let summarySyncTimer: ReturnType<typeof setTimeout> | null = null;
+let presenceHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let lastPresenceTouchAt = 0;
+
 function stopListeners() {
   unsubscribers.forEach((u) => u());
   unsubscribers = [];
   (Object.keys(cloudIds) as StoreName[]).forEach((k) => cloudIds[k].clear());
 }
 
+function stopPresenceTracking() {
+  if (summarySyncTimer) {
+    clearTimeout(summarySyncTimer);
+    summarySyncTimer = null;
+  }
+  if (presenceHeartbeatTimer) {
+    clearInterval(presenceHeartbeatTimer);
+    presenceHeartbeatTimer = null;
+  }
+}
+
+async function buildBookSummariesPayload(): Promise<{
+  booksCount: number;
+  bookSummaries: BookProgressSummary[];
+}> {
+  const localBooks = await all<Book>('books');
+  const statusWeight: Record<Book['status'], number> = {
+    reading: 0,
+    paused: 1,
+    pending: 2,
+    finished: 3,
+  };
+  const ordered = [...localBooks].sort((a, b) => {
+    const sw = (statusWeight[a.status] ?? 9) - (statusWeight[b.status] ?? 9);
+    if (sw !== 0) return sw;
+    return (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || '');
+  });
+  const bookSummaries: BookProgressSummary[] = ordered.slice(0, 100).map((b) => {
+    const totalPages = Math.max(0, Math.floor(Number(b.totalPages) || 0));
+    const currentPage = Math.max(0, Math.floor(Number(b.currentPage) || 0));
+    const percent =
+      b.status === 'finished' && totalPages === 0
+        ? 100
+        : totalPages > 0
+          ? Math.min(100, Math.round((currentPage / totalPages) * 100))
+          : 0;
+    return {
+      id: sanitizeId(b.id),
+      title: String(b.title || 'Sin título').slice(0, 140),
+      author: String(b.author || '').slice(0, 100),
+      status: b.status || 'pending',
+      percent,
+      currentPage,
+      totalPages,
+    };
+  });
+  return { booksCount: localBooks.length, bookSummaries };
+}
+
+export async function syncUserReadingSummary(): Promise<void> {
+  if (!currentUser || !currentUser.emailVerified) return;
+  try {
+    const { booksCount, bookSummaries } = await buildBookSummariesPayload();
+    lastPresenceTouchAt = Date.now();
+    await updateDoc(doc(db, 'users', currentUser.uid), {
+      booksCount,
+      bookSummaries,
+      lastActiveAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch {
+    // Non-critical summary refresh; primary library sync stays independent
+  }
+}
+
+function scheduleBookSummarySync() {
+  if (!currentUser) return;
+  if (summarySyncTimer) clearTimeout(summarySyncTimer);
+  summarySyncTimer = setTimeout(() => {
+    summarySyncTimer = null;
+    void syncUserReadingSummary();
+  }, 1200);
+}
+
+async function touchPresenceHeartbeat(force = false) {
+  if (!currentUser || !currentUser.emailVerified || document.visibilityState !== 'visible') return;
+  if (!force && Date.now() - lastPresenceTouchAt < 60000) return;
+  lastPresenceTouchAt = Date.now();
+  try {
+    await updateDoc(doc(db, 'users', currentUser.uid), {
+      lastActiveAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch {
+    // Ignore transient network errors during background heartbeat
+  }
+}
+
+function startPresenceHeartbeat() {
+  stopPresenceTracking();
+  presenceHeartbeatTimer = setInterval(() => {
+    void touchPresenceHeartbeat(false);
+  }, 3 * 60 * 1000);
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      void touchPresenceHeartbeat(false);
+    }
+  });
+}
+
 async function upsertUserProfile(user: User) {
   const path = `users/${user.uid}`;
   const docRef = doc(db, 'users', user.uid);
+  const { booksCount, bookSummaries } = await buildBookSummariesPayload();
   const payload = {
     uid: user.uid,
     displayName: (user.displayName || 'Lector').slice(0, 120),
     email: (user.email || '').slice(0, 254),
     photoURL: (user.photoURL || '').slice(0, 1000) || null,
+    booksCount,
+    bookSummaries,
   };
   try {
+    lastPresenceTouchAt = Date.now();
     const snap = await getDoc(docRef);
     if (snap.exists()) {
       await updateDoc(docRef, {
         displayName: payload.displayName,
         email: payload.email,
         photoURL: payload.photoURL,
+        booksCount: payload.booksCount,
+        bookSummaries: payload.bookSummaries,
+        lastActiveAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
     } else {
       await setDoc(docRef, {
         ...payload,
+        lastActiveAt: serverTimestamp(),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -308,6 +424,7 @@ export async function pushBookToCloud(book: Book): Promise<Book> {
         cloudIds.books.add(id);
       }
       setSyncState('synced', `Sincronizado (${currentUser.email || 'cuenta Google'})`);
+      scheduleBookSummarySync();
     } catch (error) {
       setSyncState('error', 'No se pudo sincronizar el libro.');
       console.error('Firestore book sync error:', path, error);
@@ -650,6 +767,7 @@ export async function deleteFromCloud(storeName: StoreName, rawId: string): Prom
     try {
       await deleteDoc(doc(db, 'users', uid, storeName, id));
       cloudIds[storeName].delete(id);
+      if (storeName === 'books') scheduleBookSummarySync();
     } catch (error) {
       setSyncState('error', 'Error al eliminar en la nube.');
       console.error('Firestore delete error:', path, error);
@@ -716,6 +834,7 @@ export async function migrateLocalDataToCloud(): Promise<number> {
     }
   }
 
+  void syncUserReadingSummary();
   setSyncState('synced', `Sincronizado (${currentUser.email || 'cuenta Google'})`);
   return migratedCount;
 }
@@ -815,6 +934,7 @@ function subscribeUserCollections(uid: string) {
           if (!nextIds.has(oldId)) await del('books', oldId);
         }
         cloudIds.books = nextIds;
+        scheduleBookSummarySync();
         await maybeMigrateAndNotify('books');
       },
       (error) => {
@@ -1013,6 +1133,7 @@ export function initSync(
     currentUser = user;
     if (!user) {
       stopListeners();
+      stopPresenceTracking();
       setSyncState('local', 'Modo local. Iniciá sesión para sincronizar en la nube.');
       onDataChangedCb?.();
       return;
@@ -1032,6 +1153,7 @@ export function initSync(
     try {
       await upsertUserProfile(user);
       subscribeUserCollections(user.uid);
+      startPresenceHeartbeat();
     } catch {
       setSyncState('error', 'No se pudo inicializar la sincronización en la nube.');
     }

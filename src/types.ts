@@ -134,3 +134,44 @@ export interface AISettings {
 }
 
 export type SyncStatus = 'local' | 'syncing' | 'synced' | 'error';
+
+export type FeedbackKind = 'bug' | 'idea' | 'other';
+export type FeedbackStatus = 'open' | 'reviewed' | 'resolved' | 'dismissed';
+
+export interface FeedbackItem {
+  id: string;
+  userId: string;
+  authorName: string;
+  authorEmail: string;
+  kind: FeedbackKind;
+  message: string;
+  appContext: string;
+  status: FeedbackStatus;
+  adminNote: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BookProgressSummary {
+  id: string;
+  title: string;
+  author: string;
+  status: BookStatus;
+  percent: number;
+  currentPage: number;
+  totalPages: number;
+}
+
+export interface UserDirectoryEntry {
+  uid: string;
+  displayName: string;
+  email: string;
+  photoURL: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastActiveAt: string;
+  booksCount: number;
+  bookSummaries: BookProgressSummary[];
+}
+
+

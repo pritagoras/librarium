@@ -24,6 +24,17 @@
           "type": "string",
           "maxLength": 1000
         },
+        "lastActiveAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "booksCount": {
+          "type": "integer"
+        },
+        "bookSummaries": {
+          "type": "array",
+          "description": "Bounded non-private book progress summaries (title, status, pages, percent; no notes or comments)."
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"
@@ -415,6 +426,63 @@
         }
       },
       "required": ["id", "userId", "mimeType", "dataUrl", "createdAt"]
+    },
+    "Feedback": {
+      "title": "Feedback",
+      "description": "User-submitted bug reports and feature suggestions for Librarium.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "authorEmail": {
+          "type": "string",
+          "maxLength": 254
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["bug", "idea", "other"]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "appContext": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "status": {
+          "type": "string",
+          "enum": ["open", "reviewed", "resolved", "dismissed"]
+        },
+        "adminNote": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "userId", "authorName", "authorEmail", "kind", "message", "appContext", "status", "adminNote", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -449,6 +517,10 @@
     "/users/{userId}/media/{mediaId}": {
       "schema": { "$ref": "#/entities/Media" },
       "description": "Compressed image assets referenced by books, entries, and quotes."
+    },
+    "/feedback/{feedbackId}": {
+      "schema": { "$ref": "#/entities/Feedback" },
+      "description": "Bug reports and improvement suggestions submitted by verified users and triaged by the admin."
     }
   }
 }
