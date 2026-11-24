@@ -54,6 +54,12 @@ let isbnScannerStream: MediaStream | null = null;
 let installPromptEvent: any = null;
 let isAnalyzingBook = false;
 
+const AI_SPARK = '<svg class="ai-spark" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true" focusable="false"><path d="M10 3c.7 4.6 3.4 7.3 8 8-4.6.7-7.3 3.4-8 8-.7-4.6-3.4-7.3-8-8 4.6-.7 7.3-3.4 8-8z"/><path d="M19 1.5c.25 1.7 1.1 2.55 2.8 2.8-1.7.25-2.55 1.1-2.8 2.8-.25-1.7-1.1-2.55-2.8-2.8 1.7-.25 2.55-1.1 2.8-2.8z"/></svg>';
+
+function aiIconButton(attr: string, id: string, label: string): string {
+  return `<button type="button" class="ai-icon-btn" ${attr}="${esc(id)}" aria-label="${esc(label)}" title="${esc(label)}">${AI_SPARK}</button>`;
+}
+
 let geminiHistory: ConversationTurn[] = [];
 let geminiItem: {
   book: Book | null;
@@ -873,7 +879,7 @@ function renderBookSynthesisHTML(analysis: BookAnalysis | undefined, quotesCount
     ${questionsHTML}
     <div class="synthesis-footer">
       <small class="muted">Actualizado el ${new Date(analysis.updatedAt).toLocaleDateString('es-AR')}</small>
-      <button type="button" class="secondary" id="chatBookSynthesis">Conversar sobre esta síntesis</button>
+      <button type="button" class="secondary" id="chatBookSynthesis">${AI_SPARK}Conversar sobre esta síntesis</button>
     </div>
   </section>`;
 }
@@ -973,7 +979,7 @@ async function renderDetail() {
         </div>
         <div class="review-head-tools">
           <button type="button" class="secondary" id="aiReviewDraftBtn">✦ Sugerir borrador con IA</button>
-          <button type="button" class="secondary" id="askReviewGemini">Debatir mi reseña con IA</button>
+          <button type="button" class="secondary" id="askReviewGemini">${AI_SPARK}Debatir mi reseña con IA</button>
         </div>
       </div>
       <div class="review-panel">
@@ -1211,9 +1217,7 @@ async function renderDetail() {
             </span>
           </button>
           <div class="note-actions">
-            <button type="button" class="ask-gemini" data-ask-note="${esc(n.id)}" title="Debatir mi comentario con la IA">${
-              n.comment ? 'Debatir comentario' : 'Preguntar a la IA'
-            }</button>
+            ${aiIconButton('data-ask-note', n.id, n.comment ? 'Debatir mi comentario con la IA' : 'Preguntar a la IA')}
             <button type="button" class="comment-note-btn" data-comment-note="${esc(n.id)}" title="Comentar nota">${
               n.comment ? 'Editar comentario' : '＋ Comentario'
             }</button>
@@ -1262,7 +1266,7 @@ async function renderDetail() {
               }
               <div class="annotation-actions">
                 <button class="mini" data-edit-entry="${esc(x.id)}">Editar anotación</button>
-                <button class="mini" data-ask-entry="${esc(x.id)}">${x.comment ? 'Debatir comentario' : 'Preguntar a la IA'}</button>
+                ${aiIconButton('data-ask-entry', x.id, x.comment ? 'Debatir mi comentario con la IA' : 'Preguntar a la IA')}
                 <button class="mini" data-delete-entry="${esc(x.id)}">Eliminar</button>
               </div>
             </article>`,
@@ -1609,7 +1613,7 @@ function quoteCardHTML(
     ${photos ? `<div class="quote-photos">${photos}</div>` : ''}
     <div class="annotation-actions">
       <button type="button" class="mini" data-edit-quote="${esc(quote.id)}">Editar cita</button>
-      <button type="button" class="mini" data-ask-quote="${esc(quote.id)}">${quote.analysis ? 'Debatir comentario' : 'Conversar con IA'}</button>
+      ${aiIconButton('data-ask-quote', quote.id, quote.analysis ? 'Debatir mi comentario con la IA' : 'Conversar con la IA')}
       <button type="button" class="mini" data-delete-quote="${esc(quote.id)}">Eliminar</button>
     </div>
   </article>`;
@@ -2012,7 +2016,7 @@ async function renderJournal() {
           }
           <div class="annotation-actions">
             <button class="mini" data-edit-entry="${esc(x.id)}">Editar anotación</button>
-            <button class="mini" data-ask-entry="${esc(x.id)}">${x.comment ? 'Debatir comentario' : 'Preguntar a la IA'}</button>
+            ${aiIconButton('data-ask-entry', x.id, x.comment ? 'Debatir mi comentario con la IA' : 'Preguntar a la IA')}
           </div>
         </article>`;
       })
