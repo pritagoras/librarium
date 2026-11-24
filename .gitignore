@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+.env.*
+*.log
+.DS_Store
+# Capturas y logs pegados desde herramientas de desarrollo (pueden contener datos personales)
+public/assets/aistudio/
