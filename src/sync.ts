@@ -4,10 +4,12 @@ import {
   doc,
   getDoc,
   onSnapshot,
+  query,
   serverTimestamp,
   setDoc,
   Timestamp,
   updateDoc,
+  where,
   type Unsubscribe,
 } from 'firebase/firestore';
 import { onAuthStateChanged, type User } from 'firebase/auth';
@@ -647,7 +649,8 @@ export async function deleteFromCloud(storeName: StoreName, rawId: string): Prom
       await deleteDoc(doc(db, 'users', uid, storeName, id));
       cloudIds[storeName].delete(id);
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, path);
+      setSyncState('error', 'Error al eliminar en la nube.');
+      console.error('Firestore delete error:', path, error);
     }
   }
 }
@@ -733,7 +736,7 @@ function subscribeUserCollections(uid: string) {
   // Media listener first so images hydrate cleanly
   unsubscribers.push(
     onSnapshot(
-      collection(db, 'users', uid, 'media'),
+      query(collection(db, 'users', uid, 'media'), where('userId', '==', uid)),
       async (snapshot) => {
         cloudIds.media.clear();
         for (const d of snapshot.docs) {
@@ -775,7 +778,7 @@ function subscribeUserCollections(uid: string) {
   // Books listener
   unsubscribers.push(
     onSnapshot(
-      collection(db, 'users', uid, 'books'),
+      query(collection(db, 'users', uid, 'books'), where('userId', '==', uid)),
       async (snapshot) => {
         const nextIds = new Set<string>();
         for (const d of snapshot.docs) {
@@ -822,7 +825,7 @@ function subscribeUserCollections(uid: string) {
   // Notes listener
   unsubscribers.push(
     onSnapshot(
-      collection(db, 'users', uid, 'notes'),
+      query(collection(db, 'users', uid, 'notes'), where('userId', '==', uid)),
       async (snapshot) => {
         const nextIds = new Set<string>();
         for (const d of snapshot.docs) {
@@ -858,7 +861,7 @@ function subscribeUserCollections(uid: string) {
   // Entries listener
   unsubscribers.push(
     onSnapshot(
-      collection(db, 'users', uid, 'entries'),
+      query(collection(db, 'users', uid, 'entries'), where('userId', '==', uid)),
       async (snapshot) => {
         const nextIds = new Set<string>();
         for (const d of snapshot.docs) {
@@ -893,7 +896,7 @@ function subscribeUserCollections(uid: string) {
   // Quotes listener
   unsubscribers.push(
     onSnapshot(
-      collection(db, 'users', uid, 'quotes'),
+      query(collection(db, 'users', uid, 'quotes'), where('userId', '==', uid)),
       async (snapshot) => {
         const nextIds = new Set<string>();
         for (const d of snapshot.docs) {
@@ -929,7 +932,7 @@ function subscribeUserCollections(uid: string) {
   // Analyses listener
   unsubscribers.push(
     onSnapshot(
-      collection(db, 'users', uid, 'analyses'),
+      query(collection(db, 'users', uid, 'analyses'), where('userId', '==', uid)),
       async (snapshot) => {
         const nextIds = new Set<string>();
         for (const d of snapshot.docs) {
@@ -964,7 +967,7 @@ function subscribeUserCollections(uid: string) {
   // Conversations listener
   unsubscribers.push(
     onSnapshot(
-      collection(db, 'users', uid, 'conversations'),
+      query(collection(db, 'users', uid, 'conversations'), where('userId', '==', uid)),
       async (snapshot) => {
         const nextIds = new Set<string>();
         for (const d of snapshot.docs) {
