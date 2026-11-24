@@ -1719,16 +1719,20 @@ function initSettings() {
 
 async function handleGoogleSignIn() {
   const statusEl = $('#syncStatusText');
+  const dlg = $<HTMLDialogElement>('#settingsDialog');
   try {
     await signInWithGoogle();
   } catch (err: any) {
     if (statusEl) {
-      statusEl.textContent =
-        err?.code === 'auth/popup-closed-by-user'
-          ? 'Se cerró la ventana de inicio de sesión.'
-          : `No se pudo iniciar sesión: ${err?.message || err}`;
+      if (err?.code === 'auth/popup-closed-by-user') {
+        statusEl.textContent = 'Se cerró la ventana de inicio de sesión.';
+      } else if (err?.code === 'auth/unauthorized-domain') {
+        statusEl.textContent = `El dominio actual (${window.location.hostname}) no está autorizado en Firebase Auth. Agregalo en Firebase Console → Authentication → Settings → Authorized domains (proyecto celtic-aloe-r9brs).`;
+      } else {
+        statusEl.textContent = `No se pudo iniciar sesión: ${err?.message || err}`;
+      }
     }
-    $<HTMLDialogElement>('#settingsDialog')?.showModal();
+    if (dlg && !dlg.open) dlg.showModal();
   }
 }
 
