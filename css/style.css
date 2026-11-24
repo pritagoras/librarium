@@ -204,21 +204,10 @@ main{padding:20px clamp(16px,5vw,40px) 64px}
 .confirm-shell .dialog-actions{margin-top:8px}
 @media(max-width:620px){.confirm-shell{padding:20px 18px}}
 
-/* AI Enhancements: Streaming, Message Actions, Voice Dictation, TTS & Autofill */
+/* AI enhancements: streaming, message actions, and autofill */
 .ai-assist-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0 4px}
 .ai-assist-row .secondary{min-height:42px;padding:9px 14px;font-size:13px}
 .ai-assist-row small{font-size:12px;letter-spacing:0;font-weight:400}
-
-.field-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;margin-bottom:6px}
-.field-head label{font-size:12px;font-weight:600;color:var(--brown);margin:0}
-.voice-dictate-btn{min-height:36px;padding:6px 11px;border:1px solid var(--line);border-radius:7px;background:var(--paper2);color:var(--brown);font-size:12px;font-weight:600;white-space:nowrap;transition:background .15s,border-color .15s}
-.voice-dictate-btn:hover{border-color:var(--green)}
-.voice-dictate-btn.recording{background:#9d3c32;color:#fffaf2;border-color:#9d3c32}
-.voice-dictate-btn:disabled{opacity:.6;cursor:wait}
-.voice-status{display:block;min-height:0;font-size:12px;letter-spacing:0;margin-top:4px}
-.voice-status:empty{display:none}
-:root[data-theme="dark"] .voice-dictate-btn{background:#343731;color:var(--ink)}
-:root[data-theme="dark"] .voice-dictate-btn.recording{background:#a3453b;color:#fffaf2;border-color:#e6897f}
 
 .gemini-compose-actions{display:flex;gap:8px;align-items:center;flex-shrink:0}
 .gemini-compose-actions button{min-height:46px}
@@ -228,21 +217,17 @@ main{padding:20px clamp(16px,5vw,40px) 64px}
 .gemini-msg-action{padding:6px 10px;min-height:36px;border:1px solid var(--line);border-radius:7px;background:var(--white);color:var(--brown);font-size:12px;font-weight:500;white-space:nowrap;transition:background .15s,border-color .15s}
 .gemini-msg-action:hover{background:var(--paper2);border-color:var(--green)}
 .gemini-msg-action.saved{border-color:var(--green);color:var(--green);font-weight:600}
-.gemini-msg-action.playing{border-color:var(--green);background:var(--paper2);font-weight:600}
 :root[data-theme="dark"] .gemini-msg-action{background:#292b28;color:var(--ink)}
-:root[data-theme="dark"] .gemini-msg-action:hover,:root[data-theme="dark"] .gemini-msg-action.playing{background:#343731}
+:root[data-theme="dark"] .gemini-msg-action:hover{background:#343731}
 
 .review-head-tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .review-head-tools button{min-height:40px;padding:8px 12px;font-size:13px}
 .review-suggested-tags{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
-.quote-speak-btn.playing{border-color:var(--green);color:var(--green);font-weight:600}
-
 @media(max-width:620px){
   .gemini-compose-actions{width:100%;display:grid;grid-template-columns:1fr 1fr}
   .gemini-compose-actions #geminiSend{grid-column:1/-1}
   .gemini-compose-actions.streaming #geminiSend{grid-column:auto}
   .gemini-msg-action{min-height:40px}
-  .voice-dictate-btn{min-height:42px;padding:8px 12px}
   .review-head-tools{width:100%}
   .review-head-tools button{flex:1}
 }
@@ -250,3 +235,12 @@ main{padding:20px clamp(16px,5vw,40px) 64px}
 
 
 .private-key-settings{display:flex;flex-direction:column;gap:8px;padding:13px;border:1px solid var(--line);border-radius:8px;background:var(--paper2)}.private-key-settings>label{font-size:13px;font-weight:600;color:var(--brown)}.private-key-row{display:flex;gap:8px;align-items:center}.private-key-row input{min-width:0;flex:1}.private-key-row button{flex:none}.private-key-settings .panel-actions{margin:0}.private-key-settings #privateGeminiKeyStatus{font-size:12px}.private-key-privacy{font-size:11px;line-height:1.5}.private-key-settings .mini{padding:8px 10px}
+
+.gemini-head-actions{display:flex;align-items:center;gap:8px}
+.gemini-expand{display:grid;place-items:center;width:40px;height:40px;border:1px solid var(--line);border-radius:8px;background:var(--paper2);color:var(--brown);font-size:23px;line-height:1}
+.gemini-expand:hover{border-color:var(--green);background:var(--white)}
+:root[data-theme="dark"] .gemini-expand{background:#343731;color:var(--ink);border-color:#68685c}
+#geminiDialog.expanded{position:fixed;inset:0;margin:0;width:100vw;height:100dvh;max-width:none;max-height:none;border:0;border-radius:0}
+#geminiDialog.expanded .gemini-shell{height:100%;min-height:0;padding:clamp(16px,3vw,32px)}
+#geminiDialog.expanded .gemini-messages{flex:1;min-height:0;max-height:none}
+#geminiDialog.expanded .gemini-compose textarea{min-height:90px;max-height:25dvh}

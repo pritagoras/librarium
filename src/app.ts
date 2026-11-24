@@ -68,17 +68,6 @@ let geminiConversationId: string | null = null;
 let geminiConversationHadImages = false;
 let geminiStreamController: AbortController | null = null;
 
-const ttsAudioCache = new Map<string, string>();
-let activeTtsAudio: HTMLAudioElement | null = null;
-let activeTtsButton: HTMLButtonElement | null = null;
-let activeTtsDefaultLabel = '🔊 Escuchar';
-
-let activeRecorder: MediaRecorder | null = null;
-let activeDictationStream: MediaStream | null = null;
-let activeDictationTimer: ReturnType<typeof setInterval> | null = null;
-let activeDictationBtn: HTMLButtonElement | null = null;
-let activeDictationOriginalLabel = '🎙 Dictar';
-
 const AI_SETTINGS_KEY = 'librarium-ai-settings';
 const PRIVATE_GEMINI_KEY = 'librarium-private-gemini-key';
 const AI_SETTINGS_DEFAULTS: AISettings = {
@@ -86,7 +75,6 @@ const AI_SETTINGS_DEFAULTS: AISettings = {
   thinking: 'auto',
   style: 'natural',
   customStyle: '',
-  ttsVoice: 'Kore',
 };
 
 function getPrivateGeminiKey(): string {
@@ -100,12 +88,9 @@ function getPrivateGeminiKey(): string {
 function requestGeminiFeature(route: string, payload: Record<string, any>, signal?: AbortSignal): Promise<Response> {
   const apiKey = getPrivateGeminiKey();
   if (apiKey) return directGeminiRequest(route, payload, apiKey, signal);
-  return fetch(`/api/gemini/${route}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-    signal,
-  });
+  return Promise.resolve(new Response(JSON.stringify({
+    error: 'Para usar la IA, guardá tu API key personal de Gemini en Ajustes → Ajustes de IA.',
+  }), { status: 401, headers: { 'Content-Type': 'application/json' } }));
 }
 
 const uid = () =>
@@ -192,245 +177,24 @@ async function copyPlainText(text: string): Promise<boolean> {
   }
 }
 
-function stripMarkdownForSpeech(text: string): string {
+function markdownToPlainText(text: string): string {
   return String(text || '')
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\r\n/g, '\n')
+    .replace(/\x60{3}[^\n]*\n([\s\S]*?)\x60{3}/g, '$1')
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/[#*_~>]/g, '')
-    .replace(/\s+/g, ' ')
+    .replace(/\x60([^\x60]+)\x60/g, '$1')
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    .replace(/^\s{0,3}>\s?/gm, '')
+    .replace(/^[ \t]*[-*+][ \t]+/gm, '• ')
+    .replace(/^[ \t]*\d+[.)][ \t]+/gm, '• ')
+    .replace(/^[ \t]*[-*_]{3,}[ \t]*$/gm, '')
+    .replace(/\*\*(.*?)\*\*|__(.*?)__/gs, (_match, a, b) => a ?? b)
+    .replace(/(?<!\w)\*([^*\n]+)\*(?!\w)|(?<!\w)_([^_\n]+)_(?!\w)/g, (_match, a, b) => a ?? b)
+    .replace(/~~(.*?)~~/gs, '$1')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
-}
-
-function stopTtsPlayback() {
-  if (activeTtsAudio) {
-    activeTtsAudio.pause();
-    activeTtsAudio.currentTime = 0;
-    activeTtsAudio = null;
-  }
-  if (activeTtsButton) {
-    activeTtsButton.classList.remove('playing');
-    activeTtsButton.textContent = activeTtsDefaultLabel;
-    activeTtsButton.disabled = false;
-    activeTtsButton = null;
-  }
-}
-
-async function toggleSpeakText(
-  rawText: string,
-  button: HTMLButtonElement,
-  defaultLabel = '🔊 Escuchar',
-) {
-  const cleanText = stripMarkdownForSpeech(rawText);
-  if (!cleanText) return;
-
-  if (activeTtsButton === button && activeTtsAudio) {
-    stopTtsPlayback();
-    return;
-  }
-
-  stopTtsPlayback();
-  activeTtsButton = button;
-  activeTtsDefaultLabel = defaultLabel;
-  button.disabled = true;
-  button.textContent = 'Generando audio…';
-
-  try {
-    const voiceName = getAISettings().ttsVoice || 'Kore';
-    const cacheKey = `${voiceName}:${cleanText.slice(0, 3500)}`;
-    let audioUrl = ttsAudioCache.get(cacheKey);
-    if (!audioUrl) {
-      const res = await requestGeminiFeature('tts', { text: cleanText, voiceName });
-      const data = await res.json();
-      if (!res.ok) throw Error(data.error || `Error HTTP ${res.status}`);
-      const binary = atob(String(data.audioBase64 || ''));
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      const blob = new Blob([bytes], { type: data.mimeType || 'audio/wav' });
-      audioUrl = URL.createObjectURL(blob);
-      ttsAudioCache.set(cacheKey, audioUrl);
-    }
-
-    if (activeTtsButton !== button) return;
-    const audio = new Audio(audioUrl);
-    activeTtsAudio = audio;
-    button.disabled = false;
-    button.classList.add('playing');
-    button.textContent = '⏸ Pausar';
-    audio.onended = () => {
-      if (activeTtsAudio === audio) stopTtsPlayback();
-    };
-    audio.onerror = () => {
-      if (activeTtsAudio === audio) stopTtsPlayback();
-    };
-    await audio.play();
-  } catch (err: any) {
-    if (activeTtsButton === button) {
-      stopTtsPlayback();
-      button.textContent = 'Error audio';
-      setTimeout(() => {
-        if (button.isConnected && button.textContent === 'Error audio') {
-          button.textContent = defaultLabel;
-        }
-      }, 2200);
-    }
-    console.error('TTS error:', err);
-  }
-}
-
-function getDictationStatusEl(button: HTMLButtonElement): HTMLElement | null {
-  const scope = button.closest('form, .gemini-shell, .review-panel, dialog') || document;
-  return scope.querySelector<HTMLElement>('.voice-status');
-}
-
-function stopVoiceDictation(cancel = false) {
-  if (activeDictationTimer) {
-    clearInterval(activeDictationTimer);
-    activeDictationTimer = null;
-  }
-  const recorder = activeRecorder;
-  activeRecorder = null;
-  if (recorder && recorder.state !== 'inactive') {
-    if (cancel) {
-      recorder.ondataavailable = null;
-      recorder.onstop = null;
-    }
-    try {
-      recorder.stop();
-    } catch {}
-  }
-  if (activeDictationStream) {
-    activeDictationStream.getTracks().forEach((t) => t.stop());
-    activeDictationStream = null;
-  }
-  if (cancel && activeDictationBtn) {
-    activeDictationBtn.classList.remove('recording');
-    activeDictationBtn.disabled = false;
-    activeDictationBtn.textContent = activeDictationOriginalLabel;
-    const statusEl = getDictationStatusEl(activeDictationBtn);
-    if (statusEl) statusEl.textContent = '';
-    activeDictationBtn = null;
-  }
-}
-
-async function handleVoiceDictateClick(button: HTMLButtonElement) {
-  if (activeRecorder && activeDictationBtn === button) {
-    stopVoiceDictation(false);
-    return;
-  }
-  if (activeRecorder) {
-    stopVoiceDictation(true);
-  }
-
-  const targetSelector = button.dataset.dictateTarget;
-  const target = targetSelector ? $<HTMLTextAreaElement>(targetSelector) : null;
-  if (!target) return;
-  const statusEl = getDictationStatusEl(button);
-
-  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-    if (statusEl) {
-      statusEl.textContent = 'Tu navegador no permite grabar audio desde la app.';
-    }
-    return;
-  }
-
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const preferredTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
-    const mimeType = preferredTypes.find((t) => MediaRecorder.isTypeSupported?.(t)) || '';
-    const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-    const chunks: Blob[] = [];
-
-    activeDictationStream = stream;
-    activeRecorder = recorder;
-    activeDictationBtn = button;
-    activeDictationOriginalLabel = button.textContent || '🎙 Dictar';
-
-    let seconds = 0;
-    button.classList.add('recording');
-    button.textContent = '⏹ Detener (0s)';
-    if (statusEl) statusEl.textContent = 'Escuchando… hablá cerca del micrófono y tocá Detener.';
-
-    activeDictationTimer = setInterval(() => {
-      seconds += 1;
-      button.textContent = `⏹ Detener (${seconds}s)`;
-      if (seconds >= 120) stopVoiceDictation(false);
-    }, 1000);
-
-    recorder.ondataavailable = (evt) => {
-      if (evt.data && evt.data.size > 0) chunks.push(evt.data);
-    };
-
-    recorder.onstop = async () => {
-      if (activeDictationTimer) {
-        clearInterval(activeDictationTimer);
-        activeDictationTimer = null;
-      }
-      stream.getTracks().forEach((t) => t.stop());
-      if (activeDictationStream === stream) activeDictationStream = null;
-      if (activeRecorder === recorder) activeRecorder = null;
-
-      button.classList.remove('recording');
-      if (!chunks.length) {
-        button.textContent = activeDictationOriginalLabel;
-        activeDictationBtn = null;
-        if (statusEl) statusEl.textContent = 'No se grabó audio.';
-        return;
-      }
-
-      button.disabled = true;
-      button.textContent = 'Transcribiendo…';
-      if (statusEl) statusEl.textContent = 'Transcribiendo dictado con Gemini…';
-
-      try {
-        const audioBlob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
-        const dataUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(String(reader.result || ''));
-          reader.onerror = reject;
-          reader.readAsDataURL(audioBlob);
-        });
-        const [header, base64] = dataUrl.split(',', 2);
-        const audioMime = header.match(/data:(.*?);base64/)?.[1] || 'audio/webm';
-        const res = await requestGeminiFeature('transcribe-audio', { mimeType: audioMime, data: base64 });
-        const result = await res.json();
-        if (!res.ok) throw Error(result.error || `Error HTTP ${res.status}`);
-        const transcript = String(result.text || '').trim();
-        if (!transcript) throw Error('No se reconoció voz.');
-
-        const currentVal = target.value;
-        const start = target.selectionStart ?? currentVal.length;
-        const end = target.selectionEnd ?? currentVal.length;
-        const before = currentVal.slice(0, start);
-        const after = currentVal.slice(end);
-        const needsSpaceBefore = before.length > 0 && !/[\s\n]$/.test(before);
-        const needsSpaceAfter = after.length > 0 && !/^[\s\n]/.test(after);
-        const insertion = `${needsSpaceBefore ? ' ' : ''}${transcript}${needsSpaceAfter ? ' ' : ''}`;
-        target.value = before + insertion + after;
-        const caret = before.length + insertion.length;
-        target.setSelectionRange?.(caret, caret);
-        target.dispatchEvent(new Event('input', { bubbles: true }));
-        target.focus();
-        if (statusEl) statusEl.textContent = 'Dictado agregado. Podés revisarlo antes de guardar.';
-      } catch (err: any) {
-        if (statusEl) statusEl.textContent = `No se pudo transcribir: ${err?.message || err}`;
-      } finally {
-        button.disabled = false;
-        button.textContent = activeDictationOriginalLabel;
-        if (activeDictationBtn === button) activeDictationBtn = null;
-      }
-    };
-
-    recorder.start();
-  } catch (err: any) {
-    stopVoiceDictation(true);
-    if (statusEl) {
-      statusEl.textContent =
-        err?.name === 'NotAllowedError'
-          ? 'Permití el acceso al micrófono para poder dictar.'
-          : `No se pudo iniciar el micrófono: ${err?.message || err}`;
-    }
-  }
 }
 
 function parseTagsInput(raw: string): string[] {
@@ -1191,7 +955,6 @@ async function renderDetail() {
         </div>
         <div class="review-head-tools">
           <button type="button" class="secondary" id="aiReviewDraftBtn">✦ Sugerir borrador con IA</button>
-          <button type="button" class="secondary" id="speakDetailReview">🔊 Escuchar</button>
         </div>
       </div>
       <div class="review-panel">
@@ -1199,12 +962,8 @@ async function renderDetail() {
           <span class="field-label">Tu puntuación</span>
           <div id="detailStarsPicker" class="star-picker" role="group" aria-label="Puntuación del libro"></div>
         </div>
-        <div class="field-head">
-          <label for="detailReviewText">Reseña o balance de lectura</label>
-          <button type="button" class="mini voice-dictate-btn" data-dictate-target="#detailReviewText">🎙 Dictar</button>
-        </div>
+        <label for="detailReviewText">Reseña o balance de lectura</label>
         <textarea id="detailReviewText" maxlength="10000" placeholder="¿Qué ideas te quedaron? ¿A quién se lo recomendarías?">${esc(b.review || '')}</textarea>
-        <small id="detailReviewDictateStatus" class="muted voice-status" aria-live="polite"></small>
         <div id="reviewSuggestedTags" class="review-suggested-tags"></div>
         <div class="review-actions">
           <span id="detailReviewStatus" class="review-status" aria-live="polite"></span>
@@ -1229,16 +988,6 @@ async function renderDetail() {
       });
     };
     renderDetailStars(tempRating);
-
-    $('#speakDetailReview')?.addEventListener('click', (evt) => {
-      const text = $<HTMLTextAreaElement>('#detailReviewText')?.value.trim() || '';
-      if (!text) {
-        const statusEl = $('#detailReviewStatus');
-        if (statusEl) statusEl.textContent = 'Escribí o generá una reseña primero para escucharla.';
-        return;
-      }
-      void toggleSpeakText(text, evt.currentTarget as HTMLButtonElement, '🔊 Escuchar');
-    });
 
     $('#aiReviewDraftBtn')?.addEventListener('click', async () => {
       if (!activeBook) return;
@@ -1802,7 +1551,6 @@ function quoteCardHTML(
     ${quote.analysis ? `<p class="quote-analysis"><strong>Mi análisis:</strong> ${esc(quote.analysis)}</p>` : ''}
     ${photos ? `<div class="quote-photos">${photos}</div>` : ''}
     <div class="annotation-actions">
-      <button type="button" class="mini quote-speak-btn" data-speak-quote="${esc(quote.id)}">🔊 Escuchar</button>
       <button type="button" class="mini" data-edit-quote="${esc(quote.id)}">Editar cita</button>
       <button type="button" class="mini" data-ask-quote="${esc(quote.id)}">Conversar con IA</button>
       <button type="button" class="mini" data-delete-quote="${esc(quote.id)}">Eliminar</button>
@@ -1840,16 +1588,10 @@ async function renderQuoteCollection() {
 function bindQuoteActions(container: HTMLElement) {
   container.onclick = async (e) => {
     const target = e.target as HTMLElement;
-    const speak = target.closest<HTMLButtonElement>('[data-speak-quote]');
     const photo = target.closest<HTMLElement>('[data-open-quote-photo]');
     const edit = target.closest<HTMLElement>('[data-edit-quote]');
     const ask = target.closest<HTMLElement>('[data-ask-quote]');
     const remove = target.closest<HTMLElement>('[data-delete-quote]');
-    if (speak) {
-      const quote = await get<Quote>('quotes', speak.dataset.speakQuote!);
-      if (quote) void toggleSpeakText(quote.text, speak, '🔊 Escuchar');
-      return;
-    }
     if (photo) {
       await openQuotePhoto(photo.dataset.openQuotePhoto!, Number(photo.dataset.photoIndex));
       return;
@@ -2202,9 +1944,7 @@ function getAISettings(): AISettings {
     const parsed = JSON.parse(localStorage.getItem(AI_SETTINGS_KEY) || '{}');
     const model =
       parsed.model === 'gemini-3.1-flash-lite' ? 'gemini-3.1-flash-lite' : 'gemini-4-hydrogen';
-    const validVoices = ['Kore', 'Puck', 'Charon', 'Fenrir', 'Zephyr'] as const;
-    const ttsVoice = validVoices.includes(parsed.ttsVoice) ? parsed.ttsVoice : 'Kore';
-    return { ...AI_SETTINGS_DEFAULTS, ...parsed, model, ttsVoice };
+    return { ...AI_SETTINGS_DEFAULTS, ...parsed, model };
   } catch {
     return { ...AI_SETTINGS_DEFAULTS };
   }
@@ -2216,7 +1956,6 @@ function saveAISettings() {
     thinking: ($<HTMLSelectElement>('#aiThinking')?.value as AISettings['thinking']) || 'auto',
     style: ($<HTMLSelectElement>('#aiStyle')?.value as AISettings['style']) || 'natural',
     customStyle: ($<HTMLTextAreaElement>('#aiCustomStyle')?.value || '').trim().slice(0, 600),
-    ttsVoice: ($<HTMLSelectElement>('#aiTtsVoice')?.value as AISettings['ttsVoice']) || 'Kore',
   };
   try {
     localStorage.setItem(AI_SETTINGS_KEY, JSON.stringify(settings));
@@ -2286,11 +2025,10 @@ function initSettings() {
   ($<HTMLSelectElement>('#aiModel')!).value = ai.model;
   ($<HTMLSelectElement>('#aiThinking')!).value = ai.thinking;
   ($<HTMLSelectElement>('#aiStyle')!).value = ai.style;
-  if ($<HTMLSelectElement>('#aiTtsVoice')) $<HTMLSelectElement>('#aiTtsVoice')!.value = ai.ttsVoice;
   ($<HTMLTextAreaElement>('#aiCustomStyle')!).value = ai.customStyle;
   $('#aiCustomStyleWrap')?.classList.toggle('hidden', ai.style !== 'custom');
 
-  ['#aiModel', '#aiThinking', '#aiStyle', '#aiTtsVoice'].forEach((selector) =>
+  ['#aiModel', '#aiThinking', '#aiStyle'].forEach((selector) =>
     $(selector)?.addEventListener('change', saveAISettings),
   );
   $('#aiCustomStyle')?.addEventListener('input', saveAISettings);
@@ -2298,7 +2036,7 @@ function initSettings() {
   if (privateKeyStatus) {
     privateKeyStatus.textContent = getPrivateGeminiKey()
       ? 'Clave guardada en este navegador. Las consultas de IA se envían directamente a Google.'
-      : 'No hay clave personal guardada; se usa el servicio de IA de la aplicación.';
+      : 'No hay una clave global de Librarium. Guardá tu clave personal para usar la IA.';
   }
   $('#savePrivateGeminiKey')?.addEventListener('click', () => {
     const key = privateKeyInput?.value.trim() || '';
@@ -2318,7 +2056,7 @@ function initSettings() {
     try {
       localStorage.removeItem(PRIVATE_GEMINI_KEY);
       if (privateKeyInput) privateKeyInput.value = '';
-      if (privateKeyStatus) privateKeyStatus.textContent = 'Clave eliminada. La IA volverá a usar el servicio configurado por la aplicación.';
+      if (privateKeyStatus) privateKeyStatus.textContent = 'Clave eliminada. La IA queda desactivada hasta que guardes otra clave personal.';
     } catch {
       if (privateKeyStatus) privateKeyStatus.textContent = 'No se pudo eliminar la clave de este navegador.';
     }
@@ -2505,7 +2243,6 @@ async function openGemini(
 
   $('#geminiMessages')!.replaceChildren();
   ($<HTMLTextAreaElement>('#geminiQuestion')!).value = '';
-  ($<HTMLInputElement>('#geminiImage')!).value = '';
 
   if (geminiConversationId) {
     const legacyId = geminiConversationId.replace('__', ':');
@@ -2520,7 +2257,7 @@ async function openGemini(
       if (geminiConversationHadImages) {
         addGeminiMessage(
           'system',
-          'Se recuperó la conversación. Las imágenes consultadas antes no se guardan en el historial para ahorrar espacio; podés volver a adjuntarlas.',
+          'Se recuperó la conversación. Las imágenes originales no se guardan en el historial para ahorrar espacio.',
         );
       }
     }
@@ -2528,11 +2265,6 @@ async function openGemini(
 
   $('#clearGeminiHistory')?.classList.toggle('hidden', !geminiConversationId || !geminiHistory.length);
   renderGeminiContextCard();
-  $('#geminiImageStatus')!.textContent = geminiAttachedImage
-    ? 'Se incluirá la foto seleccionada. También podés elegir otra.'
-    : quote?.photos?.length
-      ? `Se incluirán las ${quote.photos.length} fotos de esta cita en la primera consulta.`
-      : 'También podés adjuntar una foto de un pasaje.';
   $<HTMLDialogElement>('#geminiDialog')?.showModal();
   $<HTMLTextAreaElement>('#geminiQuestion')?.focus();
 }
@@ -2675,7 +2407,7 @@ function attachGeminiMessageActions(wrapper: HTMLElement, answer: string) {
   wrapper.querySelector('.gemini-msg-actions')?.remove();
   const bar = document.createElement('div');
   bar.className = 'gemini-msg-actions';
-  const plainText = stripMarkdownForSpeech(answer);
+  const answerPlainText = markdownToPlainText(answer);
 
   const makeBtn = (label: string, onClick: (btn: HTMLButtonElement) => void | Promise<void>) => {
     const btn = document.createElement('button');
@@ -2699,8 +2431,6 @@ function attachGeminiMessageActions(wrapper: HTMLElement, answer: string) {
     }, 2200);
   };
 
-  makeBtn('🔊 Escuchar', (btn) => toggleSpeakText(plainText, btn, '🔊 Escuchar'));
-
   makeBtn('Copiar', async (btn) => {
     const ok = await copyPlainText(answer);
     if (ok) markSaved(btn, 'Copiado ✓');
@@ -2719,9 +2449,9 @@ function attachGeminiMessageActions(wrapper: HTMLElement, answer: string) {
           confirmLabel: 'Agregar al final',
         });
         if (!ok) return;
-        fresh.comment = `${fresh.comment.trim()}\n\n${answer}`;
+        fresh.comment = `${markdownToPlainText(fresh.comment.trim())}\n\n${answerPlainText}`;
       } else {
-        fresh.comment = answer;
+        fresh.comment = answerPlainText;
       }
       const saved = await pushNoteToCloud(fresh);
       if (geminiItem?.note?.id === saved.id) geminiItem.note = saved;
@@ -2743,9 +2473,9 @@ function attachGeminiMessageActions(wrapper: HTMLElement, answer: string) {
           confirmLabel: 'Agregar al final',
         });
         if (!ok) return;
-        fresh.analysis = `${fresh.analysis.trim()}\n\n${answer}`;
+        fresh.analysis = `${markdownToPlainText(fresh.analysis.trim())}\n\n${answerPlainText}`;
       } else {
-        fresh.analysis = answer;
+        fresh.analysis = answerPlainText;
       }
       const saved = await pushQuoteToCloud(fresh);
       if (geminiItem?.quote?.id === saved.id) geminiItem.quote = saved;
@@ -2768,9 +2498,9 @@ function attachGeminiMessageActions(wrapper: HTMLElement, answer: string) {
           confirmLabel: 'Agregar al final',
         });
         if (!ok) return;
-        fresh.text = `${fresh.text.trim()}\n\n${answer}`;
+        fresh.text = `${markdownToPlainText(fresh.text.trim())}\n\n${answerPlainText}`;
       } else {
-        fresh.text = answer;
+        fresh.text = answerPlainText;
       }
       const saved = await pushEntryToCloud(fresh);
       if (geminiItem?.entry?.id === saved.id) geminiItem.entry = saved;
@@ -2802,7 +2532,7 @@ function attachGeminiMessageActions(wrapper: HTMLElement, answer: string) {
         bookId: targetBook.id,
         page: Math.max(0, Number(page) || 0),
         title: heading.slice(0, 300),
-        text: answer.slice(0, 20000),
+        text: answerPlainText.slice(0, 20000),
         photo: null,
         createdAt: new Date().toISOString(),
       });
@@ -3010,8 +2740,6 @@ async function sendGeminiQuestion(e: Event) {
     }
     if (images.length) geminiConversationHadImages = true;
     geminiAttachedImage = null;
-    ($<HTMLInputElement>('#geminiImage')!).value = '';
-    $('#geminiImageStatus')!.textContent = 'También podés adjuntar una foto de un pasaje.';
 
     const contents = [...geminiHistory, { role: 'user' as const, parts }];
     modelTurn = createGeminiModelTurn();
@@ -3712,55 +3440,33 @@ function wireEvents() {
   });
 
   // Gemini dialog wiring
-  $('#geminiImage')?.addEventListener('change', async (e) => {
-    const input = e.target as HTMLInputElement;
-    const f = input.files?.[0];
-    geminiAttachedImage = null;
-    if (!f) {
-      $('#geminiImageStatus')!.textContent = 'También podés adjuntar una foto de un pasaje.';
-      return;
-    }
-    if (!f.type.startsWith('image/')) {
-      input.value = '';
-      $('#geminiImageStatus')!.textContent = 'Elegí un archivo de imagen.';
-      return;
-    }
-    if (f.size > 15 * 1024 * 1024) {
-      input.value = '';
-      $('#geminiImageStatus')!.textContent = 'La imagen supera 15 MB; elegí una más liviana.';
-      return;
-    }
-    geminiAttachedImage = await fileData(f);
-    $('#geminiImageStatus')!.textContent = `Imagen lista: ${f.name}`;
-  });
   $('#geminiForm')!.onsubmit = sendGeminiQuestion;
   $('#geminiStopBtn')?.addEventListener('click', () => {
     geminiStreamController?.abort();
   });
   $('#clearGeminiHistory')!.onclick = clearGeminiHistory;
-  $('#geminiDialog')?.addEventListener('close', () => {
+  const geminiDialog = $<HTMLDialogElement>('#geminiDialog');
+  const expandGeminiButton = $<HTMLButtonElement>('#toggleGeminiExpand');
+  expandGeminiButton?.addEventListener('click', () => {
+    if (!geminiDialog) return;
+    const expanded = geminiDialog.classList.toggle('expanded');
+    expandGeminiButton.setAttribute('aria-expanded', String(expanded));
+    expandGeminiButton.setAttribute('aria-label', expanded ? 'Restaurar tamaño de ventana' : 'Ampliar conversación');
+    expandGeminiButton.title = expanded ? 'Restaurar tamaño de ventana' : 'Ampliar conversación';
+    expandGeminiButton.textContent = expanded ? '⤢' : '⛶';
+  });
+  geminiDialog?.addEventListener('close', () => {
     geminiStreamController?.abort();
-    stopTtsPlayback();
-    stopVoiceDictation(true);
     geminiAttachedImage = null;
-    ($<HTMLInputElement>('#geminiImage')!).value = '';
-  });
-  $('#annotationDialog')?.addEventListener('close', () => stopVoiceDictation(true));
-  $('#noteCommentDialog')?.addEventListener('close', () => stopVoiceDictation(true));
-  $('#quoteDialog')?.addEventListener('close', () => stopVoiceDictation(true));
-  $('#detailDialog')?.addEventListener('close', () => {
-    stopTtsPlayback();
-    stopVoiceDictation(true);
-  });
-  $('#aiAutofillBookBtn')?.addEventListener('click', () => void autofillBookWithAI());
-
-  document.addEventListener('click', (e) => {
-    const target = e.target as HTMLElement | null;
-    const dictateBtn = target?.closest<HTMLButtonElement>('.voice-dictate-btn');
-    if (dictateBtn) {
-      void handleVoiceDictateClick(dictateBtn);
+    geminiDialog.classList.remove('expanded');
+    expandGeminiButton?.setAttribute('aria-expanded', 'false');
+    expandGeminiButton?.setAttribute('aria-label', 'Ampliar conversación');
+    if (expandGeminiButton) {
+      expandGeminiButton.title = 'Ampliar conversación';
+      expandGeminiButton.textContent = '⛶';
     }
   });
+  $('#aiAutofillBookBtn')?.addEventListener('click', () => void autofillBookWithAI());
 
   $$('[data-ai-prompt]').forEach((b) => {
     b.onclick = () => {

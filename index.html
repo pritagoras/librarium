@@ -259,12 +259,8 @@ Notas finales:
     <input type="hidden" id="annotationBook"><input type="hidden" id="annotationId">
     <label>Página<input id="annotationPage" type="number" min="0" required></label>
     <label>Título<input id="annotationHeading" placeholder="Un título breve" maxlength="300"></label>
-    <div class="field-head">
-      <label for="annotationText">Comentario / observación</label>
-      <button type="button" class="mini voice-dictate-btn" data-dictate-target="#annotationText">🎙 Dictar</button>
-    </div>
+    <label for="annotationText">Comentario / observación</label>
     <textarea id="annotationText" rows="5" placeholder="¿Qué querés conservar de esta página?"></textarea>
-    <small id="annotationDictateStatus" class="muted voice-status" aria-live="polite"></small>
     <label>Fotografía (opcional)<input id="annotationPhoto" type="file" accept="image/*"><small id="annotationPhotoStatus" class="muted"></small></label>
     <div class="dialog-actions">
       <button type="button" id="askAnnotationGemini" class="secondary">Consultar a la IA</button>
@@ -285,12 +281,8 @@ Notas finales:
     </div>
     <input id="commentNoteId" type="hidden">
     <p id="commentNoteLabel" class="muted"></p>
-    <div class="field-head">
-      <label for="noteCommentText">Comentario</label>
-      <button type="button" class="mini voice-dictate-btn" data-dictate-target="#noteCommentText">🎙 Dictar</button>
-    </div>
+    <label for="noteCommentText">Comentario</label>
     <textarea id="noteCommentText" rows="5" placeholder="Escribí tu comentario sobre esta nota…"></textarea>
-    <small id="noteCommentDictateStatus" class="muted voice-status" aria-live="polite"></small>
     <div class="dialog-actions">
       <button type="button" id="askCommentGemini" class="secondary">Consultar a la IA</button>
       <button type="button" class="secondary" data-close>Cancelar</button>
@@ -309,21 +301,14 @@ Notas finales:
       <button type="button" class="close" data-close aria-label="Cerrar">×</button>
     </div>
     <input id="quoteId" type="hidden"><input id="quoteBookId" type="hidden">
-    <div class="field-head">
-      <label for="quoteText">Texto de la cita *</label>
-      <button type="button" class="mini voice-dictate-btn" data-dictate-target="#quoteText">🎙 Dictar cita</button>
-    </div>
+    <label for="quoteText">Texto de la cita *</label>
     <textarea id="quoteText" rows="5" required placeholder="Escribí, pegá o extraé el fragmento de una foto…"></textarea>
     <div class="form-grid">
       <label>Capítulo / sección<input id="quoteChapter" placeholder="Ej.: Capítulo III" maxlength="200"></label>
       <label>Página<input id="quotePage" type="number" min="0" step="1" placeholder="Opcional"></label>
     </div>
-    <div class="field-head">
-      <label for="quoteAnalysis">Mi análisis o comentario</label>
-      <button type="button" class="mini voice-dictate-btn" data-dictate-target="#quoteAnalysis">🎙 Dictar análisis</button>
-    </div>
+    <label for="quoteAnalysis">Mi análisis o comentario</label>
     <textarea id="quoteAnalysis" rows="4" placeholder="¿Qué te llamó la atención? ¿Con qué lo relacionás?"></textarea>
-    <small id="quoteDictateStatus" class="muted voice-status" aria-live="polite"></small>
     <label>Fotos (opcional)<input id="quotePhotos" type="file" accept="image/*" multiple><small class="muted" id="quotePhotoStatus" role="status" aria-live="polite">Podés guardar hasta 5 fotos por cita. Se optimizan para ocupar menos espacio.</small></label>
     <p class="quote-ocr-privacy">Podés extraer texto de una foto con Gemini. La transcripción queda acá para que la revises antes de guardar.</p>
     <div id="quotePhotoPreview" class="quote-photo-preview"></div>
@@ -416,7 +401,7 @@ Notas finales:
           <button id="removePrivateGeminiKey" class="mini" type="button">Eliminar clave</button>
         </div>
         <p id="privateGeminiKeyStatus" class="muted" aria-live="polite"></p>
-        <p class="muted private-key-privacy">La clave queda en el almacenamiento local de este navegador, sin cifrar; no se sube a Librarium, no se sincroniza ni se incluye en las copias de seguridad. Con ella, las consultas van directamente a Google, que recibe la clave y el contenido enviado. El historial de conversaciones puede sincronizarse con tu cuenta de Librarium si activaste la sincronización. Sin una clave guardada, se mantiene el servicio de IA configurado por la aplicación.</p>
+        <p class="muted private-key-privacy">La clave queda en el almacenamiento local de este navegador, sin cifrar; no se sube a Librarium, no se sincroniza ni se incluye en las copias de seguridad. Las consultas van directamente a Google, que recibe la clave y el contenido enviado. El historial de conversaciones puede sincronizarse con tu cuenta de Librarium si activaste la sincronización. Librarium no incluye una clave global: sin tu clave personal, las funciones de IA quedan desactivadas.</p>
       </div>
       <div class="ai-settings-grid">
         <label>Modelo preferido
@@ -440,14 +425,6 @@ Notas finales:
             <option value="detailed">Detallado y analítico</option>
             <option value="socratic">Con preguntas orientadoras</option>
             <option value="custom">Personalizado</option>
-          </select>
-        </label>
-        <label>Voz de lectura (audio)
-          <select id="aiTtsVoice">
-            <option value="Kore">Kore · Cálida y clara</option>
-            <option value="Puck">Puck · Dinámica</option>
-            <option value="Charon">Charon · Serena y grave</option>
-            <option value="Zephyr">Zephyr · Ligera</option>
           </select>
         </label>
         <label id="aiCustomStyleWrap" class="ai-custom-style hidden">Instrucciones de estilo
@@ -483,7 +460,10 @@ Notas finales:
         <p class="eyebrow">ASISTENTE DE LECTURA</p>
         <h2>Preguntar a la IA</h2>
       </div>
-      <button type="button" class="close" data-close aria-label="Cerrar">×</button>
+      <div class="gemini-head-actions">
+        <button type="button" id="toggleGeminiExpand" class="gemini-expand" aria-label="Ampliar conversación" aria-expanded="false" title="Ampliar conversación">⛶</button>
+        <button type="button" class="close" data-close aria-label="Cerrar">×</button>
+      </div>
     </div>
     <div id="geminiContextCard" class="gemini-context-card"></div>
     <div class="gemini-history-tools">
@@ -495,16 +475,13 @@ Notas finales:
       <button type="button" class="mini" data-ai-prompt="Resumilo en pocas líneas.">Resumilo</button>
       <button type="button" class="mini" data-ai-prompt="¿Qué ideas o conceptos clave aparecen acá?">Ideas clave</button>
     </div>
-    <label>Imagen opcional<input id="geminiImage" type="file" accept="image/*"><small class="muted" id="geminiImageStatus">También podés adjuntar una foto de un pasaje.</small></label>
     <form id="geminiForm" class="gemini-compose">
-      <textarea id="geminiQuestion" rows="3" placeholder="Preguntale algo sobre esto o usá Dictar…" required></textarea>
+      <textarea id="geminiQuestion" rows="3" placeholder="Preguntale algo sobre esto…" required></textarea>
       <div class="gemini-compose-actions">
-        <button id="geminiDictateBtn" class="secondary voice-dictate-btn" type="button" data-dictate-target="#geminiQuestion">🎙 Dictar</button>
         <button id="geminiStopBtn" class="secondary hidden" type="button">Detener</button>
         <button id="geminiSend" class="primary" type="submit">Enviar</button>
       </div>
     </form>
-    <small id="geminiDictateStatus" class="muted voice-status" aria-live="polite"></small>
     <p class="gemini-footnote">Revisá las respuestas de la IA: pueden contener errores.</p>
   </section>
 </dialog>

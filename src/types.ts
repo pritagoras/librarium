@@ -122,7 +122,6 @@ export interface AISettings {
   thinking: 'auto' | 'low' | 'medium' | 'high';
   style: 'natural' | 'concise' | 'detailed' | 'socratic' | 'custom';
   customStyle: string;
-  ttsVoice: 'Kore' | 'Puck' | 'Charon' | 'Fenrir' | 'Zephyr';
 }
 
 export type SyncStatus = 'local' | 'syncing' | 'synced' | 'error';
