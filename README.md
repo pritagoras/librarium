@@ -1,38 +1,47 @@
 # Librarium
 
-Biblioteca personal y cuaderno de lectura. Aplicación web local, con datos almacenados en IndexedDB.
+Tu biblioteca personal y cuaderno de lectura: guardá tus libros, notas, anotaciones con fotos y citas, y conversá con una IA sobre cualquier pasaje.
 
-## Requisitos
-- Windows 10/11
-- Node.js 22 o superior, que incluye npm
-- Navegador moderno (Chrome o Edge recomendado)
+**Usala directamente:** https://pritagoras.github.io/librarium/ (funciona en el celular y en la computadora, sin instalar nada).
 
-## Inicio
-1. Extraé esta carpeta en `C:\Users\Prita\Documents\GitHub\Librarium`.
-2. Instalá Node.js 22 o superior desde https://nodejs.org/ si todavía no está instalado.
-3. Ejecutá `INSTALAR.bat` una vez para instalar las dependencias.
-4. Ejecutá `INICIAR_LIBRARIUM.bat` cada vez que quieras usar la aplicación.
-5. Para cerrar el servidor, volvé a la ventana negra y presioná Ctrl+C.
+## Empezar en 3 pasos
+1. Abrí el link y tocá **＋ Añadir** para cargar tu primer libro (a mano, buscándolo en Open Library o escaneando el ISBN).
+2. Agregá notas, citas o anotaciones con foto mientras leés.
+3. Para usar la IA, pegá tu clave de Gemini en **⚙ Ajustes → Ajustes de IA** (ver abajo).
 
-## Publicar en GitHub Pages
+### Instalarla como aplicación
+- **Android (Chrome):** menú ⋮ → *Instalar aplicación*.
+- **iPhone (Safari):** botón Compartir → *Agregar a pantalla de inicio*.
+- **Computadora (Chrome/Edge):** ícono de instalar en la barra de direcciones, o *Ajustes → Instalar Librarium*.
 
-Librarium puede publicarse en GitHub Pages sin instalar Node.js en el navegador. El flujo de GitHub Actions incluido despliega el contenido de este repositorio automáticamente. En GitHub, configurá **Settings → Pages → Build and deployment → Source: GitHub Actions**; luego cada cambio enviado a `main` se publica en Pages.
+Instalarla en el iPhone es importante: Safari puede borrar los datos de los sitios que no se usan por un tiempo, y las aplicaciones instaladas están más protegidas.
 
-La versión publicada guarda los datos en IndexedDB del navegador bajo el dominio de GitHub Pages. Es un almacenamiento separado del sitio local `127.0.0.1`; exportá una copia de seguridad desde la versión local y restaurala en Pages si querés llevar tus datos. Los datos no se sincronizan entre dispositivos. El código del sitio queda visible para quienes puedan acceder al repositorio.
+## Funciones
+- Biblioteca con estados de lectura, puntuación, reseña, etiquetas y progreso diario.
+- Carga manual, búsqueda en Open Library y escaneo de ISBN con la cámara.
+- Importación de notas finales desde JSON (ver formato más abajo), con secciones cuando la numeración reinicia.
+- Notas, anotaciones con fotografías y citas (con transcripción de fotos por IA).
+- **Chat con IA a pantalla completa**: mantené apretada una nota, anotación o cita (o tocá el ícono ✦) para conversar sobre ella. La charla se guarda y podés retomarla.
+- **Conversaciones con la IA**: desde la Biblioteca, un banner abre la lista de todas tus charlas agrupadas por libro, con buscador.
+- La IA pasa sola a otro modelo si el elegido falla, se traba o corta la respuesta.
+- Ficha del libro y etiquetas sugeridas, síntesis de ideas y borrador de reseña con IA.
+- Modo oscuro, copia de seguridad y restauración.
 
-## Funciones incluidas
-- Biblioteca con alta, edición y eliminación de libros.
-- Carga manual y búsqueda opcional en Open Library.
-- Escaneo de ISBN-10/13 con cámara compatible y búsqueda del libro por ISBN; también se puede escribir el código manualmente.
-- Portadas por archivo o URL.
-- Página actual y estados de lectura.
-- Importación de notas finales pegando JSON o seleccionando un archivo, con validación y vista previa.
-- Carga manual de notas con número, página de referencia y página de nota.
-- Marcado de notas leídas y exportación de notas.
-- Anotaciones y fotografías asociadas a páginas.
-- Copia de seguridad de libros, notas y registros.
-- Ajustes (botón ⚙ de la cabecera): modo oscuro, preferencias de IA, API key personal de Gemini y copia de seguridad. La clave personal se guarda únicamente en el almacenamiento local del navegador, sin cifrar, y no se incluye en sincronizaciones ni copias. Cuando está configurada, chat, transcripción de fotos, ficha bibliográfica, borradores y análisis se conectan directamente con Google, sin pasar por el servidor de Librarium. Google recibe la clave y el contenido enviado; el historial puede sincronizarse con la cuenta de Librarium si se activa esa función. Librarium no tiene una clave global: sin una clave personal, la IA queda desactivada.
-- Consulta a la IA por elemento: mantené apretada una nota, anotación o foto (o clic derecho en la computadora) para conversar con Gemini sobre ese contenido. También hay un botón "Preguntar a la IA" en cada una.
+## Cómo conseguir tu clave de Gemini (gratis)
+La IA no tiene una clave compartida: cada persona usa la suya.
+1. Entrá a https://aistudio.google.com/apikey con tu cuenta de Google.
+2. Creá una clave y copiala.
+3. Pegala en **⚙ Ajustes → Ajustes de IA** y guardala.
+
+La clave queda guardada **solo en el navegador de ese dispositivo, sin cifrar**, y no se incluye en copias de seguridad ni en la sincronización. No la compartas ni la uses en una computadora que no sea tuya. El plan gratuito de Google tiene límites de uso diarios; si te quedás sin cupo, esperá o probá con otro modelo.
+
+## Tus datos y tu privacidad
+- **Sin iniciar sesión**, todo se guarda únicamente en tu navegador (IndexedDB). No se envía a ningún servidor de Librarium.
+- **Al iniciar sesión con Google**, tus libros, notas, citas, fotos y conversaciones se sincronizan con la base de datos del proyecto Librarium (Firebase), para que puedas usarlos en varios dispositivos. Si preferís que nada salga de tu dispositivo, no inicies sesión.
+- **Al usar la IA**, el texto y las fotos que consultás se envían a Google (Gemini) con tu propia clave.
+- La búsqueda de libros usa Open Library y las portadas por URL se descargan desde el proveedor indicado.
+
+**Hacé copias de seguridad.** En *⚙ Ajustes → Copia de seguridad* se descarga un JSON con todo (libros, notas, anotaciones, imágenes y conversaciones). *Restaurar copia* incorpora o actualiza los registros por ID, sin borrar los datos actuales. No borres los datos del sitio si no tenés una copia.
 
 ## Formato JSON de notas
 ```json
@@ -50,19 +59,28 @@ La versión publicada guarda los datos en IndexedDB del navegador bajo el domini
   ]
 }
 ```
+También acepta `referencePage` y `endPage` en camelCase. `reference_page` es opcional: omitilo (o usá `null`) cuando las notas no tengan una página de referencia en el texto principal. `end_page` es la página donde aparece la nota y también puede omitirse o ser `null`. Al importar, se agregan al libro abierto. Si la numeración reinicia (por ejemplo, vuelve de 25 a 1), se crea una sección nueva.
 
-También acepta `referencePage` y `endPage` en formato camelCase. `reference_page` es opcional: omitilo (o usá `null`) cuando las notas no tengan una página de referencia en el texto principal. `end_page` es la página donde aparece la nota y también puede omitirse o ser `null`. Al importar, se agregan al libro abierto en ese momento. Si la numeración reinicia (por ejemplo, vuelve de 25 a 1), se crea una sección nueva y los números pueden repetirse en secciones distintas. La vista de notas muestra esas secciones por separado.
+## Para desarrolladores
+Requiere Node.js 22 o superior.
 
-## Copias de seguridad
-El botón "Copia de seguridad" descarga un JSON con todos los libros, notas y anotaciones, incluidas las imágenes. Para restaurar, usá "Restaurar copia" (ambos botones están en Ajustes) y seleccioná la copia JSON. La restauración incorpora/actualiza registros por ID; no elimina los datos actuales.
+```bash
+npm install
+npm run dev      # servidor de desarrollo en http://127.0.0.1:8765
+npm run build    # genera dist/
+npm run lint     # chequeo de tipos y reglas de Firestore
+```
 
-## Datos y privacidad
-Los datos se guardan en el perfil del navegador mediante IndexedDB. No se envían a un servidor. La búsqueda de catálogo consulta Open Library y las portadas URL se descargan desde el proveedor indicado. Evitá borrar los datos del sitio si no tenés una copia de seguridad.
+En Windows también podés usar `INSTALAR.bat` (una vez) e `INICIAR_LIBRARIUM.bat`.
 
-## Limitaciones de esta primera entrega
-- La búsqueda externa necesita internet.
-- Las portadas ingresadas como URL requieren que el proveedor siga disponible.
-- La copia de seguridad es un JSON único; las imágenes se incluyen como data URLs y pueden hacer que el archivo sea grande.
-- Las notas de voz y sincronización entre dispositivos quedan para futuras versiones.
-- Para actualizar la aplicación, reemplazá los archivos de la aplicación conservando el mismo perfil del navegador y exportá una copia de seguridad antes.
+### Publicar en GitHub Pages
+El flujo de GitHub Actions incluido publica el sitio en cada cambio a `main`. En GitHub: **Settings → Pages → Build and deployment → Source: GitHub Actions**.
 
+### Usar tu propio Firebase
+La sincronización usa la configuración de `firebase-applet-config.json`. Si publicás tu propia copia, creá tu proyecto de Firebase, reemplazá ese archivo, agregá tu dominio en *Authentication → Dominios autorizados* y publicá las reglas de `firestore.rules` en tu base de datos. Más detalle de las reglas en `security_spec.md`.
+
+## Limitaciones
+- La búsqueda de libros y la IA necesitan internet.
+- Las portadas por URL dependen de que el proveedor siga disponible.
+- Las imágenes van incluidas en la copia de seguridad, que puede volverse grande.
+- Las notas de voz todavía no están disponibles.
