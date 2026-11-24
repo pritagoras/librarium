@@ -281,6 +281,7 @@ async function startServer() {
   // Static PWA assets & Vite dev middleware / production build
   app.use('/assets', express.static(path.join(__dirname, 'assets')));
   app.get('/manifest.json', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(path.join(__dirname, 'manifest.json'));
   });
   app.get('/service-worker.js', (_req, res) => {
@@ -297,8 +298,17 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distDir = path.join(__dirname, 'dist');
-    app.use(express.static(distDir));
+    app.use(
+      express.static(distDir, {
+        setHeaders: (res, filePath) => {
+          if (filePath.endsWith('.html') || filePath.endsWith('service-worker.js') || filePath.endsWith('manifest.json')) {
+            res.setHeader('Cache-Control', 'no-cache');
+          }
+        },
+      }),
+    );
     app.get('*', (_req, res) => {
+      res.setHeader('Cache-Control', 'no-cache');
       res.sendFile(path.join(distDir, 'index.html'));
     });
   }
