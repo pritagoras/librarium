@@ -472,3 +472,11 @@ test('saving an AI answer on a relation updates its description, comment or evid
   assert.match(applyAnswerToRelation(rel, { target: 'comments', text: 'Más', date: '2026-11-24' }).description, /^Previa\n\n\[IA · 2026-11-24\] Más$/);
   assert.equal(applyAnswerToRelation(rel, { target: 'evidence', text: 'Más' }).evidence.length, 1);
 });
+
+test('a field query asks for an editable suggested value and its certainty', () => {
+  const ana = character('a', 'Ana');
+  const age = buildCharacterAIRequest({ book, character: ana, characters: [ana], relations: [], scope: { kind: 'field', field: 'age' } });
+  assert.match(age.prompt, /VALOR_SUGERIDO:/);
+  assert.match(age.prompt, /CERTEZA_SUGERIDA:/);
+  assert.match(age.prompt, /comprometete con tu mejor estimación/);
+});
