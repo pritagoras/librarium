@@ -117,7 +117,12 @@ async function generate(
         .map((part: any) => part.text || '')
         .join('');
       if (!text.trim()) throw Error('Gemini no devolvió texto.');
-      return { text: text.trim(), model };
+      const chunks = result.candidates?.[0]?.groundingMetadata?.groundingChunks;
+      const sources = (Array.isArray(chunks) ? chunks : []).flatMap((chunk: any) => {
+        const uri = String(chunk?.web?.uri || '').trim();
+        return /^https?:\/\//i.test(uri) ? [{ title: String(chunk.web.title || uri).slice(0, 180), url: uri }] : [];
+      });
+      return { text: text.trim(), model, sources };
     } catch (error: any) {
       lastError = error;
       if (error?.name === 'AbortError' || ![404, 429, 503].includes(error?.status) || model === models.at(-1)) {
@@ -203,6 +208,31 @@ export async function directGeminiRequest(
         { text: prompt }, { inlineData: { mimeType: payload.mimeType || 'image/jpeg', data: payload.data } },
       ] }], '', model, payload.thinking), signal);
       return responseJSON({ text: result.text, model: result.model });
+    }
+
+    if (route === 'json-task') {
+      // Tarea genérica que devuelve JSON (personajes, análisis de la red). Con `grounding` usa la
+      // búsqueda de Google; si la clave/plan no la permite, reintenta sin búsqueda en vez de fallar.
+      const prompt = String(payload.prompt || '').slice(0, 120000);
+      if (!prompt.trim()) throw Error('Falta el texto de la consulta.');
+      const system = String(payload.system || 'Respondés únicamente con JSON válido, sin Markdown. Nunca inventás datos que no puedas respaldar.').slice(0, 4000);
+      const contents = [{ role: 'user', parts: [{ text: prompt }] }];
+      const run = (withSearch: boolean) => generate(apiKey, preferred, (model) => ({
+        ...textRequest(contents, system, model, payload.thinking, withSearch ? {} : { responseMimeType: 'application/json' }),
+        ...(withSearch ? { tools: [{ googleSearch: {} }] } : {}),
+      }), signal);
+      let groundingUsed = false;
+      let groundingError = '';
+      let result: Awaited<ReturnType<typeof generate>>;
+      if (payload.grounding) {
+        try { result = await run(true); groundingUsed = true; }
+        catch (error: any) {
+          if (error?.name === 'AbortError') throw error;
+          groundingError = String(error?.message || '').slice(0, 300);
+          result = await run(false);
+        }
+      } else result = await run(false);
+      return responseJSON({ text: result.text, model: result.model, sources: result.sources, groundingUsed, groundingError });
     }
 
     if (route === 'book-autofill') {
