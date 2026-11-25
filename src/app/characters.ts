@@ -504,9 +504,9 @@ function groundingToggleHTML(): string {
 
 interface JSONTaskResult { text: string; sources: Array<{ title: string; url: string }>; groundingUsed: boolean; groundingError: string }
 
-async function runJSONTask(prompt: string, signal: AbortSignal): Promise<JSONTaskResult> {
+async function runJSONTask(prompt: string, signal: AbortSignal, useGrounding = groundingEnabled()): Promise<JSONTaskResult> {
   const settings = api().ai.settings();
-  const response = await api().ai.request('json-task', { prompt, grounding: groundingEnabled(), model: settings.model, thinking: settings.thinking }, signal);
+  const response = await api().ai.request('json-task', { prompt, grounding: useGrounding, model: settings.model, thinking: settings.thinking }, signal);
   const body: any = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error: any = Error(String(body?.error || 'No se pudo consultar Gemini.'));
@@ -1090,11 +1090,11 @@ async function runAutoProfile(selected: { name: string; aliases: string[] }) {
   paint();
   const prompt = buildProfilePrompt(selected);
   try {
-    const result = await runJSONTask(prompt, controller.signal);
+    const result = await runJSONTask(prompt, controller.signal, false);
     if (controller.signal.aborted) return;
     const parsed = parsePastedJSON(result.text);
     const suggestion = suggestionFromParsed(parsed, selected.name);
-    autoNote = groundingNoteFor(result);
+    autoNote = 'Propuesta preparada con el conocimiento general del modelo, sin búsqueda web ni fuentes del cuaderno.';
     state.characterSearch = { ...before, status: 'ready', name: selected.name, suggestion, sources: mergeSources(before.sources, normalizePastedSources(parsed.sources), result.sources), error: '', responseText: '' };
   } catch (err: any) {
     if (controller.signal.aborted) return;
