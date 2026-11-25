@@ -971,7 +971,7 @@ dialog[open]:not(.book-detail-dialog):not(.photo-viewer-dialog):not(#geminiDialo
 @media(max-width:620px){.book-page-actions{gap:7px}.book-page-actions .reading-progress-trigger,.book-characters-trigger{width:auto;min-height:50px;flex:1 1 135px;padding:9px 10px;font-size:12px}}
 
 .chr-grounding{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.4;max-width:420px;font-weight:400}.chr-grounding input{width:18px;height:18px;margin-top:1px;flex:none}
-.chr-fs-row{border-top:1px solid var(--line,#ddd);padding-top:10px;margin-top:10px}.chr-fs-row input[name^=fs_],.chr-fs-row textarea,.chr-fs-row select{width:100.chr-fs-row{border-top:1px solid var(--line,#ddd);padding-top:10px;margin-top:10px}.chr-fs-row input[name^=fs_],.chr-fs-row textarea,.chr-fs-row select{width:100%;max-width:100%}.chr-fs-check{display:flex;gap:8px;align-items:center}.chr-fs-basis{margin:4px 0}
+.chr-fs-row{border-top:1px solid var(--line,#ddd);padding-top:10px;margin-top:10px}.chr-fs-row input[name^=fs_],.chr-fs-row textarea,.chr-fs-row select{width:100%;max-width:100%}.chr-fs-check{display:flex;gap:8px;align-items:center}.chr-fs-basis{margin:4px 0}
 
 
 /* Consulta puntual a la IA: resultado directo, plano y cómodo en móvil. */
