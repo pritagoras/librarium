@@ -1,3 +1,5 @@
+import { prepareCharacterBackup, safeId } from './characters-model';
+
 export function slug(s: string) {
   return (s || 'librarium')
     .toLowerCase()
@@ -95,10 +97,14 @@ export interface BackupData {
   entries: Record<string, any>[];
   quotes: Record<string, any>[];
   analyses: Record<string, any>[];
+  characters: Record<string, any>[];
+  characterRelations: Record<string, any>[];
   conversations: Record<string, any>[];
 }
 
-const BACKUP_COLLECTIONS = ['books', 'notes', 'entries', 'quotes', 'analyses', 'conversations'] as const;
+const BACKUP_COLLECTIONS = [
+  'books', 'notes', 'entries', 'quotes', 'analyses', 'characters', 'characterRelations', 'conversations',
+] as const;
 
 export function parseBackupJSON(raw: string): BackupData {
   const parsed = JSON.parse(raw);
@@ -126,12 +132,22 @@ export interface BackupRestoreWriters {
   entry: (entry: Record<string, any>) => Promise<unknown>;
   quote: (quote: Record<string, any>) => Promise<unknown>;
   analysis: (analysis: Record<string, any>) => Promise<unknown>;
+  character: (character: Record<string, any>) => Promise<unknown>;
+  characterRelation: (relation: Record<string, any>) => Promise<unknown>;
   conversation: (conversation: Record<string, any>) => Promise<unknown>;
+}
+
+export interface RestoreOptions {
+  /** IDs de libros que ya existen en este dispositivo (además de los de la copia). */
+  existingBookIds?: ReadonlySet<string>;
+  /** IDs de personajes que ya existen en este dispositivo, para aceptar relaciones hacia ellos. */
+  existingCharacterIds?: ReadonlySet<string>;
 }
 
 export async function restoreBackupData(
   backup: BackupData,
   writers: BackupRestoreWriters,
+  options: RestoreOptions = {},
 ): Promise<number> {
   let restored = 0;
   for (const book of backup.books) {
@@ -147,6 +163,16 @@ export async function restoreBackupData(
   for (const entry of backup.entries) { await writers.entry(entry); restored++; }
   for (const quote of backup.quotes) { await writers.quote(quote); restored++; }
   for (const analysis of backup.analyses) { await writers.analysis(analysis); restored++; }
+  // Personajes antes que relaciones; los IDs de relación se derivan de su clave lógica, así que restaurar
+  // dos veces (o desde dos copias) actualiza en lugar de duplicar.
+  const bookIds = new Set<string>();
+  for (const id of [...backup.books.map((book) => String(book.id)), ...(options.existingBookIds ?? [])]) {
+    bookIds.add(id);
+    bookIds.add(safeId(id));
+  }
+  const prepared = prepareCharacterBackup(backup, { bookIds, existingCharacterIds: options.existingCharacterIds });
+  for (const character of prepared.characters) { await writers.character(character); restored++; }
+  for (const relation of prepared.relations) { await writers.characterRelation(relation); restored++; }
   for (const conversation of backup.conversations) {
     if (!conversation.bookId) continue;
     await writers.conversation(conversation);

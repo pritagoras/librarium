@@ -24,6 +24,7 @@ Instalarla en el iPhone es importante: Safari puede borrar los datos de los siti
 - **Chat con IA a pantalla completa**: mantené apretada una nota, anotación o cita (o tocá el ícono ✦) para conversar sobre ella. La charla se guarda y podés retomarla.
 - **Conversaciones con la IA**: desde la Biblioteca, un banner abre la lista de todas tus charlas agrupadas por libro, con buscador.
 - La IA pasa sola a otro modelo si el elegido falla, se traba o corta la respuesta.
+- **Personajes**: dentro de cada libro, la pestaña *Personajes* permite crear fichas (nombre y alias, edad, descripción y rasgos, ocupación, pertenencia, comentarios, fuentes y certeza de cada dato), relacionarlas entre sí (familiar, amistad, rivalidad, alianza, mentoría u otro tipo editable), recorrerlas en lista, tabla o red de relaciones, y consultar a la IA sobre la ficha, un campo o un vínculo (ver abajo).
 - Ficha del libro y etiquetas sugeridas, síntesis de ideas y borrador de reseña con IA.
 - Modo oscuro, copia de seguridad y restauración.
 
@@ -35,14 +36,21 @@ La IA no tiene una clave compartida: cada persona usa la suya.
 
 La clave queda guardada **solo en el navegador de ese dispositivo, sin cifrar**, y no se incluye en copias de seguridad ni en la sincronización. No la compartas ni la uses en una computadora que no sea tuya. El plan gratuito de Google tiene límites de uso diarios; si te quedás sin cupo, esperá o probá con otro modelo.
 
+## Personajes
+- **Crear una ficha**: *Libro → Personajes → ＋ Nuevo personaje*. Solo el nombre es obligatorio. Lo que dejes en blanco queda como «desconocido» y nunca se completa solo; si cargás un dato, indicás si es **explícito en el libro** o **inferido**. Dos personajes del mismo libro no pueden llamarse igual.
+- **Crear un vínculo**: en la ficha, *＋ Agregar vínculo*. Elegís al otro personaje, el tipo, una descripción, fuentes y la certeza. No se permiten vínculos duplicados (el mismo tipo entre las mismas dos personas, en cualquier sentido; *Mentoría* sí distingue quién es el mentor). Desde la ficha podés abrir la del otro personaje, editar o quitar el vínculo.
+- **Vistas**: lista, tabla y red. La red parte de un personaje y muestra hasta 10 vínculos por nodo; con «Mostrar sus vínculos» se expande por partes. No hace falta para gestionar las fichas.
+- **IA**: el botón ✦ junto a cada dato (nombre, edad, descripción, ocupación, pertenencia), el de la ficha completa y el de cada vínculo (o de un par de personajes) usan la misma clave y el mismo modelo de *Ajustes de IA*. Se envían el libro (título, autor, editorial, año), la ficha y los vínculos registrados, y **solo las notas, anotaciones y citas tuyas que mencionan al personaje** (hasta 12 de cada tipo, recortadas). **No se envía el texto del libro y la IA no lo leyó**: se le indica que separe «Datos explícitos», «Inferencias» y «Sin información suficiente», que no invente edades, parentescos, escenas ni citas, y que rotule el conocimiento general como no verificado. Podés guardar una respuesta como dato (eligiendo explícito o inferido), como comentario o como fuente, siempre tras editarla y confirmar.
+- **Datos**: las fichas y los vínculos se guardan en el dispositivo, se sincronizan con la cuenta, entran en la copia de seguridad y se borran junto con el libro. Al restaurar una copia no se duplican (los vínculos se identifican por libro, tipo y extremos).
+
 ## Tus datos y tu privacidad
 - **Sin iniciar sesión**, todo se guarda únicamente en tu navegador (IndexedDB). No se envía a ningún servidor de Librarium.
 - **Al iniciar sesión con Google**, tus libros, notas, citas, fotos y conversaciones se sincronizan con la base de datos del proyecto Librarium (Firebase), para que puedas usarlos en varios dispositivos. Si preferís que nada salga de tu dispositivo, no inicies sesión.
 - Si dos dispositivos cambian el mismo registro, Librarium conserva ambas versiones y muestra **Revisar conflictos** en el estado de sincronización. Si una escritura falla, queda pendiente en este dispositivo y se reintenta al recuperar la conexión.
-- **Al usar la IA**, el texto y las fotos que consultás se envían a Google (Gemini) con tu propia clave.
+- **Al usar la IA**, el texto y las fotos que consultás (en Personajes, la ficha y tus notas que los mencionan) se envían a Google (Gemini) con tu propia clave.
 - La búsqueda de libros usa Open Library y las portadas por URL se descargan desde el proveedor indicado.
 
-**Hacé copias de seguridad.** En *⚙ Ajustes → Copia de seguridad* se descarga un JSON con todo (libros, notas, anotaciones, imágenes y conversaciones). *Restaurar copia* incorpora o actualiza los registros por ID, sin borrar los datos actuales. No borres los datos del sitio si no tenés una copia.
+**Hacé copias de seguridad.** En *⚙ Ajustes → Copia de seguridad* se descarga un JSON con todo (libros, notas, anotaciones, imágenes, personajes, vínculos y conversaciones). *Restaurar copia* incorpora o actualiza los registros por ID, sin borrar los datos actuales. No borres los datos del sitio si no tenés una copia.
 
 ## Formato JSON de notas
 ```json
@@ -70,7 +78,7 @@ npm install
 npm run dev      # servidor de desarrollo en http://127.0.0.1:8765
 npm run build    # genera dist/
 npm run lint     # chequeo de tipos y reglas de Firestore
-npm run test     # pruebas de importación, restauración y conflictos de sincronización
+npm run test     # pruebas de importación, restauración, conflictos de sincronización y personajes (fichas, vínculos, respaldo y contexto para la IA)
 ```
 
 En Windows también podés usar `INSTALAR.bat` (una vez) e `INICIAR_LIBRARIUM.bat`.

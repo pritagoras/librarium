@@ -1,0 +1,1221 @@
+/**
+ * Sección "Personajes" de cada libro: lista, tabla y red de relaciones, fichas editables,
+ * vínculos entre personajes y consultas a la IA. La lógica pura (validación, IDs, respaldo,
+ * contexto para la IA) vive en `characters-model.ts`; este módulo solo arma la interfaz,
+ * maneja eventos y delega la persistencia y la IA en las dependencias que recibe de app.ts.
+ */
+import type {
+  Book,
+  Certainty,
+  Character,
+  CharacterFieldKey,
+  CharacterRelation,
+  Entry,
+  EvidenceRef,
+  Note,
+  Quote,
+} from '../types';
+import {
+  CERTAINTY_LABELS,
+  EVIDENCE_KINDS,
+  EVIDENCE_LABELS,
+  FIELD_KEYS,
+  FIELD_LABELS,
+  LIMITS,
+  RELATION_TYPES,
+  applyAnswerToCharacter,
+  applyAnswerToRelation,
+  buildCharacterAIRequest,
+  buildEgoGraph,
+  neighborsOf,
+  removeCharacterCascade,
+  searchCharacters,
+  sortCharacters,
+  validateCharacter,
+  validateRelation,
+  type AIRequestPlan,
+  type AIScope,
+  type CharacterInput,
+  type EgoGraph,
+  type SaveTarget,
+} from './characters-model';
+
+// ---------------------------------------------------------------------------
+// Dependencias (las aporta app.ts)
+// ---------------------------------------------------------------------------
+
+export interface CharactersBookData {
+  characters: Character[];
+  relations: CharacterRelation[];
+  notes: Note[];
+  entries: Entry[];
+  quotes: Quote[];
+}
+
+export interface CharactersDeps {
+  loadBookData(bookId: string): Promise<CharactersBookData>;
+  saveCharacter(character: Character): Promise<Character>;
+  saveRelation(relation: CharacterRelation): Promise<CharacterRelation>;
+  deleteCharacter(id: string): Promise<void>;
+  deleteRelation(id: string): Promise<void>;
+  confirm(options: {
+    eyebrow?: string;
+    title: string;
+    message: string;
+    confirmLabel?: string;
+    danger?: boolean;
+    noticeOnly?: boolean;
+  }): Promise<boolean>;
+  ai: {
+    hasKey(): boolean;
+    /** Misma integración Gemini que el resto de la app (clave y modelo de las preferencias). */
+    request(route: string, payload: Record<string, any>, signal?: AbortSignal): Promise<Response>;
+    settings(): { model: string; thinking: string };
+    styleInstruction(): string;
+    openSettings(): void;
+    isKeyError(error: unknown): boolean;
+  };
+  renderMarkdown?(text: string): string;
+}
+
+let deps: CharactersDeps | null = null;
+
+export function initCharacters(dependencies: CharactersDeps) {
+  deps = dependencies;
+}
+
+function api(): CharactersDeps {
+  if (!deps) throw Error('El módulo de personajes no fue inicializado.');
+  return deps;
+}
+
+// ---------------------------------------------------------------------------
+// Estado
+// ---------------------------------------------------------------------------
+
+type Mode = 'index' | 'sheet' | 'character-form' | 'relation-form';
+type IndexView = 'list' | 'table' | 'network';
+
+interface AIState {
+  scope: AIScope;
+  label: string;
+  plan: AIRequestPlan | null;
+  status: 'running' | 'done' | 'error';
+  text: string;
+  error: string;
+  keyError: boolean;
+  note: string;
+  controller: AbortController | null;
+}
+
+interface State {
+  bookId: string;
+  mode: Mode;
+  view: IndexView;
+  query: string;
+  selectedId: string | null;
+  editingCharacterId: string | null;
+  relationDraft: { fromId: string; editingId: string | null } | null;
+  netFocus: string | null;
+  netExpanded: Set<string>;
+  netSelected: string | null;
+  notice: string;
+  ai: AIState | null;
+}
+
+const emptyState = (bookId = ''): State => ({
+  bookId,
+  mode: 'index',
+  view: 'list',
+  query: '',
+  selectedId: null,
+  editingCharacterId: null,
+  relationDraft: null,
+  netFocus: null,
+  netExpanded: new Set(),
+  netSelected: null,
+  notice: '',
+  ai: null,
+});
+
+let state: State = emptyState();
+let data: CharactersBookData = { characters: [], relations: [], notes: [], entries: [], quotes: [] };
+let book: Book | null = null;
+let host: HTMLElement | null = null;
+
+const esc = (value: unknown) =>
+  String(value ?? '').replace(/[&<>"']/g, (char) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char),
+  );
+
+const AI_SPARK = '✦';
+
+/** Verdadero mientras hay un formulario abierto o una consulta en curso: app.ts no debe repintar encima. */
+export function isCharactersBusy(): boolean {
+  return state.mode === 'character-form' || state.mode === 'relation-form' || state.ai?.status === 'running';
+}
+
+export async function purgeBookCharacters(bookId: string): Promise<void> {
+  const bookData = await api().loadBookData(bookId);
+  for (const relation of bookData.relations) await api().deleteRelation(relation.id);
+  for (const character of bookData.characters) await api().deleteCharacter(character.id);
+}
+
+// ---------------------------------------------------------------------------
+// Entrada principal
+// ---------------------------------------------------------------------------
+
+export async function renderCharactersPanel(container: HTMLElement, currentBook: Book): Promise<void> {
+  if (state.bookId !== currentBook.id) {
+    abortAI();
+    state = emptyState(currentBook.id);
+  }
+  host = container;
+  book = currentBook;
+  await reload();
+  paint();
+}
+
+async function reload() {
+  const loaded = await api().loadBookData(state.bookId);
+  data = {
+    ...loaded,
+    characters: sortCharacters(loaded.characters.filter((c) => c.bookId === state.bookId)),
+    relations: loaded.relations.filter((r) => r.bookId === state.bookId),
+  };
+  // Relaciones huérfanas (por ejemplo, un personaje borrado desde otro dispositivo) no se muestran.
+  const ids = new Set(data.characters.map((c) => c.id));
+  data.relations = data.relations.filter((r) => ids.has(r.fromId) && ids.has(r.toId));
+  if (state.selectedId && !ids.has(state.selectedId)) {
+    state.selectedId = null;
+    if (state.mode === 'sheet') state.mode = 'index';
+  }
+}
+
+function characterById(id: string | null | undefined): Character | undefined {
+  return data.characters.find((c) => c.id === id);
+}
+
+function go(mode: Mode, patch: Partial<State> = {}) {
+  abortAI();
+  state = { ...state, ai: null, notice: '', ...patch, mode };
+  paint(true);
+}
+
+function paint(focusHeading = false) {
+  if (!host) return;
+  let html = '';
+  if (state.mode === 'index') html = indexHTML();
+  else if (state.mode === 'sheet' && characterById(state.selectedId)) html = sheetHTML(characterById(state.selectedId)!);
+  else if (state.mode === 'character-form') html = characterFormHTML();
+  else if (state.mode === 'relation-form') html = relationFormHTML();
+  else {
+    state.mode = 'index';
+    html = indexHTML();
+  }
+  host.innerHTML = `<div class="chr-root">${html}</div>`;
+  bindEvents();
+  if (state.mode === 'sheet') paintAI();
+  if (focusHeading) host.querySelector<HTMLElement>('#chrHeading')?.focus({ preventScroll: false });
+}
+
+// ---------------------------------------------------------------------------
+// Vistas
+// ---------------------------------------------------------------------------
+
+function certaintyBadge(certainty: Certainty | undefined): string {
+  const value = certainty ?? 'unknown';
+  return `<span class="chr-badge chr-badge--${value}">${esc(CERTAINTY_LABELS[value])}</span>`;
+}
+
+function relationCount(id: string): number {
+  return neighborsOf(data.relations, id).length;
+}
+
+function indexHTML(): string {
+  const views: Array<[IndexView, string]> = [['list', 'Lista'], ['table', 'Tabla'], ['network', 'Red']];
+  return `<div class="content-heading">
+      <div>
+        <h2 id="chrHeading" tabindex="-1">Personajes</h2>
+        <p class="muted">Fichas de los personajes de este libro y cómo se relacionan. Todo lo que cargues es tuyo: nada se completa solo, y la IA solo responde cuando se lo pedís.</p>
+      </div>
+      <div class="content-heading-actions">
+        <button type="button" class="primary" data-chr="new">＋ Nuevo personaje</button>
+      </div>
+    </div>
+    ${state.notice ? `<p class="chr-notice" role="status">${esc(state.notice)}</p>` : ''}
+    <div class="chr-toolbar">
+      <label class="chr-search">
+        <span class="chr-sr-only">Buscar personajes</span>
+        <input type="search" id="chrSearch" placeholder="Buscar por nombre, alias, rasgo u ocupación" value="${esc(state.query)}" autocomplete="off" />
+      </label>
+      <div class="chr-view-toggle" role="group" aria-label="Vista de personajes">
+        ${views.map(([key, label]) => `<button type="button" data-chr="view" data-view="${key}" aria-pressed="${state.view === key}" class="${state.view === key ? 'active' : ''}">${label}</button>`).join('')}
+      </div>
+    </div>
+    <div id="chrResults">${resultsHTML()}</div>`;
+}
+
+function resultsHTML(): string {
+  if (state.view === 'network') return networkHTML();
+  if (!data.characters.length) {
+    return '<p class="empty-inline">Todavía no cargaste personajes de este libro. Creá la primera ficha con «＋ Nuevo personaje».</p>';
+  }
+  const found = searchCharacters(data.characters, state.query);
+  if (!found.length) return '<p class="empty-inline" role="status">Ningún personaje coincide con la búsqueda.</p>';
+  const count = `<p class="muted chr-count" role="status">${found.length} de ${data.characters.length} personaje${data.characters.length === 1 ? '' : 's'}</p>`;
+  if (state.view === 'table') {
+    return `${count}<div class="chr-table-wrap"><table class="chr-table">
+      <caption class="chr-sr-only">Personajes del libro</caption>
+      <thead><tr><th scope="col">Nombre</th><th scope="col">Edad</th><th scope="col">Ocupación</th><th scope="col">Pertenencia</th><th scope="col">Vínculos</th></tr></thead>
+      <tbody>${found
+        .map(
+          (c) => `<tr>
+        <th scope="row"><button type="button" class="chr-link" data-chr="open" data-id="${esc(c.id)}">${esc(c.name)}</button></th>
+        <td>${esc(c.age) || '<span class="chr-unknown">—</span>'}</td>
+        <td>${esc(c.occupation) || '<span class="chr-unknown">—</span>'}</td>
+        <td>${esc(c.affiliation) || '<span class="chr-unknown">—</span>'}</td>
+        <td>${relationCount(c.id)}</td></tr>`,
+        )
+        .join('')}</tbody></table></div>`;
+  }
+  return `${count}<ul class="chr-list">${found
+    .map((c) => {
+      const meta = [c.occupation, c.affiliation].filter(Boolean).join(' · ');
+      const links = relationCount(c.id);
+      return `<li><button type="button" class="chr-card" data-chr="open" data-id="${esc(c.id)}">
+        <strong>${esc(c.name)}</strong>
+        ${c.aliases.length ? `<span class="muted">También: ${esc(c.aliases.join(', '))}</span>` : ''}
+        ${meta ? `<span class="muted">${esc(meta)}</span>` : ''}
+        <span class="chr-card-links">${links} vínculo${links === 1 ? '' : 's'}</span>
+      </button></li>`;
+    })
+    .join('')}</ul>`;
+}
+
+function fieldRow(character: Character, key: CharacterFieldKey): string {
+  const value = character[key];
+  return `<div class="chr-field">
+    <dt>${FIELD_LABELS[key]}</dt>
+    <dd>${
+      value
+        ? `<span class="chr-value">${esc(value)}</span> ${certaintyBadge(character.certainty[key])}`
+        : '<span class="chr-unknown">Sin dato (desconocido)</span>'
+    }</dd>
+    <button type="button" class="chr-ai-btn" data-chr="ask" data-scope="field" data-field="${key}" aria-label="Preguntar a la IA por ${esc(FIELD_LABELS[key].toLowerCase())} de ${esc(character.name)}">${AI_SPARK}<span class="chr-sr-only"> Preguntar a la IA</span></button>
+  </div>`;
+}
+
+function evidenceListHTML(items: EvidenceRef[]): string {
+  if (!items.length) return '';
+  return `<ul class="chr-evidence">${items
+    .map(
+      (ev) => `<li><strong>${esc(EVIDENCE_LABELS[ev.kind])}</strong>${ev.ref ? ` · ${esc(ev.ref)}` : ''}${ev.text ? `<br><span class="chr-quote">${esc(ev.text)}</span>` : ''}</li>`,
+    )
+    .join('')}</ul>`;
+}
+
+function relationRowHTML(character: Character, relation: CharacterRelation): string {
+  const otherId = relation.fromId === character.id ? relation.toId : relation.fromId;
+  const other = characterById(otherId);
+  if (!other) return '';
+  const outgoing = relation.fromId === character.id;
+  return `<li class="chr-relation">
+    <div class="chr-relation-head">
+      <span class="chr-type">${esc(relation.type)}</span>
+      <button type="button" class="chr-link" data-chr="open" data-id="${esc(other.id)}" aria-label="Abrir la ficha de ${esc(other.name)}">${esc(outgoing ? `${character.name} → ${other.name}` : `${other.name} → ${character.name}`)}</button>
+      ${certaintyBadge(relation.certainty)}
+    </div>
+    ${relation.description ? `<p class="chr-relation-text">${esc(relation.description)}</p>` : ''}
+    ${evidenceListHTML(relation.evidence)}
+    <div class="chr-row-actions">
+      <button type="button" class="secondary" data-chr="open" data-id="${esc(other.id)}">Abrir ficha</button>
+      <button type="button" class="secondary" data-chr="ask" data-scope="relation" data-other="${esc(other.id)}" data-rel="${esc(relation.id)}" aria-label="Preguntar a la IA por el vínculo con ${esc(other.name)}">${AI_SPARK} IA</button>
+      <button type="button" class="secondary" data-chr="edit-relation" data-rel="${esc(relation.id)}">Editar</button>
+      <button type="button" class="secondary" data-chr="remove-relation" data-rel="${esc(relation.id)}" aria-label="Quitar el vínculo con ${esc(other.name)}">Quitar</button>
+    </div>
+  </li>`;
+}
+
+function sheetHTML(character: Character): string {
+  const links = neighborsOf(data.relations, character.id);
+  const others = data.characters.filter((c) => c.id !== character.id);
+  return `<p><button type="button" class="chr-back" data-chr="back">← Volver a personajes</button></p>
+    <div class="content-heading">
+      <div>
+        <p class="eyebrow">FICHA DE PERSONAJE</p>
+        <h2 id="chrHeading" tabindex="-1">${esc(character.name)}</h2>
+        ${character.aliases.length ? `<p class="muted">También llamado: ${esc(character.aliases.join(', '))}</p>` : ''}
+      </div>
+      <div class="content-heading-actions">
+        <button type="button" class="secondary" data-chr="ask" data-scope="character" aria-label="Preguntar a la IA sobre la ficha completa de ${esc(character.name)}">${AI_SPARK} Consultar la ficha con IA</button>
+        <button type="button" class="secondary" data-chr="edit">Editar</button>
+        <button type="button" class="danger-btn" data-chr="delete">Eliminar</button>
+      </div>
+    </div>
+    ${state.notice ? `<p class="chr-notice" role="status">${esc(state.notice)}</p>` : ''}
+    <div id="chrAiHost"></div>
+    <section class="chr-section" aria-labelledby="chrFields">
+      <h3 id="chrFields">Datos</h3>
+      <dl class="chr-fields">
+        <div class="chr-field">
+          <dt>Nombre</dt>
+          <dd><span class="chr-value">${esc(character.name)}</span></dd>
+          <button type="button" class="chr-ai-btn" data-chr="ask" data-scope="field" data-field="name" aria-label="Preguntar a la IA por el nombre y los alias de ${esc(character.name)}">${AI_SPARK}<span class="chr-sr-only"> Preguntar a la IA</span></button>
+        </div>
+        ${FIELD_KEYS.map((key) => fieldRow(character, key)).join('')}
+      </dl>
+      ${character.traits.length ? `<p class="chr-traits"><span class="field-label">Rasgos</span> ${character.traits.map((t) => `<span class="chr-chip">${esc(t)}</span>`).join(' ')}</p>` : ''}
+      ${character.comments ? `<div class="chr-comments"><span class="field-label">Comentarios y observaciones</span><p>${esc(character.comments)}</p></div>` : ''}
+      ${character.evidence.length ? `<div><span class="field-label">Fuentes y evidencia</span>${evidenceListHTML(character.evidence)}</div>` : ''}
+    </section>
+    <section class="chr-section" aria-labelledby="chrRelations">
+      <div class="chr-section-head">
+        <h3 id="chrRelations">Vínculos (${links.length})</h3>
+        <div class="chr-row-actions">
+          <button type="button" class="secondary" data-chr="add-relation" ${others.length ? '' : 'disabled'}>＋ Agregar vínculo</button>
+          <button type="button" class="secondary" data-chr="show-network" ${links.length ? '' : 'disabled'}>Ver en la red</button>
+        </div>
+      </div>
+      ${others.length ? '' : '<p class="muted">Cargá al menos otro personaje para poder relacionarlos.</p>'}
+      ${links.length ? `<ul class="chr-relations">${links.map((n) => relationRowHTML(character, n.relation)).join('')}</ul>` : others.length ? '<p class="empty-inline">Todavía no registraste vínculos de este personaje.</p>' : ''}
+      ${
+        others.length
+          ? `<div class="chr-pair">
+        <label for="chrPairSelect">Consultar a la IA por el vínculo con otro personaje</label>
+        <div class="chr-pair-row">
+          <select id="chrPairSelect">${others.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}</select>
+          <button type="button" class="secondary" data-chr="ask-pair">${AI_SPARK} Consultar vínculo</button>
+        </div>
+      </div>`
+          : ''
+      }
+    </section>`;
+}
+
+// ---------------------------------------------------------------------------
+// Red de relaciones
+// ---------------------------------------------------------------------------
+
+function mostConnected(): string | null {
+  let best: { id: string; n: number } | null = null;
+  for (const c of data.characters) {
+    const n = relationCount(c.id);
+    if (!best || n > best.n) best = { id: c.id, n };
+  }
+  return best?.id ?? null;
+}
+
+function layoutGraph(graph: EgoGraph, focusId: string) {
+  const r1 = 130;
+  const gap = 95;
+  const maxDepth = Math.max(...graph.nodes.map((n) => n.depth), 1);
+  const size = 2 * (r1 + (maxDepth - 1) * gap + 60);
+  const c = size / 2;
+  const pos = new Map<string, { x: number; y: number; angle: number }>();
+  pos.set(focusId, { x: c, y: c, angle: 0 });
+  const depthOf = new Map(graph.nodes.map((n) => [n.id, n.depth]));
+  const first = graph.nodes.filter((n) => n.depth === 1);
+  first.forEach((n, i) => {
+    const angle = -Math.PI / 2 + (2 * Math.PI * i) / Math.max(first.length, 1);
+    pos.set(n.id, { x: c + r1 * Math.cos(angle), y: c + r1 * Math.sin(angle), angle });
+  });
+  for (let depth = 2; depth <= maxDepth; depth++) {
+    const byParent = new Map<string, string[]>();
+    for (const n of graph.nodes.filter((x) => x.depth === depth)) {
+      const edge = graph.edges.find((e) => {
+        const other = e.from === n.id ? e.to : e.to === n.id ? e.from : null;
+        return other !== null && (depthOf.get(other) ?? 99) < depth && pos.has(other);
+      });
+      const parent = edge ? (edge.from === n.id ? edge.to : edge.from) : focusId;
+      byParent.set(parent, [...(byParent.get(parent) ?? []), n.id]);
+    }
+    for (const [parent, children] of byParent) {
+      const base = pos.get(parent)?.angle ?? 0;
+      const spread = Math.min(0.55, 1.4 / children.length);
+      children.forEach((id, i) => {
+        const angle = base + (i - (children.length - 1) / 2) * spread;
+        const radius = r1 + (depth - 1) * gap;
+        pos.set(id, { x: c + radius * Math.cos(angle), y: c + radius * Math.sin(angle), angle });
+      });
+    }
+  }
+  return { pos, size };
+}
+
+function networkHTML(): string {
+  if (!data.characters.length) {
+    return '<p class="empty-inline">Cargá personajes y vínculos para ver la red de relaciones.</p>';
+  }
+  if (!characterById(state.netFocus)) state.netFocus = characterById(state.selectedId)?.id ?? mostConnected();
+  const focusId = state.netFocus!;
+  const graph = buildEgoGraph(data.characters, data.relations, focusId, state.netExpanded);
+  const { pos, size } = layoutGraph(graph, focusId);
+  const showEdgeLabels = graph.edges.length <= 14;
+  const selected = graph.nodes.find((n) => n.id === state.netSelected) ?? null;
+  const selectedChar = selected ? characterById(selected.id) : undefined;
+
+  const edgesSvg = graph.edges
+    .map((e) => {
+      const a = pos.get(e.from);
+      const b = pos.get(e.to);
+      if (!a || !b) return '';
+      const dashed = e.certainty === 'explicit' ? '' : ' stroke-dasharray="5 4"';
+      const label = `${characterById(e.from)?.name} — ${e.label} — ${characterById(e.to)?.name} (${CERTAINTY_LABELS[e.certainty]})`;
+      return `<g><line class="chr-edge" x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}"${dashed}><title>${esc(label)}</title></line>${
+        showEdgeLabels
+          ? `<text class="chr-edge-label" x="${((a.x + b.x) / 2).toFixed(1)}" y="${((a.y + b.y) / 2 - 3).toFixed(1)}" text-anchor="middle">${esc(e.label.slice(0, 18))}</text>`
+          : ''
+      }</g>`;
+    })
+    .join('');
+  const nodesSvg = graph.nodes
+    .map((n) => {
+      const p = pos.get(n.id);
+      if (!p) return '';
+      const isFocus = n.id === focusId;
+      const label = n.label.length > 16 ? `${n.label.slice(0, 15)}…` : n.label;
+      const hidden = n.hiddenNeighbors ? `, ${n.hiddenNeighbors} vínculo${n.hiddenNeighbors === 1 ? '' : 's'} sin mostrar` : '';
+      return `<g class="chr-node${isFocus ? ' chr-node--focus' : ''}${n.id === state.netSelected ? ' chr-node--selected' : ''}" data-chr="net-select" data-id="${esc(n.id)}" tabindex="0" role="button" aria-label="${esc(n.label)}${esc(hidden)}. Seleccionar">
+        <circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${isFocus ? 30 : 24}"></circle>
+        <text x="${p.x.toFixed(1)}" y="${(p.y + 4).toFixed(1)}" text-anchor="middle">${esc(label)}</text>
+        ${n.hiddenNeighbors ? `<text class="chr-node-more" x="${(p.x + 22).toFixed(1)}" y="${(p.y - 20).toFixed(1)}">+${n.hiddenNeighbors}</text>` : ''}
+      </g>`;
+    })
+    .join('');
+
+  const details = selected && selectedChar
+    ? `<div class="chr-net-details" role="region" aria-label="Personaje seleccionado">
+        <strong>${esc(selectedChar.name)}</strong>
+        <span class="muted">${relationCount(selectedChar.id)} vínculo${relationCount(selectedChar.id) === 1 ? '' : 's'}${selected.hiddenNeighbors ? ` · ${selected.hiddenNeighbors} sin mostrar` : ''}</span>
+        <div class="chr-row-actions">
+          <button type="button" class="secondary" data-chr="open" data-id="${esc(selectedChar.id)}">Abrir ficha</button>
+          ${selected.id !== focusId ? `<button type="button" class="secondary" data-chr="net-center" data-id="${esc(selectedChar.id)}">Centrar aquí</button>` : ''}
+          ${
+            selected.id !== focusId && selected.hiddenNeighbors
+              ? `<button type="button" class="secondary" data-chr="net-expand" data-id="${esc(selectedChar.id)}">Mostrar sus vínculos (+${selected.hiddenNeighbors})</button>`
+              : ''
+          }
+          ${selected.id !== focusId && state.netExpanded.has(selected.id) ? `<button type="button" class="secondary" data-chr="net-collapse" data-id="${esc(selectedChar.id)}">Ocultar sus vínculos</button>` : ''}
+        </div>
+      </div>`
+    : '<p class="muted chr-net-hint">Tocá o elegí con Enter un personaje para abrir su ficha o mostrar más de sus vínculos.</p>';
+
+  return `<div class="chr-network">
+    <div class="chr-net-controls">
+      <label for="chrNetFocus">Centrar la red en</label>
+      <select id="chrNetFocus" data-chr-change="net-focus">
+        ${data.characters.map((c) => `<option value="${esc(c.id)}" ${c.id === focusId ? 'selected' : ''}>${esc(c.name)} (${relationCount(c.id)})</option>`).join('')}
+      </select>
+    </div>
+    ${
+      graph.edges.length
+        ? `<svg class="chr-svg" viewBox="0 0 ${size} ${size}" role="group" aria-label="Red de relaciones de ${esc(characterById(focusId)?.name || '')}">${edgesSvg}${nodesSvg}</svg>
+      <p class="muted chr-net-legend">Línea continua: vínculo explícito en el libro. Línea punteada: inferido o desconocido. Se muestran hasta 10 vínculos por personaje; los demás aparecen como «+N».${graph.omittedAtFocus ? ` Faltan ${graph.omittedAtFocus} del personaje central (están en su ficha).` : ''}</p>
+      ${details}
+      <ul class="chr-sr-only">${graph.edges.map((e) => `<li>${esc(characterById(e.from)?.name)} — ${esc(e.label)} — ${esc(characterById(e.to)?.name)}, ${esc(CERTAINTY_LABELS[e.certainty])}</li>`).join('')}</ul>`
+        : '<p class="empty-inline">Este personaje todavía no tiene vínculos. Registralos desde su ficha o elegí otro personaje para centrar la red.</p>'
+    }
+  </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Formularios
+// ---------------------------------------------------------------------------
+
+function certaintySelectHTML(name: string, value: Certainty | undefined, options: { allowUnknown?: boolean; required?: boolean } = {}): string {
+  const list: Certainty[] = options.allowUnknown ? ['explicit', 'inferred', 'unknown'] : ['explicit', 'inferred'];
+  return `<select name="${name}" aria-label="Certeza del dato"${options.required ? ' required' : ''}>
+    ${options.allowUnknown ? '' : `<option value="">Elegí si es explícito o inferido…</option>`}
+    ${list.map((c) => `<option value="${c}" ${value === c ? 'selected' : ''}>${CERTAINTY_LABELS[c]}</option>`).join('')}
+  </select>`;
+}
+
+function evidenceRowHTML(ev: EvidenceRef = { kind: 'page', ref: '', text: '' }): string {
+  return `<div class="chr-evidence-row">
+    <select data-f="kind" aria-label="Tipo de fuente">${EVIDENCE_KINDS.map((k) => `<option value="${k}" ${ev.kind === k ? 'selected' : ''}>${EVIDENCE_LABELS[k]}</option>`).join('')}</select>
+    <input data-f="ref" type="text" maxlength="${LIMITS.evidenceRef}" placeholder="Página, capítulo o número" aria-label="Referencia de la fuente" value="${esc(ev.ref)}" />
+    <input data-f="text" type="text" maxlength="${LIMITS.evidenceText}" placeholder="Cita o nota (opcional)" aria-label="Texto de la fuente" value="${esc(ev.text)}" />
+    <button type="button" class="secondary" data-chr="remove-evidence" aria-label="Quitar esta fuente">✕</button>
+  </div>`;
+}
+
+function evidenceEditorHTML(items: EvidenceRef[]): string {
+  return `<fieldset class="chr-fieldset"><legend>Fuentes o evidencia</legend>
+    <div id="chrEvidenceRows">${items.map((ev) => evidenceRowHTML(ev)).join('')}</div>
+    <button type="button" class="secondary" data-chr="add-evidence">＋ Agregar fuente</button>
+  </fieldset>`;
+}
+
+function characterFormHTML(): string {
+  const editing = characterById(state.editingCharacterId);
+  const c: Character | undefined = editing;
+  const fieldBlock = (key: CharacterFieldKey, multiline: boolean) => `<div class="chr-form-field">
+      <label for="chr_${key}">${FIELD_LABELS[key]}</label>
+      ${
+        multiline
+          ? `<textarea id="chr_${key}" name="${key}" maxlength="${LIMITS[key]}">${esc(c?.[key] ?? '')}</textarea>`
+          : `<input id="chr_${key}" name="${key}" type="text" maxlength="${LIMITS[key]}" value="${esc(c?.[key] ?? '')}" />`
+      }
+      ${certaintySelectHTML(`cert_${key}`, c?.certainty[key])}
+    </div>`;
+  return `<p><button type="button" class="chr-back" data-chr="cancel">← Cancelar</button></p>
+    <h2 id="chrHeading" tabindex="-1">${editing ? `Editar a ${esc(editing.name)}` : 'Nuevo personaje'}</h2>
+    <p class="muted">Dejá en blanco lo que no sepas: un campo vacío queda como «desconocido». Si cargás un dato, indicá si el libro lo dice de forma explícita o si lo inferís vos.</p>
+    <form id="chrCharacterForm" class="chr-form" novalidate>
+      <div class="chr-errors" id="chrFormErrors" role="alert" aria-live="assertive"></div>
+      <div class="chr-form-field">
+        <label for="chr_name">Nombre</label>
+        <input id="chr_name" name="name" type="text" maxlength="${LIMITS.name}" required value="${esc(c?.name ?? '')}" />
+      </div>
+      <div class="chr-form-field">
+        <label for="chr_aliases">Otros nombres o alias (uno por línea)</label>
+        <textarea id="chr_aliases" name="aliases">${esc((c?.aliases ?? []).join('\n'))}</textarea>
+      </div>
+      ${fieldBlock('age', false)}
+      ${fieldBlock('description', true)}
+      <div class="chr-form-field">
+        <label for="chr_traits">Rasgos (separados por coma)</label>
+        <input id="chr_traits" name="traits" type="text" value="${esc((c?.traits ?? []).join(', '))}" />
+      </div>
+      ${fieldBlock('occupation', false)}
+      ${fieldBlock('affiliation', false)}
+      <div class="chr-form-field">
+        <label for="chr_comments">Comentarios y observaciones personales</label>
+        <textarea id="chr_comments" name="comments" maxlength="${LIMITS.comments}">${esc(c?.comments ?? '')}</textarea>
+      </div>
+      ${evidenceEditorHTML(c?.evidence ?? [])}
+      <div class="chr-form-actions">
+        <button type="submit" class="primary">${editing ? 'Guardar cambios' : 'Crear ficha'}</button>
+        <button type="button" class="secondary" data-chr="cancel">Cancelar</button>
+      </div>
+    </form>`;
+}
+
+function relationFormHTML(): string {
+  const draft = state.relationDraft;
+  const from = characterById(draft?.fromId);
+  if (!draft || !from) return indexHTML();
+  const editing = draft.editingId ? data.relations.find((r) => r.id === draft.editingId) : undefined;
+  const otherId = editing ? (editing.fromId === from.id ? editing.toId : editing.fromId) : '';
+  const others = data.characters.filter((c) => c.id !== from.id);
+  const usedTypes = [...new Set(data.relations.map((r) => r.type))].filter((t) => !(RELATION_TYPES as readonly string[]).includes(t));
+  return `<p><button type="button" class="chr-back" data-chr="cancel">← Cancelar</button></p>
+    <h2 id="chrHeading" tabindex="-1">${editing ? 'Editar vínculo' : 'Nuevo vínculo'} de ${esc(from.name)}</h2>
+    <form id="chrRelationForm" class="chr-form" novalidate>
+      <div class="chr-errors" id="chrFormErrors" role="alert" aria-live="assertive"></div>
+      <div class="chr-form-field">
+        <label for="chr_other">Otro personaje</label>
+        <select id="chr_other" name="other" ${editing ? 'disabled' : ''}>
+          ${others.map((c) => `<option value="${esc(c.id)}" ${c.id === otherId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="chr-form-field">
+        <label for="chr_direction">Sentido del vínculo</label>
+        <select id="chr_direction" name="direction">
+          <option value="out" ${!editing || editing.fromId === from.id ? 'selected' : ''}>${esc(from.name)} → otro personaje</option>
+          <option value="in" ${editing && editing.fromId !== from.id ? 'selected' : ''}>otro personaje → ${esc(from.name)}</option>
+        </select>
+        <small class="muted">Solo importa en vínculos con sentido, como Mentoría (quien enseña → quien aprende).</small>
+      </div>
+      <div class="chr-form-field">
+        <label for="chr_type">Tipo de vínculo</label>
+        <input id="chr_type" name="type" type="text" list="chrTypes" maxlength="${LIMITS.relationType}" required value="${esc(editing?.type ?? '')}" placeholder="Familiar, amistad, rivalidad, alianza, mentoría u otro" />
+        <datalist id="chrTypes">${[...RELATION_TYPES, ...usedTypes].map((t) => `<option value="${esc(t)}"></option>`).join('')}</datalist>
+      </div>
+      <div class="chr-form-field">
+        <label for="chr_rel_description">Descripción o comentario del vínculo</label>
+        <textarea id="chr_rel_description" name="description" maxlength="${LIMITS.relationDescription}">${esc(editing?.description ?? '')}</textarea>
+      </div>
+      <div class="chr-form-field">
+        <label for="chr_rel_certainty">Certeza del vínculo</label>
+        ${certaintySelectHTML('certainty', editing?.certainty ?? 'unknown', { allowUnknown: true })}
+      </div>
+      ${evidenceEditorHTML(editing?.evidence ?? [])}
+      <div class="chr-form-actions">
+        <button type="submit" class="primary">${editing ? 'Guardar cambios' : 'Crear vínculo'}</button>
+        <button type="button" class="secondary" data-chr="cancel">Cancelar</button>
+      </div>
+    </form>`;
+}
+
+function readEvidence(form: HTMLElement): EvidenceRef[] {
+  return [...form.querySelectorAll<HTMLElement>('.chr-evidence-row')].map((row) => ({
+    kind: (row.querySelector<HTMLSelectElement>('[data-f=kind]')!.value || 'other') as EvidenceRef['kind'],
+    ref: row.querySelector<HTMLInputElement>('[data-f=ref]')!.value,
+    text: row.querySelector<HTMLInputElement>('[data-f=text]')!.value,
+  }));
+}
+
+function formValue(form: HTMLFormElement, name: string): string {
+  const el = form.elements.namedItem(name) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null;
+  return el ? el.value : '';
+}
+
+function showFormErrors(errors: string[], warnings: string[] = []) {
+  const box = host?.querySelector<HTMLElement>('#chrFormErrors');
+  if (!box) return;
+  box.innerHTML = errors.length
+    ? `<ul>${errors.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>`
+    : warnings.length
+      ? `<ul>${warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>`
+      : '';
+  if (errors.length) box.scrollIntoView({ block: 'nearest' });
+}
+
+async function submitCharacterForm(form: HTMLFormElement) {
+  const editing = characterById(state.editingCharacterId);
+  const certainty: CharacterInput['certainty'] = {};
+  for (const key of FIELD_KEYS) {
+    const value = formValue(form, `cert_${key}`);
+    if (value === 'explicit' || value === 'inferred') certainty[key] = value;
+  }
+  const input: CharacterInput = {
+    id: editing?.id,
+    name: formValue(form, 'name'),
+    aliases: formValue(form, 'aliases').split(/\n|;/),
+    age: formValue(form, 'age'),
+    description: formValue(form, 'description'),
+    traits: formValue(form, 'traits').split(/[,;\n]/),
+    occupation: formValue(form, 'occupation'),
+    affiliation: formValue(form, 'affiliation'),
+    comments: formValue(form, 'comments'),
+    evidence: readEvidence(form),
+    certainty,
+  };
+  const result = validateCharacter(input, { bookId: state.bookId, existing: data.characters, editingId: editing?.id });
+  if (!result.ok || !result.value) {
+    showFormErrors(result.errors);
+    return;
+  }
+  try {
+    const saved = await api().saveCharacter({ ...result.value, userId: editing?.userId, createdAt: editing?.createdAt });
+    await reload();
+    go('sheet', {
+      selectedId: saved.id,
+      editingCharacterId: null,
+      notice: [editing ? 'Ficha actualizada.' : 'Ficha creada.', ...result.warnings].join(' '),
+    });
+  } catch (err: any) {
+    showFormErrors([`No se pudo guardar: ${err?.message || err}`]);
+  }
+}
+
+async function submitRelationForm(form: HTMLFormElement) {
+  const draft = state.relationDraft;
+  if (!draft) return;
+  const editing = draft.editingId ? data.relations.find((r) => r.id === draft.editingId) : undefined;
+  const otherId = editing ? (editing.fromId === draft.fromId ? editing.toId : editing.fromId) : formValue(form, 'other');
+  const outgoing = formValue(form, 'direction') !== 'in';
+  const result = validateRelation(
+    {
+      fromId: outgoing ? draft.fromId : otherId,
+      toId: outgoing ? otherId : draft.fromId,
+      type: formValue(form, 'type'),
+      description: formValue(form, 'description'),
+      evidence: readEvidence(form),
+      certainty: (formValue(form, 'certainty') || 'unknown') as Certainty,
+    },
+    { bookId: state.bookId, characters: data.characters, relations: data.relations, editing },
+  );
+  if (!result.ok || !result.value) {
+    showFormErrors(result.errors);
+    return;
+  }
+  try {
+    await api().saveRelation(result.value.record);
+    if (result.value.replacesId) await api().deleteRelation(result.value.replacesId);
+    await reload();
+    go('sheet', { selectedId: draft.fromId, relationDraft: null, notice: editing ? 'Vínculo actualizado.' : 'Vínculo creado.' });
+  } catch (err: any) {
+    showFormErrors([`No se pudo guardar: ${err?.message || err}`]);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// IA
+// ---------------------------------------------------------------------------
+
+function abortAI() {
+  state.ai?.controller?.abort();
+}
+
+function scopeLabel(character: Character, scope: AIScope): string {
+  if (scope.kind === 'character') return `ficha completa de ${character.name}`;
+  if (scope.kind === 'field') return `${FIELD_LABELS[scope.field].toLowerCase()} de ${character.name}`;
+  return `vínculo entre ${character.name} y ${characterById(scope.otherId)?.name ?? 'otro personaje'}`;
+}
+
+async function startAI(scope: AIScope) {
+  const character = characterById(state.selectedId);
+  if (!character || !book) return;
+  abortAI();
+  const ai: AIState = {
+    scope,
+    label: scopeLabel(character, scope),
+    plan: null,
+    status: 'running',
+    text: '',
+    error: '',
+    keyError: false,
+    note: '',
+    controller: null,
+  };
+  state.ai = ai;
+  if (!api().ai.hasKey()) {
+    ai.status = 'error';
+    ai.keyError = true;
+    ai.error = 'Para consultar a la IA, guardá tu API key personal de Gemini en Ajustes → Ajustes de IA.';
+    paintAI();
+    return;
+  }
+  try {
+    ai.plan = buildCharacterAIRequest({
+      book,
+      character,
+      characters: data.characters,
+      relations: data.relations,
+      scope,
+      notes: data.notes,
+      entries: data.entries,
+      quotes: data.quotes,
+      styleInstruction: api().ai.styleInstruction(),
+    });
+  } catch (err: any) {
+    ai.status = 'error';
+    ai.error = String(err?.message || err);
+    paintAI();
+    return;
+  }
+  paintAI();
+  host?.querySelector<HTMLElement>('#chrAiHost')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  await runAI(ai);
+}
+
+async function runAI(ai: AIState) {
+  const controller = new AbortController();
+  ai.controller = controller;
+  let stalled = false;
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+  const arm = (ms: number) => {
+    clearTimeout(watchdog);
+    watchdog = setTimeout(() => {
+      stalled = true;
+      controller.abort();
+    }, ms);
+  };
+  const answerEl = () => host?.querySelector<HTMLElement>('#chrAiAnswer');
+  try {
+    const settings = api().ai.settings();
+    arm(60000);
+    const response = await api().ai.request(
+      'chat-stream',
+      {
+        contents: [{ role: 'user', parts: [{ text: ai.plan!.prompt }] }],
+        systemInstruction: ai.plan!.systemInstruction,
+        model: settings.model,
+        thinking: settings.thinking,
+      },
+      controller.signal,
+    );
+    if (!response.ok || !response.body) {
+      let message = `Error HTTP ${response.status}`;
+      try {
+        message = (await response.json()).error || message;
+      } catch {}
+      const httpError: any = Error(message);
+      httpError.status = response.status;
+      throw httpError;
+    }
+    const model = response.headers.get('X-Librarium-Model');
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finishReason = '';
+    let blocked = '';
+    const handle = (block: string) => {
+      const dataLines = block
+        .split('\n')
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trim());
+      if (!dataLines.length) return;
+      let payload: any;
+      try {
+        payload = JSON.parse(dataLines.join('\n'));
+      } catch {
+        return;
+      }
+      if (payload.error) blocked = payload.error.message || 'Error al generar la respuesta.';
+      if (payload.promptFeedback?.blockReason && !ai.text.trim()) {
+        blocked = `La consulta fue bloqueada por Gemini (${payload.promptFeedback.blockReason}).`;
+      }
+      if (Array.isArray(payload.candidates)) {
+        const reason = payload.candidates.map((c: any) => c.finishReason).find(Boolean);
+        if (reason) finishReason = String(reason);
+        const piece = payload.candidates
+          .flatMap((c: any) => c.content?.parts || [])
+          .filter((part: any) => !part.thought)
+          .map((part: any) => part.text || '')
+          .join('');
+        if (piece) {
+          ai.text += piece;
+          const el = answerEl();
+          if (el) el.textContent = ai.text;
+        }
+      }
+    };
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      arm(45000);
+      buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n');
+      const blocks = buffer.split('\n\n');
+      buffer = blocks.pop() || '';
+      blocks.forEach((b) => b.trim() && handle(b));
+    }
+    if (buffer.trim()) handle(buffer);
+    if (!ai.text.trim()) throw Error(blocked || 'Gemini no devolvió texto.');
+    if (finishReason && finishReason !== 'STOP') {
+      ai.note = 'La respuesta puede estar incompleta. Revisala antes de guardarla.';
+    }
+    if (model) ai.note = `${ai.note ? `${ai.note} ` : ''}Modelo: ${model}.`;
+    ai.status = 'done';
+  } catch (err: any) {
+    if (controller.signal.aborted && !stalled) {
+      // Detenida por la persona: conservamos lo recibido para que pueda usarlo.
+      ai.status = ai.text.trim() ? 'done' : 'error';
+      ai.error = ai.text.trim() ? '' : 'Consulta detenida.';
+      ai.note = ai.text.trim() ? 'Respuesta detenida: puede estar incompleta.' : '';
+    } else {
+      ai.status = ai.text.trim() ? 'done' : 'error';
+      ai.keyError = api().ai.isKeyError(err);
+      ai.error = stalled ? 'La IA tardó demasiado en responder. Probá de nuevo.' : String(err?.message || err);
+      if (ai.text.trim()) ai.note = `La respuesta se cortó: ${ai.error}`;
+    }
+  } finally {
+    clearTimeout(watchdog);
+    ai.controller = null;
+  }
+  if (state.ai === ai) paintAI();
+}
+
+function saveTargetsFor(ai: AIState, hasRelation: boolean): Array<[SaveTarget, string]> {
+  if (ai.scope.kind === 'field' && ai.scope.field !== 'name') {
+    return [
+      ['field', `Como dato: ${FIELD_LABELS[ai.scope.field].toLowerCase()}`],
+      ['comments', 'Agregar a los comentarios'],
+      ['evidence', 'Guardar como fuente o evidencia'],
+    ];
+  }
+  if (ai.scope.kind === 'relation') {
+    return hasRelation
+      ? [
+          ['field', 'Como descripción del vínculo'],
+          ['comments', 'Agregar a la descripción del vínculo'],
+          ['evidence', 'Guardar como fuente del vínculo'],
+        ]
+      : [];
+  }
+  return [
+    ['comments', 'Agregar a los comentarios'],
+    ['evidence', 'Guardar como fuente o evidencia'],
+  ];
+}
+
+function pairRelations(ai: AIState): CharacterRelation[] {
+  const character = characterById(state.selectedId);
+  if (!character || ai.scope.kind !== 'relation') return [];
+  const otherId = ai.scope.otherId;
+  return data.relations.filter(
+    (r) => (r.fromId === character.id && r.toId === otherId) || (r.fromId === otherId && r.toId === character.id),
+  );
+}
+
+function paintAI() {
+  const slot = host?.querySelector<HTMLElement>('#chrAiHost');
+  if (!slot) return;
+  const ai = state.ai;
+  if (!ai) {
+    slot.innerHTML = '';
+    return;
+  }
+  const relations = pairRelations(ai);
+  const targets = ai.status === 'done' ? saveTargetsFor(ai, relations.length > 0) : [];
+  const answerHTML =
+    ai.status === 'done' && api().renderMarkdown
+      ? `<div class="chr-ai-answer chr-ai-answer--md" id="chrAiAnswer" tabindex="0">${api().renderMarkdown!(ai.text)}</div>`
+      : `<div class="chr-ai-answer" id="chrAiAnswer" tabindex="0">${esc(ai.text)}</div>`;
+  slot.innerHTML = `<section class="chr-ai" aria-labelledby="chrAiTitle">
+    <div class="chr-section-head">
+      <h3 id="chrAiTitle">${AI_SPARK} IA · ${esc(ai.label)}</h3>
+      <div class="chr-row-actions">
+        ${ai.status === 'running' ? '<button type="button" class="secondary" data-chr="ai-stop">Detener</button>' : ''}
+        <button type="button" class="secondary" data-chr="ai-close">Cerrar</button>
+      </div>
+    </div>
+    ${ai.plan ? `<p class="muted chr-ai-context">${esc(ai.plan.contextSummary)}</p>` : ''}
+    <p class="chr-ai-status" role="status" aria-live="polite">${
+      ai.status === 'running' ? 'Consultando a la IA…' : ai.status === 'done' ? esc(ai.note) : ''
+    }</p>
+    ${ai.status === 'error' ? `<div class="chr-ai-error" role="alert">${esc(ai.error)} ${ai.keyError ? '<button type="button" class="ai-key-cta" data-chr="ai-key">Configurar mi API key</button>' : ''}</div>` : ''}
+    ${ai.text || ai.status === 'running' ? answerHTML : ''}
+    ${
+      ai.status === 'done' && ai.text.trim()
+        ? `<p class="muted chr-ai-disclaimer">La IA puede equivocarse y no leyó el libro completo: revisá lo explícito y lo inferido antes de guardar.</p>
+    ${
+      targets.length
+        ? `<form id="chrAiSave" class="chr-ai-save" novalidate>
+      <div class="chr-form-field">
+        <label for="chrAiSaveText">Texto a guardar (podés editarlo)</label>
+        <textarea id="chrAiSaveText" name="text">${esc(ai.text)}</textarea>
+      </div>
+      <div class="chr-ai-save-row">
+        <div class="chr-form-field">
+          <label for="chrAiTarget">Dónde guardarlo</label>
+          <select id="chrAiTarget" name="target">${targets.map(([value, label]) => `<option value="${value}">${esc(label)}</option>`).join('')}</select>
+        </div>
+        <div class="chr-form-field" id="chrAiCertaintyWrap">
+          <label for="chrAiCertainty">Certeza del dato</label>
+          <select id="chrAiCertainty" name="certainty">
+            <option value="inferred" selected>${CERTAINTY_LABELS.inferred}</option>
+            <option value="explicit">${CERTAINTY_LABELS.explicit}</option>
+          </select>
+        </div>
+        ${
+          relations.length > 1
+            ? `<div class="chr-form-field"><label for="chrAiRelation">Vínculo</label><select id="chrAiRelation" name="relation">${relations.map((r) => `<option value="${esc(r.id)}">${esc(r.type)}</option>`).join('')}</select></div>`
+            : ''
+        }
+      </div>
+      <div class="chr-ai-save-error" id="chrAiSaveError" role="alert"></div>
+      <button type="submit" class="primary">Guardar en la ficha…</button>
+    </form>`
+        : ai.scope.kind === 'relation'
+          ? '<p class="muted">Todavía no hay un vínculo registrado entre estos personajes. Creá uno con «＋ Agregar vínculo» para poder guardar la respuesta allí.</p>'
+          : ''
+    }`
+        : ''
+    }
+  </section>`;
+  syncAISaveForm();
+}
+
+function syncAISaveForm() {
+  const target = host?.querySelector<HTMLSelectElement>('#chrAiTarget');
+  const wrap = host?.querySelector<HTMLElement>('#chrAiCertaintyWrap');
+  if (target && wrap) wrap.classList.toggle('hidden', target.value !== 'field');
+}
+
+async function submitAISave(form: HTMLFormElement) {
+  const ai = state.ai;
+  const character = characterById(state.selectedId);
+  if (!ai || !character) return;
+  const errorBox = host?.querySelector<HTMLElement>('#chrAiSaveError');
+  const fail = (message: string) => {
+    if (errorBox) errorBox.textContent = message;
+  };
+  const options = {
+    target: formValue(form, 'target') as SaveTarget,
+    text: formValue(form, 'text'),
+    certainty: formValue(form, 'certainty') as Certainty,
+    field: ai.scope.kind === 'field' && ai.scope.field !== 'name' ? ai.scope.field : undefined,
+  };
+  try {
+    let preview: string;
+    let commit: () => Promise<void>;
+    if (ai.scope.kind === 'relation') {
+      const relations = pairRelations(ai);
+      const chosen = relations.find((r) => r.id === formValue(form, 'relation')) ?? relations[0];
+      if (!chosen) return fail('No hay un vínculo donde guardar la respuesta.');
+      const updated = applyAnswerToRelation(chosen, options);
+      preview = `Se modificará el vínculo «${chosen.type}»:\n\n${options.text.trim().slice(0, 600)}`;
+      commit = async () => void (await api().saveRelation(updated));
+    } else {
+      const updated = applyAnswerToCharacter(character, options);
+      preview = `Se modificará la ficha de ${character.name}:\n\n${options.text.trim().slice(0, 600)}`;
+      commit = async () => void (await api().saveCharacter(updated));
+    }
+    const ok = await api().confirm({
+      eyebrow: 'GUARDAR RESPUESTA DE LA IA',
+      title: '¿Guardar en la ficha?',
+      message: preview,
+      confirmLabel: 'Guardar',
+    });
+    if (!ok) return;
+    await commit();
+    await reload();
+    state.ai = null;
+    state.notice = 'Respuesta guardada en la ficha.';
+    paint(true);
+  } catch (err: any) {
+    fail(String(err?.message || err));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Eventos
+// ---------------------------------------------------------------------------
+
+function bindEvents() {
+  if (!host) return;
+  host.onclick = (event) => {
+    const el = (event.target as HTMLElement).closest<HTMLElement>('[data-chr]');
+    if (!el || !host!.contains(el)) return;
+    void handleAction(el.dataset.chr!, el);
+  };
+  host.onkeydown = (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    const el = (event.target as HTMLElement).closest<SVGElement>('g[data-chr="net-select"]');
+    if (!el) return;
+    event.preventDefault();
+    void handleAction('net-select', el as unknown as HTMLElement);
+  };
+  host.onsubmit = (event) => {
+    event.preventDefault();
+    const form = event.target as HTMLFormElement;
+    if (form.id === 'chrCharacterForm') void submitCharacterForm(form);
+    else if (form.id === 'chrRelationForm') void submitRelationForm(form);
+    else if (form.id === 'chrAiSave') void submitAISave(form);
+  };
+  host.oninput = (event) => {
+    const target = event.target as HTMLElement;
+    if (target.id === 'chrSearch') {
+      state.query = (target as HTMLInputElement).value;
+      const results = host!.querySelector('#chrResults');
+      if (results) results.innerHTML = resultsHTML();
+    }
+  };
+  host.onchange = (event) => {
+    const target = event.target as HTMLElement;
+    if (target.id === 'chrAiTarget') syncAISaveForm();
+    if (target.id === 'chrNetFocus') {
+      state.netFocus = (target as HTMLSelectElement).value;
+      state.netExpanded = new Set();
+      state.netSelected = null;
+      const results = host!.querySelector('#chrResults');
+      if (results) results.innerHTML = resultsHTML();
+      host!.querySelector<HTMLElement>('#chrNetFocus')?.focus();
+    }
+  };
+}
+
+function repaintResults(focusSelector?: string) {
+  const results = host?.querySelector('#chrResults');
+  if (results) results.innerHTML = resultsHTML();
+  if (focusSelector) host?.querySelector<HTMLElement>(focusSelector)?.focus();
+}
+
+async function handleAction(action: string, el: HTMLElement) {
+  const id = el.dataset.id || '';
+  const current = characterById(state.selectedId);
+  switch (action) {
+    case 'new':
+      return go('character-form', { editingCharacterId: null });
+    case 'open':
+      return go('sheet', { selectedId: id });
+    case 'back':
+    case 'cancel':
+      return go(state.mode === 'character-form' && state.editingCharacterId ? 'sheet' : state.mode === 'relation-form' ? 'sheet' : 'index', {
+        relationDraft: null,
+        editingCharacterId: null,
+      });
+    case 'view':
+      state.view = el.dataset.view as IndexView;
+      if (state.view === 'network') {
+        state.netSelected = null;
+        state.netExpanded = new Set();
+      }
+      return paint();
+    case 'edit':
+      return current ? go('character-form', { editingCharacterId: current.id }) : undefined;
+    case 'delete': {
+      if (!current) return;
+      const links = relationCount(current.id);
+      const ok = await api().confirm({
+        eyebrow: 'ELIMINAR PERSONAJE',
+        title: `¿Eliminar a «${current.name}»?`,
+        message: links
+          ? `Se borrará la ficha y también ${links} vínculo${links === 1 ? '' : 's'} con otros personajes.`
+          : 'Se borrará la ficha.',
+        confirmLabel: 'Sí, eliminar',
+        danger: true,
+      });
+      if (!ok) return;
+      const cascade = removeCharacterCascade(data.characters, data.relations, current.id);
+      for (const relationId of cascade.removedRelationIds) await api().deleteRelation(relationId);
+      await api().deleteCharacter(current.id);
+      await reload();
+      return go('index', { selectedId: null, notice: `Se eliminó a «${current.name}».` });
+    }
+    case 'add-relation':
+      return current ? go('relation-form', { relationDraft: { fromId: current.id, editingId: null } }) : undefined;
+    case 'edit-relation':
+      return current ? go('relation-form', { relationDraft: { fromId: current.id, editingId: el.dataset.rel || null } }) : undefined;
+    case 'remove-relation': {
+      const relation = data.relations.find((r) => r.id === el.dataset.rel);
+      if (!relation || !current) return;
+      const other = characterById(relation.fromId === current.id ? relation.toId : relation.fromId);
+      const ok = await api().confirm({
+        eyebrow: 'QUITAR VÍNCULO',
+        title: '¿Quitar este vínculo?',
+        message: `Se quitará «${relation.type}» entre ${current.name} y ${other?.name ?? 'otro personaje'}. Las fichas no se modifican.`,
+        confirmLabel: 'Quitar',
+        danger: true,
+      });
+      if (!ok) return;
+      await api().deleteRelation(relation.id);
+      await reload();
+      return go('sheet', { selectedId: current.id, notice: 'Vínculo quitado.' });
+    }
+    case 'show-network':
+      return current ? (state.netFocus = current.id, state.netExpanded = new Set(), state.netSelected = null, state.view = 'network', go('index', { selectedId: current.id })) : undefined;
+    case 'add-evidence': {
+      const rows = host?.querySelector('#chrEvidenceRows');
+      if (!rows || rows.children.length >= LIMITS.evidence) return;
+      rows.insertAdjacentHTML('beforeend', evidenceRowHTML());
+      rows.lastElementChild?.querySelector<HTMLElement>('[data-f=ref]')?.focus();
+      return;
+    }
+    case 'remove-evidence': {
+      const row = el.closest('.chr-evidence-row');
+      const next = (row?.nextElementSibling || row?.previousElementSibling) as HTMLElement | null;
+      row?.remove();
+      (next?.querySelector<HTMLElement>('[data-f=ref]') || host?.querySelector<HTMLElement>('[data-chr=add-evidence]'))?.focus();
+      return;
+    }
+    case 'ask': {
+      const scope = el.dataset.scope;
+      if (scope === 'character') return startAI({ kind: 'character' });
+      if (scope === 'field') return startAI({ kind: 'field', field: el.dataset.field as CharacterFieldKey | 'name' });
+      if (scope === 'relation') return startAI({ kind: 'relation', otherId: el.dataset.other || '', relationId: el.dataset.rel });
+      return;
+    }
+    case 'ask-pair': {
+      const otherId = host?.querySelector<HTMLSelectElement>('#chrPairSelect')?.value;
+      return otherId ? startAI({ kind: 'relation', otherId }) : undefined;
+    }
+    case 'ai-stop':
+      return abortAI();
+    case 'ai-close':
+      abortAI();
+      state.ai = null;
+      paintAI();
+      return;
+    case 'ai-key':
+      return api().ai.openSettings();
+    case 'net-select':
+      state.netSelected = id;
+      return repaintResults(`[data-chr="net-select"][data-id="${CSS.escape(id)}"]`);
+    case 'net-expand':
+      state.netExpanded.add(id);
+      return repaintResults(`[data-chr="net-select"][data-id="${CSS.escape(id)}"]`);
+    case 'net-collapse':
+      state.netExpanded.delete(id);
+      return repaintResults(`[data-chr="net-select"][data-id="${CSS.escape(id)}"]`);
+    case 'net-center':
+      state.netFocus = id;
+      state.netExpanded = new Set();
+      state.netSelected = id;
+      return repaintResults(`[data-chr="net-select"][data-id="${CSS.escape(id)}"]`);
+  }
+}

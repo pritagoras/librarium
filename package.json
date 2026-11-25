@@ -9,7 +9,7 @@
     "start": "NODE_ENV=production tsx server.ts",
     "build": "vite build && cp -r assets manifest.json service-worker.js dist/",
     "lint": "tsc --noEmit && eslint firestore.rules",
-    "test": "tsx --test tests/notes-and-backup.test.ts tests/sync-merge.test.ts"
+    "test": "tsx --test tests/notes-and-backup.test.ts tests/sync-merge.test.ts tests/characters.test.ts"
   },
   "dependencies": {
     "@firebase/eslint-plugin-security-rules": "^0.0.2",

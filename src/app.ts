@@ -7,6 +7,12 @@ import {
 } from './app/data-transfer';
 import { showConfirmDialog } from './app/dialogs';
 import {
+  initCharacters,
+  isCharactersBusy,
+  purgeBookCharacters,
+  renderCharactersPanel,
+} from './app/characters';
+import {
   archiveAdminSiteVisitsInBackground,
   initAdminFeatures,
   refreshAdminFeedbackSummary,
@@ -19,6 +25,7 @@ import { FALLBACK_MODELS as GEMINI_FALLBACK_MODELS } from './gemini-direct';
 import { initInstall, initTheme, setupServiceWorkerUpdates } from './app/platform';
 import {
   aiStyleInstruction,
+  aiStyleOnly,
   commentDiscussionPrompt,
   getAISettingsForTask,
   getPrivateGeminiKey,
@@ -38,6 +45,8 @@ import {
   migrateLocalDataToCloud,
   pushAnalysisToCloud,
   pushBookToCloud,
+  pushCharacterRelationToCloud,
+  pushCharacterToCloud,
   pushConversationToCloud,
   pushEntryToCloud,
   pushNoteToCloud,
@@ -50,6 +59,8 @@ import type {
   AISettings,
   Book,
   BookAnalysis,
+  Character,
+  CharacterRelation,
   BookStatus,
   Conversation,
   ConversationTurn,
@@ -73,7 +84,7 @@ const statusNames: Record<BookStatus, string> = {
   finished: 'Terminado',
 };
 
-type DetailTab = 'notes' | 'entries' | 'photos' | 'quotes' | 'review' | 'settings';
+type DetailTab = 'notes' | 'entries' | 'photos' | 'quotes' | 'characters' | 'review' | 'settings';
 
 let books: Book[] = [];
 let activeBook: Book | null = null;
@@ -900,6 +911,7 @@ async function renderDetail() {
         ['entries', 'Anotaciones'],
         ['photos', 'Fotografías'],
         ['quotes', 'Citas'],
+        ['characters', 'Personajes'],
         ['review', 'Reseña'],
         ['settings', 'Ajustes'],
       ] as Array<[DetailTab, string]>
@@ -1265,6 +1277,7 @@ async function renderDetail() {
   $('#readingProgressOpen')?.addEventListener('click', () => openReadingProgressDialog(b));
   $('#addQuote')?.addEventListener('click', () => openQuoteForm(b.id));
   if (detailTab === 'quotes') bindQuoteActions(p);
+  if (detailTab === 'characters') await renderCharactersPanel(p, b);
   $('#editBook2')?.addEventListener('click', () => {
     $<HTMLDialogElement>('#detailDialog')?.close();
     openBookForm(b);
@@ -1438,6 +1451,7 @@ async function renderDetail() {
     if (analysis) {
       await deleteFromCloud('analyses', analysis.id);
     }
+    await purgeBookCharacters(b.id);
     await deleteFromCloud('conversations', `book__${b.id}`);
     await deleteFromCloud('conversations', `review__${sanitizeId(b.id)}`);
     await deleteFromCloud('books', b.id);
@@ -1978,6 +1992,7 @@ async function renderSyncConflicts() {
   const storeLabels: Record<SyncConflict['storeName'], string> = {
     books: 'Libro', notes: 'Nota', entries: 'Anotación', quotes: 'Cita',
     analyses: 'Análisis', conversations: 'Conversación',
+    characters: 'Personaje', characterRelations: 'Vínculo entre personajes',
   };
   for (const conflict of conflicts) {
     const card = document.createElement('article');
@@ -4093,13 +4108,15 @@ function wireEvents() {
   $('#backupBtn')!.onclick = async () => {
     const data = {
       app: 'Librarium',
-      version: 3,
+      version: 4,
       exportedAt: new Date().toISOString(),
       books: await all('books'),
       notes: await all('notes'),
       entries: await all('entries'),
       quotes: await all('quotes'),
       analyses: await all('analyses'),
+      characters: await all('characters'),
+      characterRelations: await all('characterRelations'),
       conversations: await all('conversations'),
     };
     download(data, 'librarium-copia-' + new Date().toISOString().slice(0, 10) + '.json');
@@ -4126,7 +4143,12 @@ function wireEvents() {
         entry: pushEntryToCloud,
         quote: pushQuoteToCloud,
         analysis: pushAnalysisToCloud,
+        character: (record) => pushCharacterToCloud(record as Character),
+        characterRelation: (record) => pushCharacterRelationToCloud(record as CharacterRelation),
         conversation: pushConversationToCloud,
+      }, {
+        existingBookIds: new Set((await all<Book>('books')).map((book) => book.id)),
+        existingCharacterIds: new Set((await all<Character>('characters')).map((character) => character.id)),
       });
       books = await all<Book>('books');
       render();
@@ -4218,6 +4240,42 @@ export async function initApp() {
   initEnvironmentNotices();
   render();
   initAISettings();
+  initCharacters({
+    loadBookData: async (bookId) => {
+      const [characters, relations, notes, entries, quotes] = await Promise.all([
+        all<Character>('characters'),
+        all<CharacterRelation>('characterRelations'),
+        all<Note>('notes'),
+        all<Entry>('entries'),
+        all<Quote>('quotes'),
+      ]);
+      const mine = <T extends { bookId: string }>(items: T[]) => items.filter((item) => sanitizeId(item.bookId) === sanitizeId(bookId));
+      return {
+        characters: mine(characters),
+        relations: mine(relations),
+        notes: mine(notes),
+        entries: mine(entries),
+        quotes: mine(quotes),
+      };
+    },
+    saveCharacter: pushCharacterToCloud,
+    saveRelation: pushCharacterRelationToCloud,
+    deleteCharacter: (id) => deleteFromCloud('characters', id),
+    deleteRelation: (id) => deleteFromCloud('characterRelations', id),
+    confirm: showConfirmDialog,
+    ai: {
+      hasKey: () => Boolean(getPrivateGeminiKey()),
+      request: requestGeminiFeature,
+      settings: () => {
+        const settings = getAISettingsForTask('chat');
+        return { model: settings.model, thinking: settings.thinking };
+      },
+      styleInstruction: () => aiStyleOnly(getAISettingsForTask('chat')),
+      openSettings: openAISettingsGuide,
+      isKeyError: isAIKeyError,
+    },
+    renderMarkdown: renderGeminiMarkdown,
+  });
   initAccountSettings();
   initInstall();
   setupServiceWorkerUpdates();
@@ -4235,7 +4293,8 @@ export async function initApp() {
           const isEditingReview =
             detailTab === 'review' &&
             document.activeElement?.id === 'detailReviewText';
-          if (!isEditingReview) await renderDetail();
+          const isEditingCharacters = detailTab === 'characters' && isCharactersBusy();
+          if (!isEditingReview && !isEditingCharacters) await renderDetail();
         }
       }
     },

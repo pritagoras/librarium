@@ -193,6 +193,88 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isBoundedStringList(items, maxItems, maxLen) {
+      return items is list && items.size() <= maxItems
+        && (items.size() == 0 || (items[0] is string && items[0].size() <= maxLen))
+        && (items.size() < 2 || (items[items.size() - 1] is string && items[items.size() - 1].size() <= maxLen));
+    }
+
+    function isEvidenceItem(item) {
+      return item is map
+        && item.keys().hasOnly(['kind', 'ref', 'text'])
+        && item.kind in ['quote', 'note', 'entry', 'page', 'chapter', 'other']
+        && item.ref is string && item.ref.size() <= 300
+        && item.text is string && item.text.size() <= 1000;
+    }
+
+    function isEvidenceList(items) {
+      return items is list && items.size() <= 30
+        && (items.size() == 0 || isEvidenceItem(items[0]))
+        && (items.size() < 2 || isEvidenceItem(items[items.size() - 1]));
+    }
+
+    function isFieldCertainty(values, field) {
+      return !(field in values) || values[field] in ['explicit', 'inferred'];
+    }
+
+    function isCertaintyMap(values) {
+      return values is map
+        && values.keys().hasOnly(['age', 'description', 'occupation', 'affiliation'])
+        && isFieldCertainty(values, 'age')
+        && isFieldCertainty(values, 'description')
+        && isFieldCertainty(values, 'occupation')
+        && isFieldCertainty(values, 'affiliation');
+    }
+
+    function characterInBook(userId, characterId, bookId) {
+      return isValidId(characterId)
+        && exists(/databases/$(database)/documents/users/$(userId)/characters/$(characterId))
+        && get(/databases/$(database)/documents/users/$(userId)/characters/$(characterId)).data.bookId == bookId;
+    }
+
+    function isValidCharacter(data, userId, characterId) {
+      return data.keys().hasAll(['id', 'userId', 'bookId', 'name', 'aliases', 'age', 'description', 'traits', 'occupation', 'affiliation', 'comments', 'evidence', 'certainty', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'id', 'userId', 'bookId', 'name', 'aliases', 'age', 'description', 'traits', 'occupation', 'affiliation', 'comments', 'evidence', 'certainty', 'createdAt', 'updatedAt'
+        ])
+        && data.id == characterId
+        && data.userId == userId
+        && data.userId == request.auth.uid
+        && isValidId(data.bookId)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 200
+        && isBoundedStringList(data.aliases, 20, 100)
+        && data.age is string && data.age.size() <= 60
+        && data.description is string && data.description.size() <= 5000
+        && isBoundedStringList(data.traits, 30, 60)
+        && data.occupation is string && data.occupation.size() <= 300
+        && data.affiliation is string && data.affiliation.size() <= 300
+        && data.comments is string && data.comments.size() <= 5000
+        && isEvidenceList(data.evidence)
+        && isCertaintyMap(data.certainty)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCharacterRelation(data, userId, relationId) {
+      return data.keys().hasAll(['id', 'userId', 'bookId', 'fromId', 'toId', 'type', 'description', 'evidence', 'certainty', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'id', 'userId', 'bookId', 'fromId', 'toId', 'type', 'description', 'evidence', 'certainty', 'createdAt', 'updatedAt'
+        ])
+        && data.id == relationId
+        && data.userId == userId
+        && data.userId == request.auth.uid
+        && isValidId(data.bookId)
+        && isValidId(data.fromId)
+        && isValidId(data.toId)
+        && data.fromId != data.toId
+        && data.type is string && data.type.size() >= 1 && data.type.size() <= 60
+        && data.description is string && data.description.size() <= 3000
+        && isEvidenceList(data.evidence)
+        && data.certainty in ['explicit', 'inferred', 'unknown']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     function isValidAnalysis(data, userId, analysisId) {
       return data.keys().hasAll(['id', 'userId', 'bookId', 'summary', 'themes', 'connections', 'questions', 'sourceCount', 'model', 'createdAt', 'updatedAt'])
         && data.keys().hasOnly([
@@ -387,6 +469,57 @@ service cloud.firestore {
             'text', 'chapter', 'page', 'analysis', 'photoMediaIds', 'updatedAt'
           ]);
         allow delete: if isVerifiedOwner(userId) && isValidId(quoteId);
+      }
+
+      match /characters/{characterId} {
+        allow get: if isOwner(userId) && isValidId(characterId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isVerifiedOwner(userId)
+          && isValidId(characterId)
+          && isValidCharacter(incoming(), userId, characterId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && bookExists(userId, incoming().bookId);
+        allow update: if isVerifiedOwner(userId)
+          && isValidId(characterId)
+          && isValidCharacter(incoming(), userId, characterId)
+          && incoming().id == existing().id
+          && incoming().userId == existing().userId
+          && incoming().bookId == existing().bookId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'aliases', 'age', 'description', 'traits', 'occupation', 'affiliation', 'comments', 'evidence', 'certainty', 'updatedAt'
+          ]);
+        allow delete: if isVerifiedOwner(userId) && isValidId(characterId);
+      }
+
+      match /characterRelations/{relationId} {
+        allow get: if isOwner(userId) && isValidId(relationId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isVerifiedOwner(userId)
+          && isValidId(relationId)
+          && isValidCharacterRelation(incoming(), userId, relationId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && bookExists(userId, incoming().bookId)
+          && characterInBook(userId, incoming().fromId, incoming().bookId)
+          && characterInBook(userId, incoming().toId, incoming().bookId);
+        allow update: if isVerifiedOwner(userId)
+          && isValidId(relationId)
+          && isValidCharacterRelation(incoming(), userId, relationId)
+          && incoming().id == existing().id
+          && incoming().userId == existing().userId
+          && incoming().bookId == existing().bookId
+          && incoming().fromId == existing().fromId
+          && incoming().toId == existing().toId
+          && incoming().type == existing().type
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'description', 'evidence', 'certainty', 'updatedAt'
+          ]);
+        allow delete: if isVerifiedOwner(userId) && isValidId(relationId);
       }
 
       match /analyses/{analysisId} {

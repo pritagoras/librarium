@@ -1,5 +1,5 @@
 const DB_NAME = 'librarium_local_v1';
-const DB_VERSION = 6;
+const DB_VERSION = 7;
 
 const STORES = [
   'books',
@@ -8,6 +8,8 @@ const STORES = [
   'conversations',
   'quotes',
   'analyses',
+  'characters',
+  'characterRelations',
   'media',
   'syncConflicts',
   'syncPending',
