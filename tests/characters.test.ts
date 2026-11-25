@@ -63,23 +63,24 @@ test('a character needs a name and does not invent values for empty fields', () 
   assert.match(value.id, /^char_[a-z0-9]+_[a-z0-9]+$/);
 });
 
-test('a filled field must say whether it is explicit or inferred; empty fields drop their certainty', () => {
-  const noCertainty = validateCharacter({ name: 'Ana', age: '30' }, { bookId: BOOK, existing: [] });
-  assert.equal(noCertainty.ok, false);
-  assert.match(noCertainty.errors.join(' '), /explícito en el libro o inferido/);
+test('a character can save filled fields without classifying certainty; explicit and inferred remain optional metadata', () => {
+  const unclassified = validateCharacter({ name: 'Ana', age: '30' }, { bookId: BOOK, existing: [] });
+  assert.equal(unclassified.ok, true);
+  assert.deepEqual(unclassified.value!.certainty, {});
 
-  const unknownWithValue = validateCharacter(
-    { name: 'Ana', age: '30', certainty: { age: 'unknown' } },
+  const unknownWithEvidence = validateCharacter(
+    { name: 'Ana', age: '30', evidence: [{ kind: 'page', ref: 'p. 12', text: 'La narración indica su edad.' }] },
     { bookId: BOOK, existing: [] },
   );
-  assert.equal(unknownWithValue.ok, false);
+  assert.equal(unknownWithEvidence.ok, true);
+  assert.equal(unknownWithEvidence.value!.evidence[0].ref, 'p. 12');
 
-  const ok = validateCharacter(
-    { name: 'Ana', age: '30', occupation: '', certainty: { age: 'inferred', occupation: 'explicit' } },
+  const classified = validateCharacter(
+    { name: 'Ana', age: '30', certainty: { age: 'inferred' } },
     { bookId: BOOK, existing: [] },
   );
-  assert.equal(ok.ok, true);
-  assert.deepEqual(ok.value!.certainty, { age: 'inferred' });
+  assert.equal(classified.ok, true);
+  assert.deepEqual(classified.value!.certainty, { age: 'inferred' });
 });
 
 test('rejects duplicate names in a book, warns about alias clashes, and dedupes aliases', () => {
