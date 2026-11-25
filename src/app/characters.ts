@@ -1206,16 +1206,28 @@ function relationFormHTML(): string {
     <h2 id="chrHeading" tabindex="-1">${editing ? 'Editar vínculo' : 'Nuevo vínculo'} de ${esc(from.name)}</h2>
     <form id="chrRelationForm" class="chr-form" novalidate>
       <div class="chr-errors" id="chrFormErrors" role="alert" aria-live="assertive"></div>
+      <nav class="chr-form-steps" aria-label="Secciones del vínculo">
+        <a href="#chrRelationPerson">1. Personaje</a><a href="#chrRelationKind">2. Tipo</a><a href="#chrRelationDetails">3. Detalles</a><a href="#chrRelationEvidence">4. Respaldo</a>
+      </nav>
+      <section class="chr-relation-step" id="chrRelationPerson" aria-labelledby="chrRelationPersonTitle">
+      <h3 id="chrRelationPersonTitle">1. ¿Con quién se relaciona?</h3>
       <div class="chr-form-field">
-        <label for="chr_other">Otro personaje</label>
+        <label for="chr_other_search">Buscar personaje por nombre</label>
+        <input id="chr_other_search" type="search" placeholder="Escribí para filtrar la lista…" autocomplete="off" ${editing ? 'disabled' : ''} />
+        <label for="chr_other">Seleccionar personaje</label>
         <select id="chr_other" name="other" ${editing ? 'disabled' : ''}>
           <option value="" ${!otherId ? 'selected' : ''}>Elegir personaje…</option>
           ${others.map((c) => `<option value="${esc(c.id)}" ${c.id === otherId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
-          ${editing ? '' : '<option value="__new__">＋ Crear familiar nuevo…</option>'}
+          ${editing ? '' : '<option value="__new__">＋ Crear personaje nuevo…</option>'}
         </select>
+        <small class="muted">Si no aparece, podés crear su ficha aquí mismo. También podés registrar amistad, rivalidad, familia, alianza u otro vínculo.</small>
       </div>
       ${editing ? '' : `<div class="chr-form-field"><label><input type="checkbox" id="chrMultiRelation" /> Crear este vínculo con varios personajes</label><fieldset id="chrMultiTargets" class="chr-fieldset hidden"><legend>Seleccioná los personajes</legend>${others.map((c) => `<label><input type="checkbox" name="multiOther" value="${esc(c.id)}" /> ${esc(c.name)}</label>`).join('')}</fieldset></div>`}
+      ${!editing ? `<div class="chr-form-field hidden" id="chrNewRelativeWrap"><label for="chr_new_relative">Nombre del nuevo personaje</label><input id="chr_new_relative" name="newRelative" type="text" maxlength="${LIMITS.name}" placeholder="Nombre tal como aparece en el libro" /></div>` : ''}
+      </section>
+      ${editing ? '' : `<div class="chr-form-field"><label><input type="checkbox" id="chrMultiRelation" /> Crear este vínculo con varios personajes</label><fieldset id="chrMultiTargets" class="chr-fieldset hidden"><legend>Seleccioná los personajes</legend>${others.map((c) => `<label><input type="checkbox" name="multiOther" value="${esc(c.id)}" /> ${esc(c.name)}</label>`).join('')}</fieldset></div>`}
       ${!editing ? `<div class="chr-form-field hidden" id="chrNewRelativeWrap"><label for="chr_new_relative">Nombre del familiar</label><input id="chr_new_relative" name="newRelative" type="text" maxlength="${LIMITS.name}" /></div>` : ''}
+      <section class="chr-relation-step" id="chrRelationKind"><h3>2. ¿Qué vínculo tienen?</h3>
       <div class="chr-form-field">
         <label for="chr_direction">Sentido del vínculo</label>
         <select id="chr_direction" name="direction">
@@ -1229,15 +1241,20 @@ function relationFormHTML(): string {
         <input id="chr_type" name="type" type="text" list="chrTypes" maxlength="${LIMITS.relationType}" required value="${esc(editing?.type ?? '')}" placeholder="Familiar, amistad, rivalidad, alianza, mentoría u otro" />
         <datalist id="chrTypes">${[...RELATION_TYPES, ...usedTypes].map((t) => `<option value="${esc(t)}"></option>`).join('')}</datalist>
       </div>
+      </section>
+      <section class="chr-relation-step" id="chrRelationDetails"><h3>3. Detalles</h3>
       <div class="chr-form-field">
         <label for="chr_rel_description">Descripción o comentario del vínculo</label>
         <textarea id="chr_rel_description" name="description" maxlength="${LIMITS.relationDescription}">${esc(editing?.description ?? '')}</textarea>
       </div>
+      </section>
+      <section class="chr-relation-step" id="chrRelationEvidence"><h3>4. Respaldo</h3>
       <div class="chr-form-field">
         <label for="chr_rel_certainty">Certeza del vínculo</label>
         ${certaintySelectHTML('certainty', editing?.certainty ?? 'unknown', { allowUnknown: true })}
       </div>
       ${evidenceEditorHTML(editing?.evidence ?? [])}
+      </section>
       <div class="chr-form-actions">
         <button type="submit" class="primary">${editing ? 'Guardar cambios' : 'Crear vínculo'}</button>
         <button type="button" class="secondary" data-chr="cancel">Cancelar</button>
@@ -1366,7 +1383,7 @@ async function submitRelationForm(form: HTMLFormElement) {
   let createdRelative: Character | null = null;
   if (otherId === '__new__') {
     const name = formValue(form, 'newRelative').trim();
-    if (!name) return showFormErrors(['Escribí el nombre del familiar.']);
+    if (!name) return showFormErrors(['Escribí el nombre del nuevo personaje.']);
     const characterResult = validateCharacter({ name }, { bookId: state.bookId, existing: data.characters });
     if (!characterResult.ok || !characterResult.value) return showFormErrors(characterResult.errors);
     try {
@@ -2089,6 +2106,15 @@ function bindEvents() {
       state.query = (target as HTMLInputElement).value;
       const results = host!.querySelector('#chrResults');
       if (results) results.innerHTML = resultsHTML();
+    }
+    if (target.id === 'chr_other_search') {
+      const query = (target as HTMLInputElement).value.normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLocaleLowerCase().trim();
+      const select = host?.querySelector<HTMLSelectElement>('#chr_other');
+      if (select) [...select.options].forEach((option) => {
+        if (!option.value || option.value === '__new__') { option.hidden = false; return; }
+        const name = option.textContent?.normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLocaleLowerCase() || '';
+        option.hidden = !!query && !name.includes(query);
+      });
     }
   };
   host.onchange = (event) => {
