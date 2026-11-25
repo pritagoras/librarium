@@ -1616,6 +1616,20 @@ function paintAI() {
     ai.status === 'done' && !ai.formTarget && api().renderMarkdown
       ? `<div class="chr-ai-answer chr-ai-answer--md" id="chrAiAnswer" tabindex="0">${api().renderMarkdown!(suggestion.body)}</div>`
       : `<div class="chr-ai-answer" id="chrAiAnswer" tabindex="0">${esc(suggestion.body)}</div>`;
+  const isFieldSuggestion = ai.scope.kind === 'field' && ai.scope.field !== 'name';
+  const fieldSuggestionHTML = isFieldSuggestion && ai.status === 'done'
+    ? `<div class="chr-ai-quick-context"><span class="chr-ai-eyebrow">CONTEXTO</span><p>${esc(suggestion.body)}</p></div>
+      <form id="chrAiSave" class="chr-ai-quick-form" novalidate>
+        <input type="hidden" name="target" value="field" />
+        <input type="hidden" name="certainty" value="inferred" />
+        <label for="chrAiSaveText">${esc(FIELD_LABELS[ai.scope.field])}</label>
+        ${ai.scope.field === 'description'
+          ? `<textarea id="chrAiSaveText" name="text" rows="3">${esc(suggestion.value)}</textarea>`
+          : `<input id="chrAiSaveText" name="text" type="text" value="${esc(suggestion.value)}" autocomplete="off" />`}
+        <div class="chr-ai-save-error" id="chrAiSaveError" role="alert"></div>
+        <button type="submit" class="primary">Aplicar a la ficha</button>
+      </form>`
+    : '';
   slot.innerHTML = `<section class="chr-ai" aria-labelledby="chrAiTitle">
     <div class="chr-section-head">
       <h3 id="chrAiTitle">${AI_SPARK} IA · ${esc(ai.label)}</h3>
@@ -1629,10 +1643,9 @@ function paintAI() {
       ai.status === 'running' ? 'Consultando a la IA…' : ai.status === 'done' ? esc(ai.note) : ''
     }</p>
     ${ai.status === 'error' ? `<div class="chr-ai-error" role="alert">${esc(ai.error)} ${ai.keyError ? '<button type="button" class="ai-key-cta" data-chr="ai-key">Configurar mi API key</button>' : ''}</div>` : ''}
-    ${sheet ? fullSheetFormHTML(sheetCharacter!, sheet) : ai.fullSheet && ai.status === 'running' ? '' : ai.text || ai.status === 'running' ? answerHTML : ''}
+    ${isFieldSuggestion ? fieldSuggestionHTML : sheet ? fullSheetFormHTML(sheetCharacter!, sheet) : ai.fullSheet && ai.status === 'running' ? '' : ai.text || ai.status === 'running' ? answerHTML : ''}
     ${ai.formTarget && ai.status === 'done' ? `<div class="chr-ai-save">${suggestedNameHTML(ai.text)}<p class="muted">Revisá la respuesta. Marcá los familiares que quieras agregar; se crearán al guardar la ficha.</p><div id="chrSuggestedRelatives">${suggestedRelativesHTML(ai.text)}</div><button type="button" class="primary" data-chr="apply-autofill">Aplicar datos seleccionados</button></div>` : ''}
-    ${
-      ai.status === 'done' && ai.text.trim() && !sheet
+    ${!isFieldSuggestion && ai.status === 'done' && ai.text.trim() && !sheet
         ? `<p class="muted chr-ai-disclaimer">La IA puede equivocarse y no leyó el libro completo: revisá lo explícito y lo inferido antes de guardar.</p>
     ${
       targets.length
@@ -1854,13 +1867,15 @@ async function submitAISave(form: HTMLFormElement) {
       preview = `Se modificará la ficha de ${character.name}:\n\n${options.text.trim().slice(0, 600)}`;
       commit = async () => void (await api().saveCharacter(updated));
     }
-    const ok = await api().confirm({
-      eyebrow: 'GUARDAR RESPUESTA DE LA IA',
-      title: '¿Guardar en la ficha?',
-      message: preview,
-      confirmLabel: 'Guardar',
-    });
-    if (!ok) return;
+    if (!(ai.scope.kind === 'field' && options.target === 'field')) {
+      const ok = await api().confirm({
+        eyebrow: 'GUARDAR RESPUESTA DE LA IA',
+        title: '¿Guardar en la ficha?',
+        message: preview,
+        confirmLabel: 'Guardar',
+      });
+      if (!ok) return;
+    }
     await commit();
     await reload();
     state.ai = null;
