@@ -855,10 +855,10 @@ async function applyNetworkProposals(applyAllAccepted: boolean) {
 // ---------------------------------------------------------------------------
 
 function certaintySelectHTML(name: string, value: Certainty | undefined, options: { allowUnknown?: boolean; required?: boolean } = {}): string {
-  const list: Certainty[] = options.allowUnknown ? ['explicit', 'inferred', 'unknown'] : ['explicit', 'inferred'];
+  const list: Certainty[] = options.allowUnknown ? ['unknown', 'explicit', 'inferred'] : ['explicit', 'inferred'];
   return `<select name="${name}" aria-label="Certeza del dato"${options.required ? ' required' : ''}>
     ${options.allowUnknown ? '' : `<option value="">Elegí si es explícito o inferido…</option>`}
-    ${list.map((c) => `<option value="${c}" ${value === c ? 'selected' : ''}>${CERTAINTY_LABELS[c]}</option>`).join('')}
+    ${list.map((c) => `<option value="${c}" ${(value ?? (options.allowUnknown ? 'unknown' : undefined)) === c ? 'selected' : ''}>${CERTAINTY_LABELS[c]}</option>`).join('')}
   </select>`;
 }
 
@@ -888,11 +888,11 @@ function characterFormHTML(): string {
           ? `<textarea id="chr_${key}" name="${key}" maxlength="${LIMITS[key]}">${esc(c?.[key] ?? '')}</textarea>`
           : `<input id="chr_${key}" name="${key}" type="text" maxlength="${LIMITS[key]}" value="${esc(c?.[key] ?? '')}" />`
       }
-      ${certaintySelectHTML(`cert_${key}`, c?.certainty[key])}
+      ${certaintySelectHTML(`cert_${key}`, c?.certainty[key], { allowUnknown: true })}
     </div>`;
   return `<p><button type="button" class="chr-back" data-chr="cancel">← Cancelar</button></p>
     <h2 id="chrHeading" tabindex="-1">${editing ? `Editar a ${esc(editing.name)}` : 'Nuevo personaje'}</h2>
-    <p class="muted">Dejá en blanco lo que no sepas: un campo vacío queda como «desconocido». Si cargás un dato, indicá si el libro lo dice de forma explícita o si lo inferís vos.</p>
+    <p class="muted">Dejá en blanco lo que no sepas. La certeza y las referencias son opcionales: podés guardar un dato sin clasificarlo como explícito o inferido.</p>
     <form id="chrCharacterForm" class="chr-form" novalidate>
       <div class="chr-errors" id="chrFormErrors" role="alert" aria-live="assertive"></div>
       <div class="chr-form-field">
