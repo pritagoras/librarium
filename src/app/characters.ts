@@ -982,17 +982,17 @@ function buildProfilePrompt(candidate: { name: string; aliases: string[] }): str
   const currentFields = FIELD_KEYS.map((key) => {
     const current = host?.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[name="${key}"]`)?.value || existing?.[key] || '';
     return `${FIELD_LABELS[key]}: ${current || '(vacío)'}`;
-  }).join('\\n');
+  }).join('\n');
   return [
     'Completá la ficha de este personaje usando exclusivamente tu conocimiento general aprendido sobre la obra. No uses búsqueda web, documentos externos, notas, citas ni fuentes del usuario.',
     `OBRA: «${promptBookContext()}»`,
     `PERSONAJE: ${candidate.name}`,
     `ALIAS CONOCIDOS: ${candidate.aliases.join(', ') || 'ninguno informado'}`,
-    `FICHA ACTUAL (conservá los datos ya escritos; no los reemplaces):\\n${currentFields}`,
+    `FICHA ACTUAL (conservá los datos ya escritos; no los reemplaces):\n${currentFields}`,
     `MODO SIN SPOILERS: la persona llegó hasta la página ${currentPage}. No reveles trama posterior, giros ni destinos. Priorizá datos introductorios y estables. Si la edad cambia, indicá la edad al comienzo.`,
     'Completá edad, descripción introductoria, entre 3 y 6 rasgos, ocupación y pertenencia. Ofrecé tu mejor dato concreto y probable; no incluyas explicaciones dentro de los campos. Dejá vacío solo aquello que realmente no puedas establecer. No agregues familiares ni relaciones.',
     'Devolvé únicamente JSON válido, sin Markdown, con esta forma: {"name":"","aliases":[],"age":"","description":"","traits":[],"occupation":"","affiliation":""}.',
-  ].join('\\n\\n');
+  ].join('\n\n');
 }
 
 export function parsePastedJSON(text: string): any {
