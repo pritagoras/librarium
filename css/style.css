@@ -972,3 +972,21 @@ dialog[open]:not(.book-detail-dialog):not(.photo-viewer-dialog):not(#geminiDialo
 
 .chr-grounding{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.4;max-width:420px;font-weight:400}.chr-grounding input{width:18px;height:18px;margin-top:1px;flex:none}
 .chr-fs-row{border-top:1px solid var(--line,#ddd);padding-top:10px;margin-top:10px}.chr-fs-row input[name^=fs_],.chr-fs-row textarea,.chr-fs-row select{width:100.chr-fs-row{border-top:1px solid var(--line,#ddd);padding-top:10px;margin-top:10px}.chr-fs-row input[name^=fs_],.chr-fs-row textarea,.chr-fs-row select{width:100%;max-width:100%}.chr-fs-check{display:flex;gap:8px;align-items:center}.chr-fs-basis{margin:4px 0}
+
+
+/* Consulta puntual a la IA: resultado directo, plano y cómodo en móvil. */
+.chr-ai-quick-context{margin:14px 0 18px;padding:0 0 14px;border-bottom:1px solid var(--line)}
+.chr-ai-eyebrow{display:block;margin-bottom:6px;color:var(--muted);font-size:12px;font-weight:800;letter-spacing:.08em}
+.chr-ai-quick-context p{margin:0;color:var(--ink);font-size:16px;line-height:1.6}
+.chr-ai-quick-form{display:grid;gap:10px;margin-top:14px}
+.chr-ai-quick-form label{font-size:15px;font-weight:750;color:var(--brown)}
+.chr-ai-quick-form input,.chr-ai-quick-form textarea{width:100%;max-width:100%;box-sizing:border-box;min-height:54px;padding:13px 15px;font-size:18px;line-height:1.45;border:1px solid var(--line);border-radius:10px;background:var(--white);color:var(--ink)}
+.chr-ai-quick-form textarea{min-height:112px}
+.chr-ai-quick-form button{min-height:52px;font-size:16px}
+.chr-ai:has(.chr-ai-quick-form){padding:16px;border:0;border-radius:10px;box-shadow:none}
+.chr-ai:has(.chr-ai-quick-form) .chr-ai-status{display:none}
+@media(max-width:600px){
+  .chr-ai:has(.chr-ai-quick-form){padding:12px;margin:12px 0}
+  .chr-ai-quick-context p{font-size:16px}
+  .chr-ai-quick-form input,.chr-ai-quick-form textarea{font-size:18px;min-height:56px}
+}
