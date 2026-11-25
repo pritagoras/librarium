@@ -990,7 +990,7 @@ function buildProfilePrompt(candidate: { name: string; aliases: string[] }): str
     `ALIAS CONOCIDOS: ${candidate.aliases.join(', ') || 'ninguno informado'}`,
     `FICHA ACTUAL (conservá los datos ya escritos; no los reemplaces):\n${currentFields}`,
     `MODO SIN SPOILERS: la persona llegó hasta la página ${currentPage}. No reveles trama posterior, giros ni destinos. Priorizá datos introductorios y estables. Si la edad cambia, indicá la edad al comienzo.`,
-    'Completá edad, descripción introductoria, entre 3 y 6 rasgos, ocupación y pertenencia. Ofrecé tu mejor dato concreto y probable; no incluyas explicaciones dentro de los campos. Dejá vacío solo aquello que realmente no puedas establecer. No agregues familiares ni relaciones.',
+    'Completá edad, descripción introductoria, entre 3 y 6 rasgos, ocupación y pertenencia. Ofrecé tu mejor dato concreto y probable; no incluyas explicaciones dentro de los campos. Dejá vacío solo aquello que realmente no puedas establecer. Identificá también familiares relevantes (padres, hermanos, pareja, hijos u otros parentescos) SOLO si son conocidos hasta la página actual. No incluyas personajes ni vínculos que se revelen después de esa página. Para cada familiar devolvé name, type (parentesco), direction (out o in), age, occupation, description y basis breve. No inventes familiares; omití los dudosos.',
     'Devolvé únicamente JSON válido, sin Markdown, con esta forma: {"name":"","aliases":[],"age":"","description":"","traits":[],"occupation":"","affiliation":""}.',
   ].join('\n\n');
 }
@@ -1706,27 +1706,27 @@ function parseFullSheet(text: string): any | null {
 }
 
 function sheetRelationRows(character: Character, parsed: any): string {
-  const raw = Array.isArray(parsed.relations) ? parsed.relations.slice(0, 30) : [];
+  const raw = Array.isArray(parsed.relatives) ? parsed.relatives.slice(0, 20) : [];
+  const existingNames = new Set(data.characters.map((c) => c.name.trim().toLocaleLowerCase()));
   const rows = raw.flatMap((r: any, i: number) => {
-    const other = data.characters.find((c) => c.id === String(r?.otherId || '') && c.id !== character.id);
+    const name = String(r?.name || '').trim().slice(0, LIMITS.name);
     const type = String(r?.type || '').trim().slice(0, LIMITS.relationType);
-    if (!other || !type) return [];
-    const out = r?.direction !== 'in';
-    const certainty: Certainty = CERTAINTIES.includes(r?.certainty) ? r.certainty : 'inferred';
-    const check = validateRelation({ fromId: out ? character.id : other.id, toId: out ? other.id : character.id, type, description: '', certainty }, { bookId: state.bookId, characters: data.characters, relations: data.relations });
-    const dup = !check.ok;
-    return [`<div class="chr-form-field chr-fs-row"><label class="chr-fs-check"><input type="checkbox" name="fr_apply_${i}" ${dup ? '' : 'checked'}/> <strong>Vínculo con ${esc(other.name)}</strong></label>
-      ${r.basis ? `<p class="muted chr-fs-basis">${esc(String(r.basis).slice(0, 400))}</p>` : ''}
-      ${dup ? `<p class="muted">Ya existe o no es válido: ${esc(check.errors.join(' '))}</p>` : ''}
-      <input type="hidden" name="fr_other_${i}" value="${esc(other.id)}"/>
-      <input name="fr_type_${i}" value="${esc(type)}" list="chrRelTypes" aria-label="Tipo de vínculo con ${esc(other.name)}"/>
-      <select name="fr_dir_${i}" aria-label="Dirección"><option value="out" ${out ? 'selected' : ''}>${esc(character.name)} → ${esc(other.name)}</option><option value="in" ${out ? '' : 'selected'}>${esc(other.name)} → ${esc(character.name)}</option></select>
-      <input name="fr_desc_${i}" value="${esc(String(r.description || '').slice(0, LIMITS.relationDescription))}" placeholder="Descripción (opcional)"/>
-      <select name="fr_cert_${i}" aria-label="Certeza del vínculo">${CERTAINTIES.map((c) => `<option value="${c}" ${c === certainty ? 'selected' : ''}>${esc(CERTAINTY_LABELS[c])}</option>`).join('')}</select>
-      <input type="hidden" name="fr_basis_${i}" value="${esc(String(r.basis || '').slice(0, LIMITS.evidenceText))}"/></div>`];
+    if (!name || !type) return [];
+    const existing = existingNames.has(name.toLocaleLowerCase());
+    const direction = r?.direction === 'in' ? 'in' : 'out';
+    return [`<div class="chr-form-field chr-fs-row chr-fs-relative">
+      <label class="chr-fs-check"><input type="checkbox" name="rel_apply_${i}" ${existing ? '' : 'checked'}/> <strong>${esc(name)}</strong> · ${esc(type)} ${existing ? '<span class="muted">(ya tiene ficha)</span>' : '<span class="muted">(se creará una ficha)</span>'}</label>
+      <input name="rel_name_${i}" value="${esc(name)}" aria-label="Nombre del familiar"/>
+      <input name="rel_type_${i}" value="${esc(type)}" aria-label="Parentesco"/>
+      <select name="rel_dir_${i}" aria-label="Dirección del parentesco"><option value="out" ${direction === 'out' ? 'selected' : ''}>${esc(character.name)} → familiar</option><option value="in" ${direction === 'in' ? 'selected' : ''}>Familiar → ${esc(character.name)}</option></select>
+      <input name="rel_age_${i}" value="${esc(String(r.age || '').slice(0, LIMITS.age))}" placeholder="Edad (opcional)"/>
+      <input name="rel_occupation_${i}" value="${esc(String(r.occupation || '').slice(0, LIMITS.occupation))}" placeholder="Ocupación (opcional)"/>
+      <textarea name="rel_description_${i}" rows="2" placeholder="Descripción breve">${esc(String(r.description || '').slice(0, LIMITS.description))}</textarea>
+      <input type="hidden" name="rel_basis_${i}" value="${esc(String(r.basis || '').slice(0, LIMITS.evidenceText))}"/>
+    </div>`];
   });
   if (!rows.length) return '';
-  return `<h4>Vínculos con otros personajes</h4><datalist id="chrRelTypes">${RELATION_TYPES.map((t) => `<option value="${esc(t)}"></option>`).join('')}</datalist><input type="hidden" name="fr_count" value="${raw.length}"/>${rows.join('')}`;
+  return `<h4>Familiares y parentescos</h4><p class="muted">Marcá los familiares que querés incorporar. Se crearán fichas individuales y se conectarán en la red; los que ya tienen ficha se reutilizarán.</p><input type="hidden" name="rel_count" value="${raw.length}"/>${rows.join('')}`;
 }
 
 function fullSheetFormHTML(character: Character, parsed: any): string {
@@ -1768,16 +1768,25 @@ async function submitFullSheet(form: HTMLFormElement) {
   const splitList = (key: string, max: number, limit: number) => formValue(form, `fs_${key}`).split(',').map((x) => x.trim().slice(0, max)).filter(Boolean).slice(0, limit);
   if (checked('traits')) { updated.traits = splitList('traits', LIMITS.trait, LIMITS.traits); changes.push(`Rasgos: ${updated.traits.join(', ')}`); }
   if (checked('aliases')) { updated.aliases = splitList('aliases', LIMITS.alias, LIMITS.aliases); changes.push(`Alias: ${updated.aliases.join(', ')}`); }
+  const relativeCount = Number(formValue(form, 'rel_count')) || 0;
+  const selectedRelatives: Array<{ i: number; name: string; type: string; direction: 'out' | 'in' }> = [];
+  for (let i = 0; i < relativeCount; i++) {
+    if (!(form.elements.namedItem(`rel_apply_${i}`) as HTMLInputElement | null)?.checked) continue;
+    const name = formValue(form, `rel_name_${i}`).trim().slice(0, LIMITS.name);
+    const type = formValue(form, `rel_type_${i}`).trim().slice(0, LIMITS.relationType);
+    if (!name || !type) continue;
+    selectedRelatives.push({ i, name, type, direction: formValue(form, `rel_dir_${i}`) === 'in' ? 'in' : 'out' });
+  }
   const relationCount = Number(formValue(form, 'fr_count')) || 0;
   const pending: Array<{ i: number }> = [];
   for (let i = 0; i < relationCount; i++) if ((form.elements.namedItem(`fr_apply_${i}`) as HTMLInputElement | null)?.checked) pending.push({ i });
-  const fieldChanges = changes.length;
+  const fieldChanges = changes.length;\n  for (const relative of selectedRelatives) changes.push(`Familiar: ${relative.name} (${relative.type})`);
   for (const { i } of pending) changes.push(`Vínculo: ${formValue(form, `fr_type_${i}`)} con ${characterById(formValue(form, `fr_other_${i}`))?.name || '?'}`);
   if (!changes.length) return fail('No hay datos marcados para aplicar.');
   try {
 
     if (fieldChanges) await api().saveCharacter(updated);
-    const fresh = pending.length ? await api().loadBookData(state.bookId) : null;
+    let fresh = (pending.length || selectedRelatives.length) ? await api().loadBookData(state.bookId) : null;\n    const relativeFailures: string[] = [];\n    for (const relative of selectedRelatives) {\n      try {\n        let other = fresh!.characters.find((c) => c.bookId === state.bookId && c.name.trim().toLocaleLowerCase() === relative.name.toLocaleLowerCase());\n        if (!other) {\n          const now = new Date().toISOString();\n          other = await api().saveCharacter({ id: crypto.randomUUID(), bookId: state.bookId, name: relative.name, aliases: [], age: formValue(form, `rel_age_${relative.i}`).trim().slice(0, LIMITS.age), description: formValue(form, `rel_description_${relative.i}`).trim().slice(0, LIMITS.description), traits: [], occupation: formValue(form, `rel_occupation_${relative.i}`).trim().slice(0, LIMITS.occupation), affiliation: '', comments: '', evidence: [], certainty: {}, createdAt: now, updatedAt: now });\n          fresh!.characters.push(other);\n        }\n        const input = { fromId: relative.direction === 'out' ? character.id : other.id, toId: relative.direction === 'out' ? other.id : character.id, type: relative.type, description: 'Parentesco sugerido por la IA', certainty: 'inferred' as Certainty };\n        const validation = validateRelation(input, { bookId: state.bookId, characters: fresh!.characters.filter((c) => c.bookId === state.bookId), relations });\n        if (!validation.ok || !validation.value) { if (validation.errors.some((e) => !/duplicad|existe/i.test(e))) throw Error(validation.errors.join(' ')); else continue; }\n        const basis = formValue(form, `rel_basis_${relative.i}`).trim();\n        const record: CharacterRelation = { ...validation.value.record, evidence: basis ? [{ kind: 'other', ref: 'Consulta a la IA', text: basis.slice(0, LIMITS.evidenceText) }] : [] };\n        await api().saveRelation(record);\n        relations = [...relations, record];\n      } catch (err: any) { relativeFailures.push(`${relative.name}: ${String(err?.message || err)}`); }\n    }
     let relations = fresh ? fresh.relations.filter((r) => r.bookId === state.bookId) : [];
     const failures: string[] = [];
     for (const { i } of pending) {
@@ -1795,9 +1804,9 @@ async function submitFullSheet(form: HTMLFormElement) {
       } catch (err: any) { failures.push(`${formValue(form, `fr_type_${i}`)}: ${String(err?.message || err)}`); }
     }
     await reload();
-    if (failures.length) return fail(`Algunos vínculos no se pudieron guardar: ${failures.join(' · ')}`);
+    if (failures.length || relativeFailures.length) return fail(`Algunos vínculos no se pudieron guardar: ${[...failures, ...relativeFailures].join(' · ')}`);
     state.ai = null;
-    state.notice = 'Datos y vínculos aplicados a la ficha.';
+    state.notice = 'Ficha actualizada; familiares creados o reutilizados y conectados en la red.';
     paint(true);
   } catch (err: any) { fail(String(err?.message || err)); }
 }
