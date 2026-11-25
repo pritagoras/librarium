@@ -124,6 +124,7 @@ interface State {
   notice: string;
   ai: AIState | null;
   pendingRelatives: Array<{ name: string; type: string; direction: 'out' | 'in'; certainty: Certainty; evidence: string }>;
+  familyReview: { status: 'idle' | 'running' | 'prompt' | 'review'; prompt: string; responseText: string; error: string; relatives: Array<{ name: string; type: string; direction: 'out' | 'in'; age: string; occupation: string; description: string; basis: string; certainty: Certainty }> };
   characterSearch: { status: 'idle' | 'running' | 'candidate-prompt' | 'candidates' | 'profile-prompt' | 'ready'; name: string; candidates: Array<{ name: string; aliases: string[]; description: string; confidence: string }>; sources: Array<{ title: string; url: string }>; error: string; suggestion: any | null; prompt: string; responseText: string };
   networkReview: { status: 'idle' | 'running' | 'prompt' | 'review'; prompt: string; responseText: string; error: string; proposals: NetworkProposal[]; manualFindings: Array<{ category: string; characterIds: string[]; reason: string; evidence: string; sourceUrl: string }> };
 }
@@ -158,6 +159,7 @@ const emptyState = (bookId = ''): State => ({
   notice: '',
   ai: null,
   pendingRelatives: [],
+  familyReview: { status: 'idle', prompt: '', responseText: '', error: '', relatives: [] },
   characterSearch: { status: 'idle', name: '', candidates: [], sources: [], error: '', suggestion: null, prompt: '', responseText: '' },
   networkReview: { status: 'idle', prompt: '', responseText: '', error: '', proposals: [], manualFindings: [] },
 });
@@ -397,11 +399,13 @@ function sheetHTML(character: Character): string {
       <div class="chr-section-head">
         <h3 id="chrRelations">Vínculos (${links.length})</h3>
         <div class="chr-row-actions">
-          <button type="button" class="secondary" data-chr="add-relation">＋ Agregar vínculo o familiar</button>
+          <button type="button" class="secondary" data-chr="add-relation">＋ Añadir vínculo</button>
+          <button type="button" class="secondary" data-chr="find-family">✦ Buscar familiares con IA</button>
           <button type="button" class="secondary" data-chr="show-network" ${links.length ? '' : 'disabled'}>Ver en la red</button>
         </div>
       </div>
-      ${others.length ? '' : '<p class="muted">Podés crear familiares y vínculos desde este botón.</p>'}
+      <div id="chrFamilyHost">${familyReviewHTML()}</div>
+      ${others.length ? '' : '<p class="muted">Podés crear familiares y vínculos desde «Añadir vínculo» o buscarlos con IA.</p>'}
       ${links.length ? `<ul class="chr-relations">${links.map((n) => relationRowHTML(character, n.relation)).join('')}</ul>` : others.length ? '<p class="empty-inline">Todavía no registraste vínculos de este personaje.</p>' : ''}
       ${
         others.length
@@ -1909,6 +1913,132 @@ async function submitAISave(form: HTMLFormElement) {
   }
 }
 
+
+function familyPrompt(character: Character): string {
+  const page = Math.max(0, Number(book?.currentPage) || 0);
+  const notes = data.notes.filter((n) => n.endPage != null && n.endPage <= page).slice(0, 50)
+    .map((n) => `[Nota ${n.number}, p. ${n.endPage}] ${n.text}`);
+  const entries = data.entries.filter((e) => e.page != null && e.page <= page).slice(0, 50)
+    .map((e) => `[Anotación, p. ${e.page}] ${e.title ? e.title + ': ' : ''}${e.text || ''}`);
+  const existing = data.characters.filter((c) => c.id !== character.id).map((c) => c.name);
+  return [
+    'Identificá familiares conocidos de este personaje literario usando exclusivamente tu conocimiento general aprendido sobre la obra. No uses búsqueda web ni inventes parentescos.',
+    `OBRA: ${promptBookContext()}`,
+    `PERSONAJE: ${character.name}. Alias: ${character.aliases.join(', ') || 'ninguno'}.`,
+    `AVANCE: la persona leyó hasta la página ${page}. REGLA ESTRICTA ANTI-SPOILERS: incluí únicamente familiares cuyo parentesco ya sea conocido o esté establecido hasta esa página. No reveles ni insinúes información posterior, aunque la conozcas por la obra completa. Si no podés determinar si un parentesco ya se conoce a esa altura, omitilo.`,
+    `PERSONAJES YA REGISTRADOS (reutilizá estos nombres cuando corresponda): ${existing.join('; ') || 'ninguno'}.`,
+    `NOTAS DEL LECTOR HASTA LA PÁGINA ACTUAL:\n${notes.join('\n') || 'No hay notas paginadas.'}`,
+    `ANOTACIONES DEL LECTOR HASTA LA PÁGINA ACTUAL:\n${entries.join('\n') || 'No hay anotaciones paginadas.'}`,
+    'Buscá padres, madres, hijos, hermanos, abuelos, nietos, tíos, sobrinos, primos, cónyuge o pareja y otros parentescos relevantes. Para cada uno devolvé name, type (por ejemplo «Madre de», «Hermano de», «Hija de»), direction («out» si el personaje principal es el origen del vínculo; «in» si el familiar es el origen), age, occupation, description (breve, introductoria y sin spoilers), basis (por qué el parentesco es conocido hasta la página actual) y certainty («explicit» o «inferred»). No incluyas amistades ni vínculos no familiares. No repitas el personaje principal. Si no hay familiares seguros, devolvé una lista vacía.',
+    'Respondé únicamente JSON válido: {"relatives":[{"name":"","type":"","direction":"out|in","age":"","occupation":"","description":"","basis":"","certainty":"explicit|inferred"}]}. Máximo 20 familiares.'
+  ].join('\n\n');
+}
+
+function familyReviewHTML(): string {
+  const review = state.familyReview;
+  if (review.status === 'idle') return '';
+  if (review.status === 'running') return '<section class="chr-research" role="status"><h3>Buscando familiares…</h3><p class="muted">La IA está revisando los parentescos conocidos hasta tu página de lectura. No se consultan fuentes web.</p><button type="button" class="secondary" data-chr="cancel-family">Cancelar</button></section>';
+  if (review.status === 'prompt') return `<section class="chr-research"><h3>Buscar familiares con IA</h3><p class="muted">Copiá el prompt en Gemini usando el modelo de tu preferencia. La consulta limita los resultados a tu página de lectura.</p><textarea id="chrFamilyPrompt" rows="10" readonly>${esc(review.prompt)}</textarea><div class="chr-row-actions"><button type="button" class="secondary" data-chr="copy-family-prompt">Copiar prompt</button><a class="secondary" href="https://gemini.google.com/app" target="_blank" rel="noopener noreferrer">Abrir Gemini</a></div><label for="chrFamilyResponse">Pegá la respuesta JSON</label><textarea id="chrFamilyResponse" rows="7" placeholder='{"relatives":[]}' >${esc(review.responseText)}</textarea>${review.error ? `<p class="chr-ai-error" role="alert">${esc(review.error)}</p>` : ''}<button type="button" class="primary" data-chr="parse-family">Revisar familiares</button><button type="button" class="secondary" data-chr="cancel-family">Cancelar</button></section>`;
+  return `<section class="chr-research"><h3>Familiares sugeridos</h3><p class="muted">Marcá los familiares que quieras incorporar. Si ya existe una ficha con ese nombre, se reutilizará. Los nuevos personajes se crearán y conectarán en la red.</p>${review.relatives.length ? review.relatives.map((r, i) => `<label class="chr-form-field"><span><input type="checkbox" data-family-index="${i}" checked /> <strong>${esc(r.name)}</strong> · ${esc(r.type)}<small class="muted"> · ${r.direction === 'in' ? 'familiar → personaje' : 'personaje → familiar'} · ${r.certainty === 'explicit' ? 'explícito' : 'inferido'}</small></span>${r.basis ? `<small class="muted">${esc(r.basis)}</small>` : ''}</label>`).join('') : '<p class="muted">No se encontraron familiares con respaldo suficiente hasta tu página de lectura.</p>'}${review.error ? `<p class="chr-ai-error" role="alert">${esc(review.error)}</p>` : ''}<div class="chr-row-actions"><button type="button" class="primary" data-chr="apply-family" ${review.relatives.length ? '' : 'disabled'}>Crear fichas y vínculos seleccionados</button><button type="button" class="secondary" data-chr="cancel-family">Cerrar</button></div></section>`;
+}
+
+function parseFamilySuggestions(text: string) {
+  const parsed = parsePastedJSON(text);
+  if (!Array.isArray(parsed.relatives)) throw Error('La respuesta no contiene una lista «relatives».');
+  return parsed.relatives.slice(0, 20).flatMap((r: any) => {
+    const name = String(r?.name || '').trim().slice(0, LIMITS.name);
+    const type = String(r?.type || '').trim().slice(0, LIMITS.relationType);
+    if (!name || !type) return [];
+    return [{
+      name, type, direction: r.direction === 'in' ? 'in' as const : 'out' as const,
+      age: String(r.age || '').trim().slice(0, LIMITS.age),
+      occupation: String(r.occupation || '').trim().slice(0, LIMITS.occupation),
+      description: String(r.description || '').trim().slice(0, LIMITS.description),
+      basis: String(r.basis || '').trim().slice(0, LIMITS.evidenceText),
+      certainty: r.certainty === 'explicit' ? 'explicit' as Certainty : 'inferred' as Certainty,
+    }];
+  });
+}
+
+async function startFamilySearch() {
+  const character = characterById(state.selectedId);
+  if (!character) return;
+  const prompt = familyPrompt(character);
+  state.familyReview = { status: 'running', prompt, responseText: '', error: '', relatives: [] };
+  paint();
+  if (!api().ai.hasKey()) {
+    state.familyReview = { status: 'prompt', prompt, responseText: '', error: '', relatives: [] };
+    paint();
+    return;
+  }
+  const controller = new AbortController();
+  autoAbort?.abort();
+  autoAbort = controller;
+  try {
+    const result = await runJSONTask(prompt, controller.signal, false);
+    if (controller.signal.aborted) return;
+    const relatives = parseFamilySuggestions(result.text);
+    state.familyReview = { status: 'review', prompt, responseText: '', error: '', relatives };
+  } catch (err: any) {
+    if (controller.signal.aborted) return;
+    state.familyReview = { status: 'prompt', prompt, responseText: '', error: String(err?.message || err), relatives: [] };
+  } finally {
+    if (autoAbort === controller) autoAbort = null;
+  }
+  paint();
+}
+
+async function applyFamilySuggestions() {
+  const character = characterById(state.selectedId);
+  if (!character) return;
+  const selected = state.familyReview.relatives.filter((_r, i) => host?.querySelector<HTMLInputElement>(`[data-family-index="${i}"]`)?.checked);
+  if (!selected.length) { state.familyReview.error = 'Marcá al menos un familiar.'; return paint(); }
+  const failures: string[] = [];
+  for (const relative of selected) {
+    try {
+      let other = data.characters.find((c) => c.bookId === state.bookId && c.name.trim().toLocaleLowerCase() === relative.name.toLocaleLowerCase());
+      if (!other) {
+        const now = new Date().toISOString();
+        other = await api().saveCharacter({
+          id: crypto.randomUUID(), bookId: state.bookId, name: relative.name, aliases: [],
+          age: relative.age, description: relative.description, traits: [], occupation: relative.occupation,
+          affiliation: '', comments: '', evidence: [], certainty: {}, createdAt: now, updatedAt: now,
+        });
+        data.characters.push(other);
+      }
+      const input = {
+        fromId: relative.direction === 'out' ? character.id : other.id,
+        toId: relative.direction === 'out' ? other.id : character.id,
+        type: relative.type, description: 'Parentesco sugerido por IA',
+        certainty: relative.certainty,
+      };
+      const checked = validateRelation(input, { bookId: state.bookId, characters: data.characters, relations: data.relations });
+      if (!checked.ok || !checked.value) {
+        if (checked.errors.some((e) => /duplicad|existe/i.test(e))) continue;
+        throw Error(checked.errors.join(' '));
+      }
+      const record: CharacterRelation = {
+        ...checked.value.record,
+        evidence: relative.basis ? [{ kind: 'other', ref: 'Consulta de familiares con IA', text: relative.basis }] : [],
+      };
+      await api().saveRelation(record);
+      data.relations.push(record);
+    } catch (err: any) { failures.push(`${relative.name}: ${String(err?.message || err)}`); }
+  }
+  await reload();
+  state.familyReview = { status: 'idle', prompt: '', responseText: '', error: '', relatives: [] };
+  state.notice = failures.length ? `Se guardaron algunos familiares; hubo errores: ${failures.join(' · ')}` : 'Familiares incorporados: fichas creadas o reutilizadas y vínculos agregados a la red.';
+  paint(true);
+}
+
+async function copyFamilyPrompt() {
+  try { await navigator.clipboard.writeText(state.familyReview.prompt); }
+  catch {
+    const field = host?.querySelector<HTMLTextAreaElement>('#chrFamilyPrompt');
+    field?.focus(); field?.select();
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Eventos
 // ---------------------------------------------------------------------------
@@ -2012,6 +2142,22 @@ async function handleAction(action: string, el: HTMLElement) {
     }
     case 'add-relation':
       return current ? go('relation-form', { relationDraft: { fromId: current.id, editingId: null } }) : undefined;
+    case 'find-family':
+      return startFamilySearch();
+    case 'copy-family-prompt':
+      return copyFamilyPrompt();
+    case 'parse-family': {
+      const response = host?.querySelector<HTMLTextAreaElement>('#chrFamilyResponse')?.value || '';
+      try { state.familyReview = { ...state.familyReview, status: 'review', relatives: parseFamilySuggestions(response), responseText: '', error: '' }; }
+      catch (err: any) { state.familyReview = { ...state.familyReview, responseText: response, error: String(err?.message || err) }; }
+      return paint();
+    }
+    case 'apply-family':
+      return applyFamilySuggestions();
+    case 'cancel-family':
+      autoAbort?.abort();
+      state.familyReview = { status: 'idle', prompt: '', responseText: '', error: '', relatives: [] };
+      return paint();
     case 'edit-relation':
       return current ? go('relation-form', { relationDraft: { fromId: current.id, editingId: el.dataset.rel || null } }) : undefined;
     case 'remove-relation': {
