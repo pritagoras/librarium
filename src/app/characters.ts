@@ -1623,7 +1623,7 @@ function paintAI() {
       <form id="chrAiSave" class="chr-ai-quick-form" novalidate>
         <input type="hidden" name="target" value="field" />
         <input type="hidden" name="certainty" value="inferred" />
-        <label for="chrAiSaveText">${esc(FIELD_LABELS[ai.scope.field])}</label>
+        <label for="chrAiSaveText">${esc(FIELD_LABELS[fieldKey!])}</label>
         ${fieldKey === 'description'
           ? `<textarea id="chrAiSaveText" name="text" rows="3">${esc(suggestion.value)}</textarea>`
           : `<input id="chrAiSaveText" name="text" type="text" value="${esc(suggestion.value)}" autocomplete="off" />`}
