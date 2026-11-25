@@ -122,7 +122,7 @@ interface State {
   notice: string;
   ai: AIState | null;
   pendingRelatives: Array<{ name: string; type: string; direction: 'out' | 'in'; certainty: Certainty; evidence: string }>;
-  characterSearch: { status: 'idle' | 'searching' | 'results' | 'error' | 'investigating' | 'ready'; name: string; candidates: Array<{ name: string; aliases: string[]; description: string; confidence: string }>; sources: Array<{ title: string; url: string }>; error: string; suggestion: any | null; controller: AbortController | null };
+  characterSearch: { status: 'idle' | 'searching' | 'results' | 'error' | 'investigating' | 'ready'; name: string; candidates: Array<{ name: string; aliases: string[]; description: string; confidence: string }>; sources: Array<{ title: string; url: string }>; error: string; errorKind: 'quota' | 'web' | 'other' | null; suggestion: any | null; controller: AbortController | null };
 }
 
 const emptyState = (bookId = ''): State => ({
@@ -139,7 +139,7 @@ const emptyState = (bookId = ''): State => ({
   notice: '',
   ai: null,
   pendingRelatives: [],
-  characterSearch: { status: 'idle', name: '', candidates: [], sources: [], error: '', suggestion: null, controller: null },
+  characterSearch: { status: 'idle', name: '', candidates: [], sources: [], error: '', errorKind: null, suggestion: null, controller: null },
 });
 
 let state: State = emptyState();
@@ -589,7 +589,7 @@ function characterSearchHTML(): string {
   const search = state.characterSearch;
   if (search.status === 'idle') return '<div id="chrResearchPanel"></div>';
   if (search.status === 'searching' || search.status === 'investigating') return `<section class="chr-research" id="chrResearchPanel" aria-live="polite"><strong>${search.status === 'searching' ? 'Buscando en Internet…' : 'Investigando el personaje seleccionado…'}</strong><p class="muted">Obra: ${esc(book?.title || '')}${book?.author ? ` · ${esc(book.author)}` : ''}. Avance registrado: página ${Math.max(0, Number(book?.currentPage) || 0)}. Modo sin spoilers.</p><button type="button" class="secondary" data-chr="stop-research">Cancelar búsqueda</button></section>`;
-  if (search.status === 'error') return `<section class="chr-research" id="chrResearchPanel" role="alert"><strong>No pude realizar la búsqueda web.</strong><p>${esc(search.error)}</p><button type="button" class="secondary" data-chr="search-character">Intentar de nuevo</button></section>`;
+  if (search.status === 'error') return `<section class="chr-research" id="chrResearchPanel" role="alert"><strong>${search.errorKind === 'quota' ? 'Límite temporal de Gemini alcanzado' : 'No pude realizar la búsqueda web.'}</strong><p>${esc(search.error)}</p>${search.errorKind === 'quota' ? '<p class="muted">La clave personal llegó al límite de consultas de Google. Esperá a que se restablezca y volvé a intentar; Librarium no repetirá la llamada automáticamente.</p>' : ''}<button type="button" class="secondary" data-chr="search-character">${search.errorKind === 'quota' ? 'Reintentar búsqueda' : 'Intentar de nuevo'}</button></section>`;
   if (search.status === 'results') return `<section class="chr-research" id="chrResearchPanel"><h3>${search.candidates.length ? 'Encontré posibles coincidencias' : 'No encontré coincidencias suficientemente confiables'}</h3><p class="muted">Resultados para «${esc(search.name)}» en ${esc(book?.title || 'esta obra')}${book?.author ? ` de ${esc(book.author)}` : ''}. Avance: página ${Math.max(0, Number(book?.currentPage) || 0)}. La descripción se limita a identificación sin spoilers; las fuentes web no corresponden necesariamente a las páginas de tu edición.</p>${search.candidates.length ? `${search.candidates.length > 1 ? '<p class="chr-ambiguity" role="status">La búsqueda devolvió varias coincidencias posibles. Elegí la que corresponde; no se seleccionó ninguna automáticamente.</p>' : ''}<fieldset class="chr-candidates"><legend>Elegí explícitamente el personaje</legend>${search.candidates.map((c, i) => `<label class="chr-candidate"><input type="radio" name="chrCandidate" value="${i}"/><span><strong>${esc(c.name)}</strong><span>También: ${esc(c.aliases.join(', ') || 'sin variantes encontradas')}</span><span>${esc(c.description || 'Sin descripción introductoria disponible.')}</span><small>Coincidencia ${esc(c.confidence === 'high' ? 'alta' : c.confidence === 'medium' ? 'media' : 'baja')}</small></span></label>`).join('')}</fieldset><button type="button" class="primary" data-chr="investigate-character" disabled>Completar con este</button>` : '<p class="muted">La búsqueda devolvió resultados ambiguos o sin respaldo suficiente. Podés conservar el nombre y completar la ficha manualmente.</p>'}<button type="button" class="secondary" data-chr="none-candidate">Ninguno de estos</button>${characterSourcesHTML(search.sources)}</section>`;
   if (search.status === 'ready') return `<section class="chr-research" id="chrResearchPanel"><h3>Seleccionaste «${esc(search.name)}»</h3><p class="muted">Revisá las sugerencias. Solo se completarán campos vacíos; los campos que ya escribiste se conservan. La información web se marca como inferida, nunca explícita en el libro.</p>${characterSourcesHTML(search.sources)}<button type="button" class="primary" data-chr="apply-research">Aplicar sugerencias a campos vacíos</button><button type="button" class="secondary" data-chr="none-candidate">Descartar sugerencias</button></section>`;
   return '<div id="chrResearchPanel"></div>';
@@ -617,18 +617,18 @@ async function searchCharacterWithWeb() {
   if (!name) return showFormErrors(['Escribí el nombre antes de buscar coincidencias.']);
   if (!api().ai.hasKey()) return showFormErrors(['Guardá tu API key personal de Gemini en Ajustes → Ajustes de IA.']);
   state.characterSearch.controller?.abort();
-  const search = state.characterSearch = { ...state.characterSearch, status: 'searching', name, candidates: [], sources: [], error: '', suggestion: null, controller: new AbortController() };
+  const search = state.characterSearch = { ...state.characterSearch, status: 'searching', name, candidates: [], sources: [], error: '', errorKind: null, suggestion: null, controller: new AbortController() };
   paint();
   try {
     const settings = api().ai.settings();
     const response = await api().ai.request('character-research', { mode: 'candidates', name, book, characters: data.characters, model: settings.model, thinking: settings.thinking }, search.controller.signal);
     const result = await response.json();
-    if (!response.ok) throw Error(result.error || `Error HTTP ${response.status}`);
+    if (!response.ok) { const error: any = Error(result.error || `Error HTTP ${response.status}`); error.status = response.status; throw error; }
     if (result.usedGoogleSearch !== true) throw Error('Gemini no confirmó que ejecutó Google Search.');
-    state.characterSearch = { ...state.characterSearch, status: 'results', candidates: Array.isArray(result.candidates) ? result.candidates : [], sources: Array.isArray(result.sources) ? result.sources : [], error: '', controller: null };
+    state.characterSearch = { ...state.characterSearch, status: 'results', candidates: Array.isArray(result.candidates) ? result.candidates : [], sources: Array.isArray(result.sources) ? result.sources : [], error: '', errorKind: null, controller: null };
   } catch (err: any) {
     if (err?.name === 'AbortError') { state.characterSearch = { ...state.characterSearch, status: 'idle', controller: null }; paint(); return; }
-    state.characterSearch = { ...state.characterSearch, status: 'error', error: String(err?.message || err), controller: null };
+    state.characterSearch = { ...state.characterSearch, status: 'error', error: String(err?.message || err), errorKind: err?.status === 429 ? 'quota' : err?.status === 503 || err instanceof TypeError ? 'web' : 'other', controller: null };
   }
   paint();
 }
@@ -645,12 +645,12 @@ async function investigateSelectedCharacter() {
     const settings = api().ai.settings();
     const response = await api().ai.request('character-research', { mode: 'investigate', name: selected.name, aliases: selected.aliases, book, characters: data.characters, readingEvidence: readReadingEvidence(), model: settings.model, thinking: settings.thinking }, controller.signal);
     const result = await response.json();
-    if (!response.ok) throw Error(result.error || `Error HTTP ${response.status}`);
+    if (!response.ok) { const error: any = Error(result.error || `Error HTTP ${response.status}`); error.status = response.status; throw error; }
     if (result.usedGoogleSearch !== true) throw Error('Gemini no confirmó que ejecutó Google Search.');
     state.characterSearch = { ...state.characterSearch, status: 'ready', name: selected.name, sources: result.sources || [], suggestion: result.suggestion || {}, controller: null };
   } catch (err: any) {
     if (err?.name === 'AbortError') state.characterSearch = { ...state.characterSearch, status: 'idle', controller: null };
-    else state.characterSearch = { ...state.characterSearch, status: 'error', error: String(err?.message || err), controller: null };
+    else state.characterSearch = { ...state.characterSearch, status: 'error', error: String(err?.message || err), errorKind: err?.status === 429 ? 'quota' : err?.status === 503 || err instanceof TypeError ? 'web' : 'other', controller: null };
   }
   paint();
 }
@@ -1397,7 +1397,7 @@ async function handleAction(action: string, el: HTMLElement) {
       return;
     case 'none-candidate':
       state.characterSearch.controller?.abort();
-      state.characterSearch = { status: 'idle', name: '', candidates: [], sources: [], error: '', suggestion: null, controller: null };
+      state.characterSearch = { status: 'idle', name: '', candidates: [], sources: [], error: '', errorKind: null, suggestion: null, controller: null };
       paint();
       showFormErrors([], ['No se modificó la ficha. Conservá el nombre y completala manualmente o iniciá otra búsqueda.']);
       return;
