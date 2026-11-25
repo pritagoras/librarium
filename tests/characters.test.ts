@@ -392,7 +392,7 @@ test('a field query asks only about that field and a relation query includes bot
     book, character: ana, characters: [ana, beto], relations: [], scope: { kind: 'field', field: 'age' }, notes, quotes,
   });
   assert.match(field.prompt, /Consulta puntual sobre «Ana»: edad/);
-  assert.match(field.prompt, /no completes el dato/);
+  assert.match(field.prompt, /conocimiento general, y con tu nivel de seguridad|rotulado como conocimiento general/);
 
   const pair = buildCharacterAIRequest({
     book, character: ana, characters: [ana, beto], relations: [], scope: { kind: 'relation', otherId: 'b' }, notes, quotes,
