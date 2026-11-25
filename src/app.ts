@@ -1,9 +1,39 @@
+import {
+  download,
+  parseBackupJSON,
+  restoreBackupData,
+  slug,
+  validateNotesJSON,
+} from './app/data-transfer';
+import { showConfirmDialog } from './app/dialogs';
+import {
+  archiveAdminSiteVisitsInBackground,
+  initAdminFeatures,
+  refreshAdminFeedbackSummary,
+  renderMyFeedbackList,
+  updateAdminPendingBadges,
+} from './app/admin';
 import { all, get, openDB } from './db';
 import { signInWithGoogle, signOutUser } from './firebase';
-import { directGeminiRequest, FALLBACK_MODELS as GEMINI_FALLBACK_MODELS } from './gemini-direct';
+import { FALLBACK_MODELS as GEMINI_FALLBACK_MODELS } from './gemini-direct';
+import { initInstall, initTheme, setupServiceWorkerUpdates } from './app/platform';
+import {
+  aiStyleInstruction,
+  commentDiscussionPrompt,
+  getAISettingsForTask,
+  getPrivateGeminiKey,
+  initAISettings,
+  isAIKeyError,
+  openAISettingsGuide,
+  renderInlineKeyCTA,
+  requestGeminiFeature,
+  syncGeminiNoKeyBanner,
+  thinkingLabel,
+} from './app/ai-settings';
 import {
   deleteFromCloud,
   getSyncState,
+  getSyncConflicts,
   initSync,
   migrateLocalDataToCloud,
   pushAnalysisToCloud,
@@ -12,20 +42,10 @@ import {
   pushEntryToCloud,
   pushNoteToCloud,
   pushQuoteToCloud,
+  resolveSyncConflict,
   sanitizeId,
 } from './sync';
-import {
-  buildSafeAppContext,
-  deleteFeedbackReport,
-  fetchAdminSiteVisits,
-  fetchAdminUserDirectory,
-  fetchAllFeedbackReports,
-  fetchMyFeedbackReports,
-  isFeedbackAdmin,
-  submitFeedbackReport,
-  syncAndFetchPersistentSiteStats,
-  updateFeedbackReport,
-} from './feedback';
+import { isFeedbackAdmin } from './feedback';
 import type {
   AISettings,
   Book,
@@ -34,16 +54,11 @@ import type {
   Conversation,
   ConversationTurn,
   Entry,
-  FeedbackItem,
-  FeedbackKind,
-  FeedbackStatus,
   Note,
-  PersistentSiteStatsSummary,
   Quote,
-  SiteVisitStats,
   SortOption,
+  SyncConflict,
   SyncStatus,
-  UserDirectoryEntry,
 } from './types';
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string): T | null =>
@@ -75,7 +90,6 @@ let cameraCapturedBlob: Blob | null = null;
 let cameraShotUrl: string | null = null;
 let cameraOnCapture: ((file: File) => Promise<void> | void) | null = null;
 let cameraFallbackInput: HTMLInputElement | null = null;
-let installPromptEvent: any = null;
 let isAnalyzingBook = false;
 
 const AI_SPARK = '<svg class="ai-spark" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true" focusable="false"><path d="M10 3c.7 4.6 3.4 7.3 8 8-4.6.7-7.3 3.4-8 8-.7-4.6-3.4-7.3-8-8 4.6-.7 7.3-3.4 8-8z"/><path d="M19 1.5c.25 1.7 1.1 2.55 2.8 2.8-1.7.25-2.55 1.1-2.8 2.8-.25-1.7-1.1-2.55-2.8-2.8 1.7-.25 2.55-1.1 2.8-2.8z"/></svg>';
@@ -97,84 +111,6 @@ let geminiExtraContext = '';
 let geminiConversationId: string | null = null;
 let geminiConversationHadImages = false;
 let geminiStreamController: AbortController | null = null;
-
-const AI_SETTINGS_KEY = 'librarium-ai-settings';
-const PRIVATE_GEMINI_KEY = 'librarium-private-gemini-key';
-const AI_SETTINGS_DEFAULTS: AISettings = {
-  model: 'gemini-3.8-flash',
-  thinking: 'auto',
-  chatModel: '',
-  chatThinking: 'inherit',
-  analysisModel: '',
-  analysisThinking: 'inherit',
-  imageModel: '',
-  imageThinking: 'inherit',
-  style: 'natural',
-  customStyle: '',
-};
-
-type AITaskProfile = 'chat' | 'analysis' | 'image';
-type GeminiModelChoice = { id: string; name: string; thinking: boolean };
-let availableGeminiModels: GeminiModelChoice[] = [
-  { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', thinking: true },
-  { id: 'gemini-3.5-flash-lite', name: 'Gemini 3.5 Flash-Lite', thinking: true },
-  { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', thinking: true },
-  { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview', thinking: true },
-];
-
-function getPrivateGeminiKey(): string {
-  try {
-    return localStorage.getItem(PRIVATE_GEMINI_KEY)?.trim() || '';
-  } catch {
-    return '';
-  }
-}
-
-function isAIKeyError(err: any): boolean {
-  if (!getPrivateGeminiKey()) return true;
-  if ([401, 403].includes(Number(err?.status))) return true;
-  const msg = String(err?.message || err || '');
-  return /api key|api_key|clave personal|ajustes de ia|no es válida|permission/i.test(msg);
-}
-
-function openAISettingsGuide() {
-  const dlg = $<HTMLDialogElement>('#settingsDialog');
-  if (!dlg) return;
-  if (!dlg.open) dlg.showModal();
-  const guide = $<HTMLDetailsElement>('#privateKeyGuide');
-  if (guide) guide.open = true;
-  const section = $('.private-key-settings');
-  if (section) {
-    section.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    section.classList.add('private-key-highlight');
-    setTimeout(() => section.classList.remove('private-key-highlight'), 2400);
-  }
-  setTimeout(() => $<HTMLInputElement>('#privateGeminiKeyInput')?.focus(), 120);
-}
-
-function syncGeminiNoKeyBanner() {
-  $('#geminiNoKeyBanner')?.classList.toggle('hidden', Boolean(getPrivateGeminiKey()));
-}
-
-function renderInlineKeyCTA(statusEl: HTMLElement | null, message: string) {
-  if (!statusEl) return;
-  statusEl.replaceChildren();
-  statusEl.append(document.createTextNode(message + ' '));
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'ai-key-cta';
-  btn.textContent = 'Configurar mi API key';
-  btn.onclick = () => openAISettingsGuide();
-  statusEl.append(btn);
-}
-
-function requestGeminiFeature(route: string, payload: Record<string, any>, signal?: AbortSignal): Promise<Response> {
-  const apiKey = getPrivateGeminiKey();
-  if (apiKey) return directGeminiRequest(route, payload, apiKey, signal);
-  return Promise.resolve(new Response(JSON.stringify({
-    error: 'Para usar la IA, guardá tu API key personal de Gemini en Ajustes → Ajustes de IA.',
-  }), { status: 401, headers: { 'Content-Type': 'application/json' } }));
-}
 
 const uid = () =>
   crypto.randomUUID
@@ -198,50 +134,6 @@ const fileData = (f: File): Promise<string> =>
     r.onerror = rej;
     r.readAsDataURL(f);
   });
-
-function showConfirmDialog(options: {
-  eyebrow?: string;
-  title: string;
-  message: string;
-  confirmLabel?: string;
-  cancelLabel?: string;
-  danger?: boolean;
-  noticeOnly?: boolean;
-}): Promise<boolean> {
-  return new Promise((resolve) => {
-    const dlg = $<HTMLDialogElement>('#confirmDialog');
-    if (!dlg) {
-      resolve(false);
-      return;
-    }
-    $('#confirmEyebrow')!.textContent =
-      options.eyebrow || (options.noticeOnly ? 'AVISO' : 'CONFIRMAR');
-    $('#confirmTitle')!.textContent = options.title;
-    $('#confirmMessage')!.textContent = options.message;
-    const cancelBtn = $<HTMLButtonElement>('#confirmCancelBtn')!;
-    const okBtn = $<HTMLButtonElement>('#confirmOkBtn')!;
-    cancelBtn.textContent = options.cancelLabel || 'Cancelar';
-    cancelBtn.classList.toggle('hidden', Boolean(options.noticeOnly));
-    okBtn.textContent =
-      options.confirmLabel || (options.noticeOnly ? 'Entendido' : 'Confirmar');
-    okBtn.className = options.danger ? 'danger-solid' : 'primary';
-
-    let settled = false;
-    const finish = (result: boolean) => {
-      if (settled) return;
-      settled = true;
-      dlg.removeEventListener('close', onClose);
-      if (dlg.open) dlg.close();
-      resolve(result);
-    };
-    const onClose = () => finish(false);
-    dlg.addEventListener('close', onClose, { once: true });
-    cancelBtn.onclick = () => finish(false);
-    okBtn.onclick = () => finish(true);
-    if (!dlg.open) dlg.showModal();
-    okBtn.focus();
-  });
-}
 
 async function copyPlainText(text: string): Promise<boolean> {
   try {
@@ -341,151 +233,6 @@ function renderInteractiveStars(
   container.querySelector<HTMLButtonElement>('[data-star-clear]')?.addEventListener('click', () => {
     onChange(null);
   });
-}
-
-function applyTheme(dark: boolean) {
-  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-  const sw = $<HTMLInputElement>('#themeSwitch');
-  if (sw) sw.checked = dark;
-  document
-    .querySelector('meta[name="theme-color"]')
-    ?.setAttribute('content', dark ? '#242622' : '#f4efe5');
-}
-
-function initTheme() {
-  let dark = false;
-  try {
-    dark = localStorage.getItem('librarium-theme') === 'dark';
-  } catch {}
-  applyTheme(dark);
-  const sw = $<HTMLInputElement>('#themeSwitch');
-  if (sw) {
-    sw.onchange = (e) => {
-      const checked = (e.target as HTMLInputElement).checked;
-      applyTheme(checked);
-      try {
-        localStorage.setItem('librarium-theme', checked ? 'dark' : 'light');
-      } catch {}
-    };
-  }
-}
-
-function initInstall() {
-  const button = $<HTMLButtonElement>('#installAppBtn');
-  const help = $('#installAppHelp');
-  if (!button || !help) return;
-
-  const standalone =
-    window.matchMedia('(display-mode: standalone)').matches ||
-    (window.navigator as any).standalone === true;
-
-  const showHelp = () => {
-    const ua = navigator.userAgent;
-    if (
-      /iphone|ipad|ipod/i.test(ua) ||
-      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
-    ) {
-      help.textContent = 'En Safari: Compartir → Añadir a pantalla de inicio.';
-    } else if (/android/i.test(ua)) {
-      help.textContent =
-        'En Chrome: menú ⋮ → Instalar aplicación o Añadir a pantalla de inicio.';
-    } else {
-      help.textContent = 'Usá la opción Instalar aplicación del menú del navegador.';
-    }
-  };
-
-  if (standalone) {
-    button.textContent = 'Librarium instalada';
-    button.disabled = true;
-    help.textContent = 'Ya está en tu pantalla de inicio.';
-    return;
-  }
-
-  window.addEventListener('beforeinstallprompt', (event) => {
-    event.preventDefault();
-    installPromptEvent = event;
-  });
-
-  button.onclick = async () => {
-    if (!installPromptEvent) {
-      showHelp();
-      return;
-    }
-    installPromptEvent.prompt();
-    const choice = await installPromptEvent.userChoice;
-    installPromptEvent = null;
-    if (choice.outcome === 'accepted') {
-      button.textContent = 'Instalando…';
-      help.textContent = 'Seguí los pasos que muestra el navegador.';
-    } else {
-      showHelp();
-    }
-  };
-
-  window.addEventListener('appinstalled', () => {
-    button.textContent = 'Librarium instalada';
-    button.disabled = true;
-    help.textContent = 'Ya está en tu pantalla de inicio.';
-  });
-}
-
-function setupServiceWorkerUpdates() {
-  if (!('serviceWorker' in navigator)) return;
-  const notice = $('#updateNotice');
-  const applyBtn = $('#applyUpdateBtn');
-  const dismissBtn = $('#dismissUpdateBtn');
-  if (!notice || !applyBtn || !dismissBtn) return;
-
-  const show = () => notice.classList.remove('hidden');
-  const hadController = Boolean(navigator.serviceWorker.controller);
-  let refreshing = false;
-  let registrationRef: ServiceWorkerRegistration | null = null;
-  const inspectedWorkers = new WeakSet<ServiceWorker>();
-
-  const inspect = (registration: ServiceWorkerRegistration) => {
-    if (registration.waiting && navigator.serviceWorker.controller) show();
-    const worker = registration.installing;
-    if (worker && !inspectedWorkers.has(worker)) {
-      inspectedWorkers.add(worker);
-      worker.addEventListener('statechange', () => {
-        if (worker.state === 'installed' && navigator.serviceWorker.controller) show();
-      });
-    }
-  };
-
-  const check = () => {
-    if (!registrationRef || document.visibilityState !== 'visible') return;
-    registrationRef.update().then(() => inspect(registrationRef!)).catch(() => {});
-  };
-
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (!hadController || refreshing) return;
-    refreshing = true;
-    window.location.reload();
-  });
-
-  navigator.serviceWorker
-    .register('./service-worker.js', { updateViaCache: 'none' })
-    .then((registration) => {
-      registrationRef = registration;
-      registration.addEventListener('updatefound', () => inspect(registration));
-      inspect(registration);
-      check();
-      setInterval(check, 5 * 60 * 1000);
-      document.addEventListener('visibilitychange', check);
-      window.addEventListener('pageshow', check);
-      window.addEventListener('focus', check);
-      window.addEventListener('online', check);
-    })
-    .catch(() => {});
-
-  applyBtn.onclick = () => {
-    navigator.serviceWorker.getRegistration().then((reg) => {
-      if (reg?.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
-      else window.location.reload();
-    });
-  };
-  dismissBtn.onclick = () => notice.classList.add('hidden');
 }
 
 function switchView(v: string) {
@@ -2111,97 +1858,6 @@ async function openQuotePhoto(quoteId: string, index: number) {
   $<HTMLDialogElement>('#photoViewerDialog')?.showModal();
 }
 
-function slug(s: string) {
-  return (s || 'librarium')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
-}
-
-function download(obj: unknown, name: string) {
-  const a = document.createElement('a');
-  const u = URL.createObjectURL(new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' }));
-  a.href = u;
-  a.download = name;
-  a.click();
-  URL.revokeObjectURL(u);
-}
-
-function decodePastedJSON(raw: string) {
-  const s = raw
-    .trim()
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/i, '');
-  try {
-    return JSON.parse(s);
-  } catch {}
-  const cleaned = s
-    .replace(/&#(?:x([0-9a-f]+)|(\d+));/gi, (_, hex, dec) =>
-      String.fromCodePoint(parseInt(hex || dec, hex ? 16 : 10)),
-    )
-    .replace(/&quot;/gi, '"')
-    .replace(/&apos;|&#39;/gi, "'")
-    .replace(/&amp;/gi, '&')
-    .replace(/\\\s*(\r?\n)/g, '$1')
-    .replace(/\\\s*$/g, '');
-  return JSON.parse(cleaned);
-}
-
-function validateNotesJSON(raw: string) {
-  const obj = decodePastedJSON(raw);
-  if (!obj || !Array.isArray(obj.notes) || !obj.notes.length) {
-    throw Error("El JSON debe incluir un arreglo 'notes' con al menos una nota.");
-  }
-  let section = 1;
-  let lastNumber = 0;
-  const seen = new Set<string>();
-  const notes = obj.notes.map((n: any, i: number) => {
-    if (!n || typeof n !== 'object' || Array.isArray(n)) {
-      throw Error(`La nota ${i + 1} debe ser un objeto.`);
-    }
-    const number = Number(n.number);
-    if (!Number.isInteger(number) || number < 1) {
-      throw Error(`La nota ${i + 1} necesita un número entero mayor que cero.`);
-    }
-    if (n.section != null) {
-      const explicit = Number(n.section);
-      if (!Number.isInteger(explicit) || explicit < 1) {
-        throw Error(`La sección de la nota ${number} debe ser un entero positivo.`);
-      }
-      section = explicit;
-    } else if (i > 0 && number <= lastNumber) {
-      section++;
-    }
-    lastNumber = number;
-    const key = `${section}:${number}`;
-    if (seen.has(key)) {
-      throw Error(`El número ${number} aparece más de una vez en la sección ${section}.`);
-    }
-    seen.add(key);
-    if (typeof n.text !== 'string' || !n.text.trim()) {
-      throw Error(`La nota ${number} necesita texto.`);
-    }
-    const page = (v: unknown, label: string) => {
-      if (v == null || v === '') return null;
-      const x = Number(v);
-      if (!Number.isInteger(x) || x < 0) {
-        throw Error(`La página ${label} de la nota ${number} debe ser un entero igual o mayor que cero, o null.`);
-      }
-      return x;
-    };
-    return {
-      number,
-      section,
-      referencePage: page(n.reference_page ?? n.referencePage, 'de referencia'),
-      endPage: page(n.end_page ?? n.endPage, 'de nota'),
-      text: n.text,
-      comment: typeof n.comment === 'string' ? n.comment : '',
-      read: Boolean(n.read),
-    };
-  });
-  return { obj, notes };
-}
-
 function previewNoteJSON(raw: string) {
   try {
     const { obj, notes } = validateNotesJSON(raw);
@@ -2301,213 +1957,59 @@ async function renderJournal() {
       .join('') || '<p class="empty-inline">Tus anotaciones y fotografías aparecerán acá.</p>';
 }
 
-function getAISettings(): AISettings {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(AI_SETTINGS_KEY) || '{}');
-    const safeModel = (value: unknown, fallback: string) => {
-      const candidate = String(value || '');
-      if (candidate === 'gemini-4-hydrogen') return AI_SETTINGS_DEFAULTS.model;
-      return /^gemini-[a-z0-9.-]{1,80}$/.test(candidate) ? candidate : fallback;
-    };
-    const thinking = ['auto', 'minimal', 'low', 'medium', 'high'].includes(parsed.thinking)
-      ? parsed.thinking
-      : AI_SETTINGS_DEFAULTS.thinking;
-    const safeTaskThinking = (value: unknown): AISettings['chatThinking'] =>
-      value === 'inherit' || ['auto', 'minimal', 'low', 'medium', 'high'].includes(String(value))
-        ? value as AISettings['chatThinking']
-        : 'inherit';
-    return {
-      ...AI_SETTINGS_DEFAULTS,
-      ...parsed,
-      model: safeModel(parsed.model, AI_SETTINGS_DEFAULTS.model),
-      thinking,
-      chatModel: safeModel(parsed.chatModel, ''),
-      chatThinking: safeTaskThinking(parsed.chatThinking),
-      analysisModel: safeModel(parsed.analysisModel, ''),
-      analysisThinking: safeTaskThinking(parsed.analysisThinking),
-      imageModel: safeModel(parsed.imageModel, ''),
-      imageThinking: safeTaskThinking(parsed.imageThinking),
-    };
-  } catch {
-    return { ...AI_SETTINGS_DEFAULTS };
-  }
+function conflictPreview(record: Record<string, any>): string {
+  const content = record.title || record.text || record.summary || record.review || '';
+  return String(content).replace(/\s+/g, ' ').slice(0, 180) || 'El contenido de este registro cambió.';
 }
 
-function getAISettingsForTask(task: AITaskProfile): AISettings {
-  const settings = getAISettings();
-  const profile = task === 'chat'
-    ? { model: settings.chatModel, thinking: settings.chatThinking }
-    : task === 'analysis'
-      ? { model: settings.analysisModel, thinking: settings.analysisThinking }
-      : { model: settings.imageModel, thinking: settings.imageThinking };
-  return {
-    ...settings,
-    model: profile.model || settings.model,
-    thinking: profile.thinking === 'inherit' ? settings.thinking : profile.thinking,
-  };
-}
-
-function fillModelSelect(select: HTMLSelectElement, selectedValue = select.value) {
-  const inheritedLabel = select.dataset.inheritOption;
-  select.replaceChildren();
-  if (inheritedLabel) {
-    const inherited = document.createElement('option');
-    inherited.value = '';
-    inherited.textContent = inheritedLabel;
-    select.append(inherited);
-  }
-  for (const model of availableGeminiModels) {
-    const option = document.createElement('option');
-    option.value = model.id;
-    option.textContent = `${model.name} · ${model.id}`;
-    select.append(option);
-  }
-  if (selectedValue && !availableGeminiModels.some((model) => model.id === selectedValue)) {
-    const saved = document.createElement('option');
-    saved.value = selectedValue;
-    saved.textContent = `${selectedValue} · no aparece en la última lista`;
-    select.append(saved);
-  }
-  select.value = selectedValue;
-  if (select.value !== selectedValue) select.value = inheritedLabel ? '' : availableGeminiModels[0]?.id || '';
-}
-
-function populateAIModelSelects() {
-  const ai = getAISettings();
-  const selections: Record<string, string> = {
-    aiModel: ai.model,
-    aiChatModel: ai.chatModel,
-    aiAnalysisModel: ai.analysisModel,
-    aiImageModel: ai.imageModel,
-  };
-  document.querySelectorAll<HTMLSelectElement>('[data-model-select], #aiModel').forEach((select) => {
-    fillModelSelect(select, selections[select.id] ?? select.value);
-  });
-}
-
-function supportedThinkingLevels(modelId: string): AISettings['thinking'][] {
-  if (/^gemini-[34](?:[.-])/.test(modelId)) {
-    const levels: AISettings['thinking'][] = ['auto', 'low', 'medium', 'high'];
-    if (/flash-lite|3\.(?:6|5)-flash|3-flash-preview/i.test(modelId)) levels.splice(1, 0, 'minimal');
-    return levels;
-  }
-  return ['auto'];
-}
-
-function updateThinkingSelect(select: HTMLSelectElement, modelId: string, selectedValue: string) {
-  const inheritedLabel = select.dataset.inheritOption;
-  const levels = supportedThinkingLevels(modelId);
-  select.replaceChildren();
-  if (inheritedLabel) {
-    const inherited = document.createElement('option');
-    inherited.value = 'inherit';
-    inherited.textContent = inheritedLabel;
-    select.append(inherited);
-  }
-  for (const value of levels) {
-    const option = document.createElement('option');
-    option.value = value;
-    option.textContent = ({ auto: 'Automático', minimal: 'Mínimo', low: 'Bajo', medium: 'Medio', high: 'Alto' })[value];
-    select.append(option);
-  }
-  select.value = levels.includes(selectedValue as AISettings['thinking']) || selectedValue === 'inherit'
-    ? selectedValue
-    : inheritedLabel ? 'inherit' : 'auto';
-}
-
-function syncAIThinkingOptions() {
-  const pairs = [
-    ['aiModel', 'aiThinking', false],
-    ['aiChatModel', 'aiChatThinking', true],
-    ['aiAnalysisModel', 'aiAnalysisThinking', true],
-    ['aiImageModel', 'aiImageThinking', true],
-  ] as const;
-  for (const [modelId, thinkingId, isTask] of pairs) {
-    const model = $<HTMLSelectElement>(`#${modelId}`);
-    const thinking = $<HTMLSelectElement>(`#${thinkingId}`);
-    if (!model || !thinking) continue;
-    const taskModel = isTask && !model.value ? $<HTMLSelectElement>('#aiModel')?.value || '' : model.value;
-    updateThinkingSelect(thinking, taskModel, thinking.value || (isTask ? 'inherit' : 'auto'));
-  }
-}
-
-function thinkingLabel(level: AISettings['thinking']) {
-  return ({ auto: 'automático', minimal: 'mínimo', low: 'bajo', medium: 'medio', high: 'alto' })[level];
-}
-
-async function refreshAIModels() {
-  const status = $('#aiSettingsStatus');
-  const button = $<HTMLButtonElement>('#refreshAIModels');
-  if (!getPrivateGeminiKey()) {
-    if (status) status.textContent = 'Guardá tu API key personal para consultar los modelos habilitados para tu clave.';
+async function renderSyncConflicts() {
+  const host = $('#syncConflictsList');
+  if (!host) return;
+  const conflicts = await getSyncConflicts();
+  host.replaceChildren();
+  if (!conflicts.length) {
+    const empty = document.createElement('p');
+    empty.className = 'muted';
+    empty.textContent = 'No hay conflictos pendientes.';
+    host.append(empty);
     return;
   }
-  if (button) button.disabled = true;
-  if (status) status.textContent = 'Consultando los modelos disponibles para tu clave…';
-  try {
-    const response = await requestGeminiFeature('list-models', {});
-    const result = await response.json();
-    if (!response.ok) throw Error(result.error || `Error HTTP ${response.status}`);
-    const models = Array.isArray(result.models) ? result.models as GeminiModelChoice[] : [];
-    if (!models.length) throw Error('Google no devolvió modelos compatibles con generateContent.');
-    availableGeminiModels = models;
-    populateAIModelSelects();
-    syncAIThinkingOptions();
-    if (status) status.textContent = `${models.length} modelos compatibles disponibles para tu clave. La lista viene directamente de Google.`;
-  } catch (error: any) {
-    if (status) status.textContent = `No se pudo actualizar la lista: ${error.message || 'error de conexión'}`;
-  } finally {
-    if (button) button.disabled = false;
+
+  const storeLabels: Record<SyncConflict['storeName'], string> = {
+    books: 'Libro', notes: 'Nota', entries: 'Anotación', quotes: 'Cita',
+    analyses: 'Análisis', conversations: 'Conversación',
+  };
+  for (const conflict of conflicts) {
+    const card = document.createElement('article');
+    card.className = 'sync-conflict-card';
+    const title = document.createElement('strong');
+    title.textContent = `${storeLabels[conflict.storeName]} · ${conflict.recordId}`;
+    const detail = document.createElement('p');
+    detail.textContent = `Versión local: ${conflictPreview(conflict.local)} · Versión remota: ${conflictPreview(conflict.remote)}`;
+    const actions = document.createElement('div');
+    actions.className = 'panel-actions';
+    for (const choice of ['local', 'remote'] as const) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = choice === 'local' ? 'secondary' : 'mini';
+      button.dataset.conflictId = conflict.id;
+      button.dataset.conflictChoice = choice;
+      button.textContent = choice === 'local' ? 'Usar versión local' : 'Usar versión remota';
+      actions.append(button);
+    }
+    card.append(title, detail, actions);
+    host.append(card);
   }
 }
 
-function saveAISettings() {
-  const settings: AISettings = {
-    model: $<HTMLSelectElement>('#aiModel')?.value || AI_SETTINGS_DEFAULTS.model,
-    thinking: ($<HTMLSelectElement>('#aiThinking')?.value as AISettings['thinking']) || 'auto',
-    chatModel: $<HTMLSelectElement>('#aiChatModel')?.value || '',
-    chatThinking: ($<HTMLSelectElement>('#aiChatThinking')?.value as AISettings['chatThinking']) || 'inherit',
-    analysisModel: $<HTMLSelectElement>('#aiAnalysisModel')?.value || '',
-    analysisThinking: ($<HTMLSelectElement>('#aiAnalysisThinking')?.value as AISettings['analysisThinking']) || 'inherit',
-    imageModel: $<HTMLSelectElement>('#aiImageModel')?.value || '',
-    imageThinking: ($<HTMLSelectElement>('#aiImageThinking')?.value as AISettings['imageThinking']) || 'inherit',
-    style: ($<HTMLSelectElement>('#aiStyle')?.value as AISettings['style']) || 'natural',
-    customStyle: ($<HTMLTextAreaElement>('#aiCustomStyle')?.value || '').trim().slice(0, 600),
-  };
-  try {
-    localStorage.setItem(AI_SETTINGS_KEY, JSON.stringify(settings));
-    $('#aiSettingsStatus')!.textContent = 'Preferencias guardadas en este navegador.';
-  } catch {
-    $('#aiSettingsStatus')!.textContent = 'No se pudieron guardar las preferencias.';
-  }
-  $('#aiCustomStyleWrap')?.classList.toggle('hidden', settings.style !== 'custom');
-  syncAIThinkingOptions();
+async function openSyncConflictsDialog() {
+  const dialog = $<HTMLDialogElement>('#syncConflictsDialog');
+  if (!dialog) return;
+  await renderSyncConflicts();
+  if (!dialog.open) dialog.showModal();
 }
 
-function aiStyleInstruction(settings = getAISettings()): string {
-  const styles: Record<string, string> = {
-    natural: 'Respondé en español, con claridad y tono natural. Explicá los términos difíciles cuando ayude.',
-    concise: 'Respondé en español de forma breve y directa. Priorizá la respuesta principal y evitá repeticiones.',
-    detailed:
-      'Respondé en español con detalle y análisis ordenado. Desarrollá las ideas importantes sin agregar datos no respaldados.',
-    socratic:
-      'Respondé en español con preguntas orientadoras que ayuden a pensar el pasaje, junto con una explicación útil.',
-  };
-  const base = styles[settings.style] || styles.natural;
-  const contextPolicy =
-    'Tomá la nota, el pasaje y el libro como contexto. Si el usuario pide relacionarlos, compararlos o aplicarlos a otro autor, obra, época o concepto, contestá directamente esa consigna con conocimiento general pertinente. No empieces aclarando que ese autor o tema no aparece en el fragmento, ni limites la respuesta al material citado, salvo que el usuario pida expresamente un análisis exclusivo de ese material. Separá con naturalidad lo que dice la fuente de la comparación o interpretación cuando sea útil. Evitá advertencias y aclaraciones genéricas; mencioná una limitación solo si cambia de verdad la respuesta.';
-  return `${base}\n${contextPolicy}${
-    settings.style === 'custom' && settings.customStyle
-      ? `\nPreferencias adicionales: ${settings.customStyle}`
-      : ''
-  }`;
-}
-
-function commentDiscussionPrompt(subject: string) {
-  return `Quiero que evalúes críticamente mi comentario personal sobre ${subject}. Decime qué parte está bien fundamentada, qué puede ser discutible o incorrecto, y proponé contraargumentos razonables cuando corresponda. Decime con claridad si coincidís o no y por qué; no estés de acuerdo solo por cortesía. Tené en cuenta el libro y el fragmento asociados.`;
-}
-
-function updateAccountUI(_status: SyncStatus, message: string, user: any) {
+function updateAccountUI(status: SyncStatus, message: string, user: any) {
   const accountBtn = $('#accountBtn');
   const statusText = $('#syncStatusText');
   const signedOutView = $('#accountSignedOutView');
@@ -2516,7 +2018,17 @@ function updateAccountUI(_status: SyncStatus, message: string, user: any) {
   const nameEl = $('#accountName');
   const emailEl = $('#accountEmail');
 
-  if (statusText) statusText.textContent = message;
+  if (statusText) {
+    statusText.replaceChildren(document.createTextNode(message));
+    if (status === 'conflict') {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'mini';
+      button.textContent = 'Revisar conflictos';
+      button.addEventListener('click', () => void openSyncConflictsDialog());
+      statusText.append(document.createTextNode(' '), button);
+    }
+  }
 
   if (user) {
     const shortName = (user.displayName || user.email || 'Cuenta').split(' ')[0];
@@ -2555,105 +2067,6 @@ function updateAccountUI(_status: SyncStatus, message: string, user: any) {
     syncFeedbackAuthUI();
     void renderMyFeedbackList();
   }
-}
-
-function initSettings() {
-  const ai = getAISettings();
-  const privateKeyInput = $<HTMLInputElement>('#privateGeminiKeyInput');
-  const privateKeyStatus = $('#privateGeminiKeyStatus');
-  populateAIModelSelects();
-  ($<HTMLSelectElement>('#aiModel')!).value = ai.model;
-  ($<HTMLSelectElement>('#aiThinking')!).value = ai.thinking;
-  ($<HTMLSelectElement>('#aiChatModel')!).value = ai.chatModel;
-  ($<HTMLSelectElement>('#aiChatThinking')!).value = ai.chatThinking;
-  ($<HTMLSelectElement>('#aiAnalysisModel')!).value = ai.analysisModel;
-  ($<HTMLSelectElement>('#aiAnalysisThinking')!).value = ai.analysisThinking;
-  ($<HTMLSelectElement>('#aiImageModel')!).value = ai.imageModel;
-  ($<HTMLSelectElement>('#aiImageThinking')!).value = ai.imageThinking;
-  syncAIThinkingOptions();
-  ($<HTMLSelectElement>('#aiStyle')!).value = ai.style;
-  ($<HTMLTextAreaElement>('#aiCustomStyle')!).value = ai.customStyle;
-  $('#aiCustomStyleWrap')?.classList.toggle('hidden', ai.style !== 'custom');
-
-  ['#aiModel', '#aiThinking', '#aiChatModel', '#aiChatThinking', '#aiAnalysisModel', '#aiAnalysisThinking', '#aiImageModel', '#aiImageThinking', '#aiStyle'].forEach((selector) =>
-    $(selector)?.addEventListener('change', () => {
-      syncAIThinkingOptions();
-      saveAISettings();
-    }),
-  );
-  $('#refreshAIModels')?.addEventListener('click', () => void refreshAIModels());
-  $('#aiCustomStyle')?.addEventListener('input', saveAISettings);
-
-  if (privateKeyStatus) {
-    privateKeyStatus.textContent = getPrivateGeminiKey()
-      ? 'Clave guardada en este navegador. Las consultas de IA se envían directamente a Google.'
-      : 'No hay una clave global de Librarium. Guardá tu clave personal para usar la IA.';
-  }
-  $('#savePrivateGeminiKey')?.addEventListener('click', () => {
-    const key = privateKeyInput?.value.trim() || '';
-    if (!key) {
-      if (privateKeyStatus) privateKeyStatus.textContent = 'Pegá tu API key antes de guardarla.';
-      return;
-    }
-    try {
-      localStorage.setItem(PRIVATE_GEMINI_KEY, key);
-      if (privateKeyInput) privateKeyInput.value = '';
-      if (privateKeyStatus) privateKeyStatus.textContent = 'Clave guardada solo en este navegador. La IA usará conexiones directas con Google.';
-      syncGeminiNoKeyBanner();
-      void refreshAIModels();
-    } catch {
-      if (privateKeyStatus) privateKeyStatus.textContent = 'No se pudo guardar la clave en el almacenamiento local de este navegador.';
-    }
-  });
-  $('#removePrivateGeminiKey')?.addEventListener('click', () => {
-    try {
-      localStorage.removeItem(PRIVATE_GEMINI_KEY);
-      if (privateKeyInput) privateKeyInput.value = '';
-      if (privateKeyStatus) privateKeyStatus.textContent = 'Clave eliminada. La IA queda desactivada hasta que guardes otra clave personal.';
-      syncGeminiNoKeyBanner();
-    } catch {
-      if (privateKeyStatus) privateKeyStatus.textContent = 'No se pudo eliminar la clave de este navegador.';
-    }
-  });
-  $('#togglePrivateGeminiKey')?.addEventListener('click', (event) => {
-    if (!privateKeyInput) return;
-    const button = event.currentTarget as HTMLButtonElement;
-    const revealing = privateKeyInput.type === 'password';
-    privateKeyInput.type = revealing ? 'text' : 'password';
-    button.textContent = revealing ? 'Ocultar' : 'Mostrar';
-  });
-
-  $('#settingsOpen')!.onclick = () => {
-    $<HTMLDialogElement>('#settingsDialog')?.showModal();
-    if (isFeedbackAdmin(getSyncState().user)) void refreshAdminFeedbackSummary();
-  };
-  $('#accountBtn')!.onclick = () => {
-    const { user } = getSyncState();
-    if (user) {
-      $<HTMLDialogElement>('#settingsDialog')?.showModal();
-    } else {
-      void handleGoogleSignIn();
-    }
-  };
-  $('#googleSignInBtn')?.addEventListener('click', () => void handleGoogleSignIn());
-  $('#googleSignOutBtn')?.addEventListener('click', () => void handleGoogleSignOut());
-  $('#syncNowBtn')?.addEventListener('click', async () => {
-    const btn = $<HTMLButtonElement>('#syncNowBtn');
-    if (!btn) return;
-    btn.disabled = true;
-    btn.textContent = 'Sincronizando…';
-    try {
-      const count = await migrateLocalDataToCloud();
-      $('#syncStatusText')!.textContent = count
-        ? `Se subieron ${count} registros locales a la nube.`
-        : 'Tu biblioteca local ya estaba al día con la nube.';
-    } catch (err: any) {
-      $('#syncStatusText')!.textContent = `Error al sincronizar: ${err?.message || err}`;
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Sincronizar datos locales';
-    }
-  });
 }
 
 function isInAppBrowser(): boolean {
@@ -2699,6 +2112,61 @@ async function handleGoogleSignIn() {
 
 async function handleGoogleSignOut() {
   await signOutUser();
+}
+
+function initAccountSettings() {
+  $('#settingsOpen')!.onclick = () => {
+    $<HTMLDialogElement>('#settingsDialog')?.showModal();
+    if (isFeedbackAdmin(getSyncState().user)) void refreshAdminFeedbackSummary();
+  };
+  $('#accountBtn')!.onclick = () => {
+    const { user } = getSyncState();
+    if (user) {
+      $<HTMLDialogElement>('#settingsDialog')?.showModal();
+    } else {
+      void handleGoogleSignIn();
+    }
+  };
+  $('#googleSignInBtn')?.addEventListener('click', () => void handleGoogleSignIn());
+  $('#googleSignOutBtn')?.addEventListener('click', () => void handleGoogleSignOut());
+  $('#syncNowBtn')?.addEventListener('click', async () => {
+    const btn = $<HTMLButtonElement>('#syncNowBtn');
+    if (!btn) return;
+    btn.disabled = true;
+    btn.textContent = 'Sincronizando…';
+    try {
+      const count = await migrateLocalDataToCloud();
+      $('#syncStatusText')!.textContent = count
+        ? `Se subieron ${count} registros locales a la nube.`
+        : 'Tu biblioteca local ya estaba al día con la nube.';
+    } catch (err: any) {
+      $('#syncStatusText')!.textContent = `Error al sincronizar: ${err?.message || err}`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Sincronizar datos locales';
+    }
+  });
+  $('#syncConflictsList')?.addEventListener('click', async (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-conflict-choice]');
+    if (!button?.dataset.conflictId) return;
+    button.disabled = true;
+    try {
+      await resolveSyncConflict(
+        button.dataset.conflictId,
+        button.dataset.conflictChoice as 'local' | 'remote',
+      );
+      await renderSyncConflicts();
+    } catch (error: any) {
+      await showConfirmDialog({
+        eyebrow: 'SINCRONIZACIÓN',
+        title: 'No se pudo aplicar la versión',
+        message: String(error?.message || error),
+        noticeOnly: true,
+      });
+    } finally {
+      button.disabled = false;
+    }
+  });
 }
 
 function initAskGesture() {
@@ -4644,10 +4112,7 @@ function wireEvents() {
     const file = input.files?.[0];
     if (!file) return;
     try {
-      const d = JSON.parse(await file.text());
-      if (!Array.isArray(d.books) || !Array.isArray(d.notes) || !Array.isArray(d.entries)) {
-        throw Error('Copia no reconocida');
-      }
+      const d = parseBackupJSON(await file.text());
       const ok = await showConfirmDialog({
         eyebrow: 'RESTAURAR COPIA',
         title: '¿Incorporar copia de seguridad?',
@@ -4655,27 +4120,20 @@ function wireEvents() {
         confirmLabel: 'Restaurar',
       });
       if (!ok) return;
-      for (const b of d.books) {
-        await pushBookToCloud({
-          ...b,
-          tags: Array.isArray(b.tags) ? b.tags : [],
-          rating: b.rating ?? null,
-          review: b.review || '',
-        });
-      }
-      for (const n of d.notes) await pushNoteToCloud(n);
-      for (const x of d.entries) await pushEntryToCloud(x);
-      for (const q of Array.isArray(d.quotes) ? d.quotes : []) await pushQuoteToCloud(q);
-      for (const a of Array.isArray(d.analyses) ? d.analyses : []) await pushAnalysisToCloud(a);
-      for (const c of Array.isArray(d.conversations) ? d.conversations : []) {
-        if (c.bookId) await pushConversationToCloud(c);
-      }
+      const restored = await restoreBackupData(d, {
+        book: pushBookToCloud,
+        note: pushNoteToCloud,
+        entry: pushEntryToCloud,
+        quote: pushQuoteToCloud,
+        analysis: pushAnalysisToCloud,
+        conversation: pushConversationToCloud,
+      });
       books = await all<Book>('books');
       render();
       await showConfirmDialog({
         eyebrow: 'COPIA DE SEGURIDAD',
         title: 'Copia restaurada',
-        message: 'Se incorporaron todos los libros y registros del archivo.',
+        message: `Se incorporaron ${restored} registros del archivo.`,
         noticeOnly: true,
       });
     } catch (err: any) {
@@ -4747,703 +4205,9 @@ function wireEvents() {
     }
   });
 
-  $('#footerFeedbackBtn')?.addEventListener('click', () => openFeedbackDialog('bug'));
-  $('#openFeedbackBtn')?.addEventListener('click', () => openFeedbackDialog('bug'));
-  $('#openFeedbackInboxBtn')?.addEventListener('click', () => void openFeedbackInboxDialog());
-  $('#openUsersDirectoryBtn')?.addEventListener('click', () => void openUsersDirectoryDialog());
-  $('#refreshFeedbackInboxBtn')?.addEventListener('click', () => void loadFeedbackInbox());
-  $('#refreshUsersDirectoryBtn')?.addEventListener('click', () => void loadUsersDirectory());
-  $('#usersDirectorySearch')?.addEventListener('input', () => renderUsersDirectory());
-  $('#usersDirectoryFilters')?.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-users-filter]');
-    if (!btn) return;
-    usersDirectoryFilter = (btn.dataset.usersFilter as typeof usersDirectoryFilter) || 'all';
-    $$('#usersDirectoryFilters [data-users-filter]').forEach((item) =>
-      item.classList.toggle('active', item === btn),
-    );
-    renderUsersDirectory();
-  });
-  $('#feedbackKindRow')?.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-feedback-kind]');
-    if (!btn) return;
-    setFeedbackKind((btn.dataset.feedbackKind as FeedbackKind) || 'bug');
-  });
-  $('#feedbackInboxFilters')?.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-inbox-filter]');
-    if (!btn) return;
-    feedbackInboxFilter = (btn.dataset.inboxFilter as typeof feedbackInboxFilter) || 'all';
-    $$('#feedbackInboxFilters [data-inbox-filter]').forEach((item) =>
-      item.classList.toggle('active', item === btn),
-    );
-    renderFeedbackInboxList();
-  });
-  $('#feedbackSignInBtn')?.addEventListener('click', () => void handleFeedbackSignIn());
-  $('#feedbackCopyBtn')?.addEventListener('click', () => void copyFeedbackAsText());
-  $('#feedbackCopyFallbackBtn')?.addEventListener('click', () => void copyFeedbackAsText());
-  $('#feedbackForm')?.addEventListener('submit', (e) => void handleFeedbackSubmit(e));
+  initAdminFeatures();
 
   initAskGesture();
-}
-
-const FEEDBACK_KIND_LABELS: Record<FeedbackKind, string> = {
-  bug: 'Error o falla',
-  idea: 'Propuesta de cambio',
-  other: 'Comentario',
-};
-
-const FEEDBACK_STATUS_LABELS: Record<FeedbackStatus, string> = {
-  open: 'Pendiente',
-  reviewed: 'En revisión',
-  resolved: 'Resuelto',
-  dismissed: 'Descartado',
-};
-
-let activeFeedbackKind: FeedbackKind = 'bug';
-let inboxFeedbackItems: FeedbackItem[] = [];
-let feedbackInboxFilter: 'all' | 'open' | 'bug' | 'idea' | 'resolved' = 'all';
-
-function setFeedbackKind(kind: FeedbackKind) {
-  activeFeedbackKind = kind;
-  $$('#feedbackKindRow [data-feedback-kind]').forEach((btn) =>
-    btn.classList.toggle('active', btn.dataset.feedbackKind === kind),
-  );
-  const textarea = $<HTMLTextAreaElement>('#feedbackMessage');
-  if (textarea) {
-    textarea.placeholder =
-      kind === 'bug'
-        ? 'Contanos qué estabas haciendo, qué pasó y si viste algún mensaje de error…'
-        : kind === 'idea'
-          ? '¿Qué función te gustaría sumar o qué parte de Librarium mejorarías?'
-          : 'Dejanos tu comentario o duda sobre Librarium…';
-  }
-}
-
-function syncFeedbackAuthUI() {
-  const { user } = getSyncState();
-  const signedIn = Boolean(user && user.emailVerified);
-  $('#feedbackAuthNotice')?.classList.toggle('hidden', signedIn);
-  const submitBtn = $<HTMLButtonElement>('#feedbackSubmitBtn');
-  if (submitBtn) submitBtn.disabled = !signedIn;
-}
-
-function openFeedbackDialog(defaultKind: FeedbackKind = 'bug') {
-  setFeedbackKind(defaultKind);
-  const statusEl = $('#feedbackStatus');
-  if (statusEl) statusEl.textContent = '';
-  syncFeedbackAuthUI();
-  $<HTMLDialogElement>('#feedbackDialog')?.showModal();
-  void renderMyFeedbackList();
-}
-
-async function copyFeedbackAsText() {
-  const statusEl = $('#feedbackStatus');
-  const message = ($<HTMLTextAreaElement>('#feedbackMessage')?.value || '').trim();
-  if (!message) {
-    if (statusEl) statusEl.textContent = 'Escribí primero tu reporte o propuesta para poder copiarlo.';
-    $<HTMLTextAreaElement>('#feedbackMessage')?.focus();
-    return;
-  }
-  const includeTech = Boolean($<HTMLInputElement>('#feedbackIncludeTech')?.checked);
-  const lines = [
-    `[Librarium · ${FEEDBACK_KIND_LABELS[activeFeedbackKind]}]`,
-    message,
-  ];
-  if (includeTech) lines.push(`Contexto: ${buildSafeAppContext()}`);
-  const ok = await copyPlainText(lines.join('\n\n'));
-  if (statusEl) {
-    statusEl.textContent = ok
-      ? 'Texto copiado al portapapeles. Ya podés pegarlo en el grupo.'
-      : 'No se pudo copiar automáticamente; podés seleccionar el texto manualmente.';
-  }
-}
-
-async function handleFeedbackSignIn() {
-  const statusEl = $('#feedbackStatus');
-  if (isInAppBrowser()) {
-    if (statusEl) {
-      statusEl.textContent =
-        'Abriste Librarium desde un navegador interno (WhatsApp/Instagram). Abrila en Chrome o Safari desde ⋮ para iniciar sesión con Google, o usá «Copiar texto para grupo».';
-    }
-    return;
-  }
-  try {
-    await signInWithGoogle();
-    syncFeedbackAuthUI();
-    if (statusEl) statusEl.textContent = 'Sesión iniciada. Ya podés enviar tu mensaje directo.';
-    await renderMyFeedbackList();
-  } catch (err: any) {
-    if (statusEl) {
-      statusEl.textContent =
-        err?.code === 'auth/popup-closed-by-user'
-          ? 'Se cerró la ventana de Google antes de completar el ingreso.'
-          : `No se pudo iniciar sesión: ${err?.message || err}`;
-    }
-  }
-}
-
-async function handleFeedbackSubmit(e: Event) {
-  e.preventDefault();
-  const statusEl = $('#feedbackStatus');
-  const submitBtn = $<HTMLButtonElement>('#feedbackSubmitBtn');
-  const textarea = $<HTMLTextAreaElement>('#feedbackMessage');
-  if (!textarea || !submitBtn) return;
-
-  const message = textarea.value.trim();
-  if (!message) {
-    textarea.focus();
-    return;
-  }
-
-  const includeTech = Boolean($<HTMLInputElement>('#feedbackIncludeTech')?.checked);
-  submitBtn.disabled = true;
-  const originalLabel = submitBtn.textContent || 'Enviar';
-  submitBtn.textContent = 'Enviando…';
-  if (statusEl) statusEl.textContent = 'Enviando tu mensaje…';
-
-  try {
-    await submitFeedbackReport(activeFeedbackKind, message, includeTech);
-    textarea.value = '';
-    if (statusEl) statusEl.textContent = '¡Gracias! Tu mensaje quedó guardado para revisarlo pronto.';
-    await renderMyFeedbackList();
-    if (isFeedbackAdmin(getSyncState().user)) void refreshAdminFeedbackSummary();
-  } catch (err: any) {
-    if (statusEl) {
-      statusEl.textContent =
-        navigator.onLine === false
-          ? 'Sin conexión. Podés usar «Copiar texto» o reintentar cuando vuelva internet.'
-          : `No se pudo enviar: ${err?.message || 'error de conexión'}`;
-    }
-  } finally {
-    submitBtn.textContent = originalLabel;
-    syncFeedbackAuthUI();
-  }
-}
-
-async function renderMyFeedbackList() {
-  const section = $('#myFeedbackSection');
-  const host = $('#myFeedbackList');
-  if (!section || !host) return;
-  const { user } = getSyncState();
-  if (!user || !user.emailVerified) {
-    section.classList.add('hidden');
-    host.replaceChildren();
-    return;
-  }
-  try {
-    const items = await fetchMyFeedbackReports();
-    if (!items.length) {
-      section.classList.add('hidden');
-      host.replaceChildren();
-      return;
-    }
-    section.classList.remove('hidden');
-    host.innerHTML = items
-      .map((item) => {
-        const date = new Date(item.createdAt).toLocaleDateString('es-AR', {
-          day: 'numeric',
-          month: 'short',
-        });
-        return `<article class="feedback-card">
-          <div class="feedback-card-head">
-            <div class="feedback-badges">
-              <span class="feedback-badge kind-${esc(item.kind)}">${esc(FEEDBACK_KIND_LABELS[item.kind])}</span>
-              <span class="feedback-badge status-${esc(item.status)}">${esc(FEEDBACK_STATUS_LABELS[item.status])}</span>
-            </div>
-            <span class="feedback-meta">${esc(date)}</span>
-          </div>
-          <p class="feedback-body">${esc(item.message)}</p>
-          ${item.adminNote ? `<p class="feedback-admin-reply"><strong>Respuesta:</strong> ${esc(item.adminNote)}</p>` : ''}
-        </article>`;
-      })
-      .join('');
-  } catch {
-    section.classList.add('hidden');
-  }
-}
-
-let lastBackgroundVisitArchiveAt = 0;
-
-function updateAdminPendingBadges(openCount: number) {
-  const settingsBtn = $('#settingsOpen');
-  const settingsBadge = $('#settingsOpenBadge');
-  const inboxBadge = $('#inboxPendingBadge');
-  const label = openCount > 99 ? '99+' : String(openCount);
-  const show = openCount > 0;
-
-  if (settingsBadge) {
-    settingsBadge.textContent = show ? label : '';
-    settingsBadge.classList.toggle('hidden', !show);
-  }
-  if (inboxBadge) {
-    inboxBadge.textContent = show ? label : '';
-    inboxBadge.classList.toggle('hidden', !show);
-  }
-  if (settingsBtn) {
-    settingsBtn.setAttribute(
-      'aria-label',
-      show
-        ? `Ajustes (${openCount} ${openCount === 1 ? 'reporte pendiente' : 'reportes pendientes'})`
-        : 'Ajustes',
-    );
-  }
-}
-
-async function archiveAdminSiteVisitsInBackground() {
-  if (!isFeedbackAdmin(getSyncState().user)) return;
-  if (Date.now() - lastBackgroundVisitArchiveAt < 2 * 60 * 1000) return;
-  lastBackgroundVisitArchiveAt = Date.now();
-  try {
-    const serverVisits = await fetchAdminSiteVisits();
-    if (serverVisits) await syncAndFetchPersistentSiteStats(serverVisits);
-  } catch {
-    // Non-critical background archival
-  }
-}
-
-async function refreshAdminFeedbackSummary() {
-  const summaryEl = $('#adminFeedbackSummary');
-  if (!isFeedbackAdmin(getSyncState().user)) {
-    updateAdminPendingBadges(0);
-    return;
-  }
-  try {
-    const items = await fetchAllFeedbackReports();
-    const openCount = items.filter((item) => item.status === 'open').length;
-    updateAdminPendingBadges(openCount);
-    if (summaryEl) {
-      summaryEl.textContent = items.length
-        ? `${openCount} ${openCount === 1 ? 'pendiente' : 'pendientes'} · ${items.length} ${items.length === 1 ? 'envío total' : 'envíos totales'}.`
-        : 'Todavía no hay reportes ni propuestas.';
-    }
-  } catch {
-    if (summaryEl) {
-      summaryEl.textContent = 'Revisá los envíos de las personas que usan Librarium.';
-    }
-  }
-}
-
-async function openFeedbackInboxDialog() {
-  const dlg = $<HTMLDialogElement>('#feedbackInboxDialog');
-  if (!dlg || !isFeedbackAdmin(getSyncState().user)) return;
-  if (!dlg.open) dlg.showModal();
-  await loadFeedbackInbox();
-}
-
-async function loadFeedbackInbox() {
-  const statusEl = $('#feedbackInboxStatus');
-  const listEl = $('#feedbackInboxList');
-  if (!listEl) return;
-  if (statusEl) statusEl.textContent = 'Cargando envíos…';
-  try {
-    inboxFeedbackItems = await fetchAllFeedbackReports();
-    renderFeedbackInboxList();
-    void refreshAdminFeedbackSummary();
-  } catch (err: any) {
-    if (statusEl) statusEl.textContent = `No se pudieron cargar los reportes: ${err?.message || err}`;
-    listEl.replaceChildren();
-  }
-}
-
-function renderFeedbackInboxList() {
-  const statusEl = $('#feedbackInboxStatus');
-  const listEl = $('#feedbackInboxList');
-  if (!listEl) return;
-
-  const filtered = inboxFeedbackItems.filter((item) => {
-    if (feedbackInboxFilter === 'all') return true;
-    if (feedbackInboxFilter === 'open' || feedbackInboxFilter === 'resolved') {
-      return item.status === feedbackInboxFilter;
-    }
-    return item.kind === feedbackInboxFilter;
-  });
-
-  if (statusEl) {
-    const openCount = inboxFeedbackItems.filter((item) => item.status === 'open').length;
-    statusEl.textContent = `${filtered.length} ${filtered.length === 1 ? 'elemento mostrado' : 'elementos mostrados'} (${openCount} ${openCount === 1 ? 'pendiente' : 'pendientes'} en total).`;
-  }
-
-  if (!filtered.length) {
-    listEl.innerHTML = '<p class="empty-inline">No hay reportes en esta vista.</p>';
-    return;
-  }
-
-  listEl.innerHTML = filtered
-    .map((item) => {
-      const date = new Date(item.createdAt).toLocaleString('es-AR', {
-        day: 'numeric',
-        month: 'short',
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-      return `<article class="feedback-card" data-inbox-id="${esc(item.id)}">
-        <div class="feedback-card-head">
-          <div class="feedback-badges">
-            <span class="feedback-badge kind-${esc(item.kind)}">${esc(FEEDBACK_KIND_LABELS[item.kind])}</span>
-            <span class="feedback-badge status-${esc(item.status)}">${esc(FEEDBACK_STATUS_LABELS[item.status])}</span>
-          </div>
-          <span class="feedback-meta">${esc(date)}</span>
-        </div>
-        <div class="feedback-meta"><strong>${esc(item.authorName)}</strong>${item.authorEmail ? ` · ${esc(item.authorEmail)}` : ''}</div>
-        <p class="feedback-body">${esc(item.message)}</p>
-        ${item.appContext ? `<p class="feedback-tech">${esc(item.appContext)}</p>` : ''}
-        <div class="feedback-admin-controls">
-          <div class="feedback-admin-row">
-            <select data-inbox-status aria-label="Estado del reporte">
-              <option value="open" ${item.status === 'open' ? 'selected' : ''}>Pendiente</option>
-              <option value="reviewed" ${item.status === 'reviewed' ? 'selected' : ''}>En revisión</option>
-              <option value="resolved" ${item.status === 'resolved' ? 'selected' : ''}>Resuelto</option>
-              <option value="dismissed" ${item.status === 'dismissed' ? 'selected' : ''}>Descartado</option>
-            </select>
-            <input type="text" data-inbox-note maxlength="1000" value="${esc(item.adminNote)}" placeholder="Nota o respuesta opcional visible para quien lo envió…">
-          </div>
-          <div class="feedback-admin-actions">
-            <button type="button" class="danger-btn" data-inbox-delete="${esc(item.id)}">Eliminar</button>
-            <button type="button" class="secondary" data-inbox-save="${esc(item.id)}">Guardar</button>
-          </div>
-        </div>
-      </article>`;
-    })
-    .join('');
-
-  listEl.querySelectorAll<HTMLButtonElement>('[data-inbox-save]').forEach((btn) => {
-    btn.onclick = async () => {
-      const id = btn.dataset.inboxSave!;
-      const cardEl = btn.closest<HTMLElement>('[data-inbox-id]');
-      const statusSelect = cardEl?.querySelector<HTMLSelectElement>('[data-inbox-status]');
-      const noteInput = cardEl?.querySelector<HTMLInputElement>('[data-inbox-note]');
-      if (!statusSelect || !noteInput) return;
-      const nextStatus = statusSelect.value as FeedbackStatus;
-      const nextNote = noteInput.value;
-      btn.disabled = true;
-      btn.textContent = 'Guardando…';
-      try {
-        await updateFeedbackReport(id, nextStatus, nextNote);
-        const target = inboxFeedbackItems.find((x) => x.id === id);
-        if (target) {
-          target.status = nextStatus;
-          target.adminNote = nextNote.trim();
-        }
-        renderFeedbackInboxList();
-        void refreshAdminFeedbackSummary();
-      } catch (err: any) {
-        if (statusEl) statusEl.textContent = `No se pudo actualizar: ${err?.message || err}`;
-        btn.disabled = false;
-        btn.textContent = 'Guardar';
-      }
-    };
-  });
-
-  listEl.querySelectorAll<HTMLButtonElement>('[data-inbox-delete]').forEach((btn) => {
-    btn.onclick = async () => {
-      const id = btn.dataset.inboxDelete!;
-      const ok = await showConfirmDialog({
-        eyebrow: 'BUZÓN DE REPORTES',
-        title: '¿Eliminar este reporte?',
-        message: 'Se borrará de Firestore de forma permanente.',
-        confirmLabel: 'Eliminar',
-        danger: true,
-      });
-      if (!ok) return;
-      btn.disabled = true;
-      try {
-        await deleteFeedbackReport(id);
-        inboxFeedbackItems = inboxFeedbackItems.filter((x) => x.id !== id);
-        renderFeedbackInboxList();
-        void refreshAdminFeedbackSummary();
-      } catch (err: any) {
-        if (statusEl) statusEl.textContent = `No se pudo eliminar: ${err?.message || err}`;
-        btn.disabled = false;
-      }
-    };
-  });
-}
-
-let usersDirectoryItems: UserDirectoryEntry[] = [];
-let siteVisitStats: SiteVisitStats | null = null;
-let persistentAnonStats: PersistentSiteStatsSummary = { totalAnonAllTime: 0, byDate: {} };
-let usersDirectoryFilter: 'all' | 'active' | 'today' | 'reading' = 'all';
-
-function isUserOnlineNow(iso: string): boolean {
-  if (!iso) return false;
-  const ms = Date.parse(iso);
-  if (!Number.isFinite(ms)) return false;
-  return Date.now() - ms <= 5 * 60 * 1000;
-}
-
-function isSameLocalDay(iso: string): boolean {
-  if (!iso) return false;
-  const ms = Date.parse(iso);
-  if (!Number.isFinite(ms)) return false;
-  const d = new Date(ms);
-  const now = new Date();
-  return (
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate()
-  );
-}
-
-function formatLastSeen(iso: string): string {
-  if (!iso) return 'Sin actividad reciente';
-  const ms = Date.parse(iso);
-  if (!Number.isFinite(ms)) return 'Sin actividad reciente';
-  const diffMin = Math.max(0, Math.floor((Date.now() - ms) / 60000));
-  if (diffMin <= 5) return 'Activo ahora';
-  if (diffMin < 60) return `Última vez hace ${diffMin} min`;
-  const diffHours = Math.floor(diffMin / 60);
-  if (diffHours < 24) return `Última vez hace ${diffHours} h`;
-  return `Última vez: ${new Date(ms).toLocaleString('es-AR', {
-    day: 'numeric',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  })}`;
-}
-
-function formatShortDate(iso: string): string {
-  if (!iso) return '—';
-  const ms = Date.parse(iso);
-  if (!Number.isFinite(ms)) return '—';
-  return new Date(ms).toLocaleDateString('es-AR', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
-}
-
-async function openUsersDirectoryDialog() {
-  const dlg = $<HTMLDialogElement>('#usersDirectoryDialog');
-  if (!dlg || !isFeedbackAdmin(getSyncState().user)) return;
-  if (!dlg.open) dlg.showModal();
-  await loadUsersDirectory();
-}
-
-async function loadUsersDirectory() {
-  const statusEl = $('#usersDirectoryStatus');
-  const listEl = $('#usersDirectoryList');
-  if (!listEl) return;
-  if (statusEl) statusEl.textContent = 'Cargando usuarios, visitas y lecturas…';
-  try {
-    const [users, visits] = await Promise.all([
-      fetchAdminUserDirectory(),
-      fetchAdminSiteVisits(),
-    ]);
-    usersDirectoryItems = users;
-    siteVisitStats = visits;
-    persistentAnonStats = await syncAndFetchPersistentSiteStats(visits);
-    lastBackgroundVisitArchiveAt = Date.now();
-    renderUsersDirectory();
-  } catch (err: any) {
-    if (statusEl) statusEl.textContent = `No se pudieron cargar los usuarios: ${err?.message || err}`;
-    listEl.replaceChildren();
-  }
-}
-
-function getLast7UtcDays(): string[] {
-  const days: string[] = [];
-  const now = Date.now();
-  for (let i = 0; i < 7; i++) {
-    days.push(new Date(now - i * 86400000).toISOString().slice(0, 10));
-  }
-  return days;
-}
-
-function formatDayChip(dateStr: string): string {
-  const today = new Date().toISOString().slice(0, 10);
-  if (dateStr === today) return 'Hoy';
-  const parts = dateStr.split('-').map(Number);
-  if (parts.length !== 3) return dateStr;
-  const dt = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 12, 0, 0));
-  return dt.toLocaleDateString('es-AR', { day: 'numeric', month: 'short' });
-}
-
-function renderUsersVisitsSummary() {
-  const host = $('#usersVisitsSummary');
-  if (!host) return;
-  const totalUserVisits = usersDirectoryItems.reduce(
-    (acc, u) => acc + (u.visitCount > 0 ? u.visitCount : 1),
-    0,
-  );
-  const usersToday = usersDirectoryItems.filter((u) => isSameLocalDay(u.lastActiveAt)).length;
-  const activeNow = usersDirectoryItems.filter((u) => isUserOnlineNow(u.lastActiveAt)).length;
-  const todayKey = new Date().toISOString().slice(0, 10);
-  const anonAllTime = Math.max(
-    persistentAnonStats.totalAnonAllTime,
-    siteVisitStats?.anonVisits || 0,
-  );
-  const anonToday = Math.max(
-    persistentAnonStats.byDate[todayKey] || 0,
-    siteVisitStats?.todayAnonVisits || 0,
-  );
-  const combinedTotal = totalUserVisits + anonAllTime;
-
-  const cards: string[] = [
-    `<div class="users-visit-stat">
-      <span class="users-visit-stat-label">Visitas de cuentas (nube)</span>
-      <strong>${totalUserVisits}</strong>
-      <span class="users-visit-sub">${usersDirectoryItems.length} ${usersDirectoryItems.length === 1 ? 'cuenta' : 'cuentas'} · ${usersToday} hoy · ${activeNow} ahora</span>
-    </div>`,
-    `<div class="users-visit-stat">
-      <span class="users-visit-stat-label">Sin cuenta (histórico nube)</span>
-      <strong>${anonAllTime}</strong>
-      <span class="users-visit-sub">Hoy: ${anonToday}${siteVisitStats ? ` · Servidor actual: ${siteVisitStats.anonVisits}` : ''}</span>
-    </div>`,
-    `<div class="users-visit-stat">
-      <span class="users-visit-stat-label">Total histórico combinado</span>
-      <strong>${combinedTotal}</strong>
-      <span class="users-visit-sub">Cuentas registradas + visitantes anónimos archivados</span>
-    </div>`,
-  ];
-
-  host.innerHTML = cards.join('');
-  host.classList.remove('hidden');
-
-  const dailyHost = $('#usersDailyBreakdown');
-  if (!dailyHost) return;
-  const days = getLast7UtcDays();
-  const rowsData = days.map((date) => {
-    const authUsers = usersDirectoryItems.filter((u) =>
-      u.visitDays.includes(date) || u.lastActiveAt.slice(0, 10) === date,
-    ).length;
-    const anonVisits = persistentAnonStats.byDate[date] || 0;
-    return { date, authUsers, anonVisits, total: authUsers + anonVisits };
-  });
-  const maxDayTotal = Math.max(1, ...rowsData.map((r) => r.total));
-
-  dailyHost.innerHTML = `
-    <div class="users-daily-head">
-      <p class="eyebrow">HISTÓRICO ÚLTIMOS 7 DÍAS (PERSISTENTE EN NUBE)</p>
-      <span class="users-daily-sub">Verde: cuentas · Marrón: sin cuenta</span>
-    </div>
-    <div class="users-daily-rows">
-      ${rowsData
-        .map((r) => {
-          const authPct = Math.round((r.authUsers / maxDayTotal) * 100);
-          const anonPct = Math.round((r.anonVisits / maxDayTotal) * 100);
-          return `<div class="users-daily-row">
-            <span class="users-daily-date">${esc(formatDayChip(r.date))}</span>
-            <div class="users-daily-bar" aria-hidden="true">
-              <i class="users-daily-seg-auth" style="width:${authPct}%"></i>
-              <i class="users-daily-seg-anon" style="width:${anonPct}%"></i>
-            </div>
-            <span class="users-daily-counts">${r.authUsers} ctas · ${r.anonVisits} anón.</span>
-          </div>`;
-        })
-        .join('')}
-    </div>`;
-  dailyHost.classList.remove('hidden');
-}
-
-function renderUsersDirectory() {
-  const statusEl = $('#usersDirectoryStatus');
-  const listEl = $('#usersDirectoryList');
-  if (!listEl) return;
-
-  renderUsersVisitsSummary();
-
-  const q = ($<HTMLInputElement>('#usersDirectorySearch')?.value || '').trim().toLowerCase();
-  const filtered = usersDirectoryItems.filter((u) => {
-    if (usersDirectoryFilter === 'active' && !isUserOnlineNow(u.lastActiveAt)) return false;
-    if (usersDirectoryFilter === 'today' && !isSameLocalDay(u.lastActiveAt)) return false;
-    if (
-      usersDirectoryFilter === 'reading' &&
-      !u.bookSummaries.some((b) => b.status === 'reading')
-    ) {
-      return false;
-    }
-    if (!q) return true;
-    const hay = [
-      u.displayName,
-      u.email,
-      ...u.bookSummaries.map((b) => `${b.title} ${b.author}`),
-    ]
-      .join(' ')
-      .toLowerCase();
-    return hay.includes(q);
-  });
-
-  if (statusEl) {
-    const totalBooks = usersDirectoryItems.reduce(
-      (acc, u) => acc + Math.max(u.booksCount, u.bookSummaries.length),
-      0,
-    );
-    statusEl.textContent = `Mostrando ${filtered.length} de ${usersDirectoryItems.length} ${usersDirectoryItems.length === 1 ? 'usuario' : 'usuarios'} · ${totalBooks} ${totalBooks === 1 ? 'libro registrado' : 'libros registrados'}.`;
-  }
-
-  if (!filtered.length) {
-    listEl.innerHTML = '<p class="empty-inline">No hay usuarios que coincidan con este filtro.</p>';
-    return;
-  }
-
-  listEl.innerHTML = filtered
-    .map((u) => {
-      const online = isUserOnlineNow(u.lastActiveAt);
-      const presenceLabel = formatLastSeen(u.lastActiveAt);
-      const initial = (u.displayName || u.email || 'L').trim().charAt(0).toUpperCase() || 'L';
-      const avatarHtml = u.photoURL
-        ? `<img class="user-dir-avatar" src="${esc(u.photoURL)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
-        : `<span class="user-dir-avatar-fallback" aria-hidden="true">${esc(initial)}</span>`;
-
-      const visitsLabel =
-        u.visitCount > 0
-          ? `<strong>${u.visitCount}</strong> ${u.visitCount === 1 ? 'visita' : 'visitas'}`
-          : '<strong>1+</strong> visitas';
-      const bookCount = Math.max(u.booksCount, u.bookSummaries.length);
-      const readingCount = u.bookSummaries.filter((b) => b.status === 'reading').length;
-      const finishedCount = u.bookSummaries.filter((b) => b.status === 'finished').length;
-
-      const booksHtml = u.bookSummaries.length
-        ? `<div class="user-books-list">
-            ${u.bookSummaries
-              .map((b) => {
-                const pct = Math.max(0, Math.min(100, Math.round(b.percent || 0)));
-                const pagesText =
-                  b.totalPages > 0 ? ` · ${b.currentPage}/${b.totalPages} p.` : '';
-                return `<div class="user-book-row">
-                  <div class="user-book-head">
-                    <div class="user-book-title-wrap">
-                      <span class="user-book-title">${esc(b.title)}</span>
-                      ${b.author ? `<span class="user-book-author">${esc(b.author)}</span>` : ''}
-                    </div>
-                    <div class="user-book-progress-meta">
-                      <span class="user-book-status status-${esc(b.status)}">${esc(statusNames[b.status] || b.status)}</span>
-                      <span class="user-book-pct">${pct}%${esc(pagesText)}</span>
-                    </div>
-                  </div>
-                  <div class="user-book-bar" aria-hidden="true"><i style="width:${pct}%"></i></div>
-                </div>`;
-              })
-              .join('')}
-          </div>`
-        : `<p class="empty-inline">Todavía no sincronizó libros o aún no abrió la app después de esta actualización.</p>`;
-
-      return `<article class="user-dir-card">
-        <div class="user-dir-head">
-          <div class="user-dir-identity">
-            ${avatarHtml}
-            <div class="user-dir-who">
-              <span class="user-dir-name">${esc(u.displayName || 'Lector')}</span>
-              ${u.email ? `<span class="user-dir-email">${esc(u.email)}</span>` : ''}
-            </div>
-          </div>
-          <div class="user-dir-meta">
-            <span class="user-presence ${online ? 'online' : 'offline'}">
-              <span class="user-presence-dot" aria-hidden="true"></span>
-              ${esc(presenceLabel)}
-            </span>
-            <span>Alta: ${esc(formatShortDate(u.createdAt))}</span>
-          </div>
-        </div>
-        <div class="user-dir-stats">
-          <span>${visitsLabel}</span>
-          <span><strong>${bookCount}</strong> ${bookCount === 1 ? 'libro' : 'libros'}</span>
-          <span><strong>${readingCount}</strong> en lectura</span>
-          <span><strong>${finishedCount}</strong> ${finishedCount === 1 ? 'terminado' : 'terminados'}</span>
-        </div>
-        ${booksHtml}
-      </article>`;
-    })
-    .join('');
 }
 
 export async function initApp() {
@@ -5453,7 +4217,8 @@ export async function initApp() {
   wireEvents();
   initEnvironmentNotices();
   render();
-  initSettings();
+  initAISettings();
+  initAccountSettings();
   initInstall();
   setupServiceWorkerUpdates();
 

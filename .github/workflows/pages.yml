@@ -24,9 +24,10 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install dependencies and build
+      - name: Install dependencies, test, and build
         run: |
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          npm run test
           npm run build
 
       - name: Verify Pages files
