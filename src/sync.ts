@@ -24,6 +24,7 @@ import {
 import { all, clearAllStores, del, get, put, type StoreName } from './db';
 import { makeConflictId, reconcileRecords } from './sync-merge';
 import { normalizeCharacter, normalizeRelation } from './app/characters-model';
+import { visitsApiEnabled } from './site-config';
 import type {
   Book,
   BookAnalysis,
@@ -391,7 +392,7 @@ function getSiteVisitSessionId(): string {
 }
 
 export async function reportSiteVisit(authenticated: boolean): Promise<void> {
-  if (typeof window === 'undefined') return;
+  if (typeof window === 'undefined' || !visitsApiEnabled) return;
   try {
     await fetch('/api/visits', {
       method: 'POST',

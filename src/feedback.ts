@@ -13,6 +13,7 @@ import {
 import type { User } from 'firebase/auth';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import { sanitizeId } from './sync';
+import { visitsApiEnabled } from './site-config';
 import type {
   BookProgressSummary,
   BookStatus,
@@ -290,6 +291,7 @@ export async function fetchAdminUserDirectory(): Promise<UserDirectoryEntry[]> {
 }
 
 export async function fetchAdminSiteVisits(): Promise<SiteVisitStats | null> {
+  if (!visitsApiEnabled) return null;
   const user = auth.currentUser;
   if (!isFeedbackAdmin(user) || !user) return null;
   try {
