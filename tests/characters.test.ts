@@ -341,7 +341,7 @@ test('a backup relation across two books is dropped', () => {
 // Contexto para la IA
 // ---------------------------------------------------------------------------
 
-const book = { id: BOOK, title: 'La casa grande', author: 'A. Autora', publisher: 'Editorial X', year: '1999', edition: '' };
+const book = { id: BOOK, title: 'La casa grande', author: 'A. Autora', publisher: 'Editorial X', year: '1999', edition: '', currentPage: 100 };
 const notes: any[] = [
   { id: 'n1', bookId: BOOK, number: 3, section: 1, referencePage: null, endPage: 40, text: 'Ana abre la puerta del almacén.', read: false },
   { id: 'n2', bookId: BOOK, number: 4, section: 1, referencePage: null, endPage: 41, text: 'Una nota sobre otra cosa.', read: false },
