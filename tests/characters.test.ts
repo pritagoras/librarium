@@ -65,6 +65,18 @@ test('character web research rejects a response that did not execute Google Sear
   }
 });
 
+test('character web research preserves Gemini quota errors as HTTP 429', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = (async () => new Response(JSON.stringify({ error: { message: 'Resource exhausted' } }), { status: 429 })) as typeof fetch;
+    const response = await directGeminiRequest('character-research', { name: 'Pierre', book: { title: 'Guerra y paz' } }, 'key');
+    assert.equal(response.status, 429);
+    assert.match((await response.json()).error, /límite temporal/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 function character(id: string, name: string, extra: Partial<Character> = {}): Character {
   return {
     id, bookId: BOOK, name, aliases: [], age: '', description: '', traits: [], occupation: '',
