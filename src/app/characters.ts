@@ -126,7 +126,7 @@ interface State {
   pendingRelatives: Array<{ name: string; type: string; direction: 'out' | 'in'; certainty: Certainty; evidence: string }>;
   familyReview: { status: 'idle' | 'running' | 'prompt' | 'review'; prompt: string; responseText: string; error: string; relatives: Array<{ name: string; type: string; direction: 'out' | 'in'; age: string; occupation: string; description: string; basis: string; certainty: Certainty }> };
   characterSearch: { status: 'idle' | 'running' | 'candidate-prompt' | 'candidates' | 'profile-prompt' | 'ready'; name: string; candidates: Array<{ name: string; aliases: string[]; description: string; confidence: string }>; sources: Array<{ title: string; url: string }>; error: string; suggestion: any | null; prompt: string; responseText: string };
-  networkReview: { status: 'idle' | 'running' | 'prompt' | 'review'; prompt: string; responseText: string; error: string; proposals: NetworkProposal[]; manualFindings: Array<{ category: string; characterIds: string[]; reason: string; evidence: string; sourceUrl: string }> };
+  networkReview: { status: 'idle' | 'running' | 'prompt' | 'review'; prompt: string; responseText: string; error: string; proposals: NetworkProposal[]; manualFindings: Array<{ category: string; characterIds: string[]; name?: string; reason: string; evidence: string; sourceUrl: string }> };
 }
 
 interface NetworkProposal {
