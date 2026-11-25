@@ -633,9 +633,9 @@ export const AI_SYSTEM_RULES = [
   'Sos un asistente de lectura riguroso. Ayudás a una persona a completar la ficha de un personaje de un libro.',
   'NO tenés el texto completo del libro: solo recibís los datos de la ficha y las notas, anotaciones y citas que la persona guardó. Nunca afirmes haber leído el libro.',
   'Separá siempre tu respuesta en estas secciones, omitiendo las que no apliquen: «Datos explícitos» (solo lo que consta en el material recibido, citando el código de la fuente entre corchetes, p. ej. [N2]), «Inferencias» (cada una rotulada como inferencia y con el motivo) y «Sin información suficiente» (lo que no se puede establecer con el material).',
-  'Si el material no alcanza, decí claramente que no encontrás información suficiente. Ante la duda, no completes.',
-  'No inventes edades, parentescos, escenas, hechos ni citas. Solo transcribí entre comillas texto que aparezca literalmente en el material, con su código de fuente.',
-  'Si recurrís a conocimiento general sobre la obra, rotulalo «Conocimiento general del modelo (no verificado con el ejemplar de la persona)» y nunca lo presentes como dato explícito.',
+  'Si el material guardado no alcanza, no te quedes en «no hay información»: respondé con lo que sepas de la obra y del personaje (edad, parentescos, rol, descripción, pertenencia) en una sección «Conocimiento general del modelo», indicando tu seguridad (alta, media o baja). Reservá «Sin información suficiente» para lo que realmente no conozcas.',
+  'No inventes edades, parentescos, escenas, hechos ni citas: si no estás seguro de un dato, decí qué tan seguro estás en lugar de callarlo o afirmarlo. Solo transcribí entre comillas texto que aparezca literalmente en el material, con su código de fuente.',
+  'El conocimiento general también respeta el límite antispoilers de la persona. Si recurrís a conocimiento general sobre la obra, rotulalo «Conocimiento general del modelo (no verificado con el ejemplar de la persona)» y nunca lo presentes como dato explícito.',
   'Respondé en español, de forma concisa.',
 ].join('\n');
 
@@ -818,17 +818,17 @@ export function buildCharacterAIRequest(input: AIContextInput): AIRequestPlan {
   );
   sections.push(
     material.length
-      ? 'MATERIAL GUARDADO POR LA PERSONA que menciona a los personajes (única evidencia textual disponible):\n' + material.join('\n')
+      ? 'MATERIAL GUARDADO POR LA PERSONA que menciona a los personajes (evidencia textual guardada; podés complementarla con tu conocimiento de la obra):\n' + material.join('\n')
       : 'MATERIAL GUARDADO POR LA PERSONA: no hay notas, anotaciones ni citas que mencionen a estos personajes. No tenés texto del libro.',
   );
 
   let question: string;
   if (scope.kind === 'character') {
-    question = `Con el material anterior, ¿qué se puede afirmar sobre «${character.name}»? Señalá qué datos de la ficha están respaldados, cuáles no, y qué falta.`;
+    question = `Con el material anterior, ¿qué se puede afirmar sobre «${character.name}»? Señalá qué datos de la ficha están respaldados, cuáles no, y qué falta. Lo que falte completalo con tu conocimiento de la obra (sin spoilers), rotulado y con tu nivel de seguridad.`;
   } else if (scope.kind === 'field') {
-    question = `Consulta puntual sobre «${character.name}»: ${FIELD_QUESTIONS[scope.field]}. Si el material no lo establece, decilo; no completes el dato.`;
+    question = `Consulta puntual sobre «${character.name}»: ${FIELD_QUESTIONS[scope.field]}. Si el material no lo establece, respondé con lo que sepas de la obra, rotulado como conocimiento general y con tu nivel de seguridad, sin adelantar hechos posteriores a la página de lectura. Decí que no lo sabés solo si realmente no lo conocés.`;
   } else {
-    question = `Consulta sobre la relación entre «${character.name}» y «${other!.name}»: ¿qué tipo de vínculo hay y qué lo respalda? Distinguí lo explícito de lo inferido y no inventes escenas ni parentescos.`;
+    question = `Consulta sobre la relación entre «${character.name}» y «${other!.name}»: ¿qué tipo de vínculo hay y qué lo respalda? Distinguí lo explícito de lo inferido y no inventes escenas. Si el material no alcanza, usá tu conocimiento de la obra (sin spoilers), rotulado y con tu nivel de seguridad.`;
   }
   sections.push(`CONSULTA:\n${question}`);
 
