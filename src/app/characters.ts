@@ -1441,6 +1441,8 @@ async function startAI(scope: AIScope, formTarget = false) {
     if (!formTarget && scope.kind === 'character') {
       ai.fullSheet = true;
       ai.plan.prompt += '\n\nRespondé únicamente JSON válido, sin markdown, con esta forma: {"aliases":[],"age":"","description":"","traits":[],"occupation":"","affiliation":"","basis":{"age":"de dónde sale el dato y qué tan seguro estás, en 1 o 2 frases","description":"","occupation":"","affiliation":"","traits":"","aliases":""},"certainty":{"age":"explicit|inferred","description":"explicit|inferred","occupation":"explicit|inferred","affiliation":"explicit|inferred"}}. Comprometete con tu mejor estimación para cada campo usando el material guardado y tu conocimiento de la obra, sin revelar trama posterior a la página de lectura. Dejá vacío solo lo que no tenga base alguna. Usá explicit solo si sale directo del material guardado.';
+      const others = data.characters.filter((c) => c.id !== character.id).slice(0, 60).map((c) => ({ id: c.id, name: c.name, aliases: c.aliases }));
+      if (others.length) ai.plan.prompt += `\n\nAdemás agregá la clave "relations" con los vínculos de «${character.name}» con estos otros personajes registrados (usá los IDs exactos, sin inventar IDs ni personajes): ${JSON.stringify(others)}. Cada elemento: {"otherId":"ID exacto","type":"uno de ${RELATION_TYPES.join(', ')} u otro tipo breve","direction":"out si «${character.name}» es quien cumple el rol hacia el otro (p. ej. Madre de), in si es al revés; en vínculos simétricos usá out","description":"breve","certainty":"explicit|inferred","basis":"de dónde sale y qué tan seguro estás"}. Incluí todos los vínculos que conozcas con esos personajes, sin spoilers posteriores a la página de lectura, y omití los que no existan. No repitas los ya registrados.`;
       ai.plan.systemInstruction += '\n\nEn esta solicitud respondé únicamente con el JSON pedido (ignorá el formato por secciones) y usá tu conocimiento general de la obra cuando el material no alcance, sin spoilers.';
     }
     if (formTarget) {
@@ -1689,6 +1691,30 @@ function parseFullSheet(text: string): any | null {
   } catch { return null; }
 }
 
+function sheetRelationRows(character: Character, parsed: any): string {
+  const raw = Array.isArray(parsed.relations) ? parsed.relations.slice(0, 30) : [];
+  const rows = raw.flatMap((r: any, i: number) => {
+    const other = data.characters.find((c) => c.id === String(r?.otherId || '') && c.id !== character.id);
+    const type = String(r?.type || '').trim().slice(0, LIMITS.relationType);
+    if (!other || !type) return [];
+    const out = r?.direction !== 'in';
+    const certainty: Certainty = CERTAINTIES.includes(r?.certainty) ? r.certainty : 'inferred';
+    const check = validateRelation({ fromId: out ? character.id : other.id, toId: out ? other.id : character.id, type, description: '', certainty }, { bookId: state.bookId, characters: data.characters, relations: data.relations });
+    const dup = !check.ok;
+    return [`<div class="chr-form-field chr-fs-row"><label class="chr-fs-check"><input type="checkbox" name="fr_apply_${i}" ${dup ? '' : 'checked'}/> <strong>Vínculo con ${esc(other.name)}</strong></label>
+      ${r.basis ? `<p class="muted chr-fs-basis">${esc(String(r.basis).slice(0, 400))}</p>` : ''}
+      ${dup ? `<p class="muted">Ya existe o no es válido: ${esc(check.errors.join(' '))}</p>` : ''}
+      <input type="hidden" name="fr_other_${i}" value="${esc(other.id)}"/>
+      <input name="fr_type_${i}" value="${esc(type)}" list="chrRelTypes" aria-label="Tipo de vínculo con ${esc(other.name)}"/>
+      <select name="fr_dir_${i}" aria-label="Dirección"><option value="out" ${out ? 'selected' : ''}>${esc(character.name)} → ${esc(other.name)}</option><option value="in" ${out ? '' : 'selected'}>${esc(other.name)} → ${esc(character.name)}</option></select>
+      <input name="fr_desc_${i}" value="${esc(String(r.description || '').slice(0, LIMITS.relationDescription))}" placeholder="Descripción (opcional)"/>
+      <select name="fr_cert_${i}" aria-label="Certeza del vínculo">${CERTAINTIES.map((c) => `<option value="${c}" ${c === certainty ? 'selected' : ''}>${esc(CERTAINTY_LABELS[c])}</option>`).join('')}</select>
+      <input type="hidden" name="fr_basis_${i}" value="${esc(String(r.basis || '').slice(0, LIMITS.evidenceText))}"/></div>`];
+  });
+  if (!rows.length) return '';
+  return `<h4>Vínculos con otros personajes</h4><datalist id="chrRelTypes">${RELATION_TYPES.map((t) => `<option value="${esc(t)}"></option>`).join('')}</datalist><input type="hidden" name="fr_count" value="${raw.length}"/>${rows.join('')}`;
+}
+
 function fullSheetFormHTML(character: Character, parsed: any): string {
   const basis = parsed.basis && typeof parsed.basis === 'object' ? parsed.basis : {};
   const row = (key: string, label: string, aiValue: string, current: string, long: boolean, certainty?: Certainty) => {
@@ -1708,7 +1734,7 @@ function fullSheetFormHTML(character: Character, parsed: any): string {
   }).join('');
   const traits = row('traits', 'Rasgos (separados por coma)', list(parsed.traits).join(', '), character.traits.join(', '), false);
   const aliases = row('aliases', 'Alias (separados por coma)', list(parsed.aliases).join(', '), character.aliases.join(', '), false);
-  return `<form id="chrFullSheet" class="chr-ai-save" novalidate><p class="muted">La IA propone un valor para cada dato y explica de dónde lo saca. Editá lo que quieras, desmarcá lo que no quieras aplicar y confirmá.</p>${rows}${traits}${aliases}<div class="chr-ai-save-error" id="chrAiSaveError" role="alert"></div><button type="submit" class="primary">Aplicar a la ficha…</button></form>`;
+  return `<form id="chrFullSheet" class="chr-ai-save" novalidate><p class="muted">La IA propone un valor para cada dato y explica de dónde lo saca. Editá lo que quieras, desmarcá lo que no quieras aplicar y confirmá.</p>${rows}${traits}${aliases}${sheetRelationRows(character, parsed)}<div class="chr-ai-save-error" id="chrAiSaveError" role="alert"></div><button type="submit" class="primary">Aplicar a la ficha…</button></form>`;
 }
 
 async function submitFullSheet(form: HTMLFormElement) {
@@ -1733,14 +1759,37 @@ async function submitFullSheet(form: HTMLFormElement) {
   const splitList = (key: string, max: number, limit: number) => formValue(form, `fs_${key}`).split(',').map((x) => x.trim().slice(0, max)).filter(Boolean).slice(0, limit);
   if (checked('traits')) { updated.traits = splitList('traits', LIMITS.trait, LIMITS.traits); changes.push(`Rasgos: ${updated.traits.join(', ')}`); }
   if (checked('aliases')) { updated.aliases = splitList('aliases', LIMITS.alias, LIMITS.aliases); changes.push(`Alias: ${updated.aliases.join(', ')}`); }
+  const relationCount = Number(formValue(form, 'fr_count')) || 0;
+  const pending: Array<{ i: number }> = [];
+  for (let i = 0; i < relationCount; i++) if ((form.elements.namedItem(`fr_apply_${i}`) as HTMLInputElement | null)?.checked) pending.push({ i });
+  const fieldChanges = changes.length;
+  for (const { i } of pending) changes.push(`Vínculo: ${formValue(form, `fr_type_${i}`)} con ${characterById(formValue(form, `fr_other_${i}`))?.name || '?'}`);
   if (!changes.length) return fail('No hay datos marcados para aplicar.');
   try {
     const ok = await api().confirm({ eyebrow: 'APLICAR DATOS DE LA IA', title: '¿Aplicar a la ficha?', message: `Se modificará la ficha de ${character.name}:\n\n${changes.join('\n')}`, confirmLabel: 'Aplicar' });
     if (!ok) return;
-    await api().saveCharacter(updated);
+    if (fieldChanges) await api().saveCharacter(updated);
+    const fresh = pending.length ? await api().loadBookData(state.bookId) : null;
+    let relations = fresh ? fresh.relations.filter((r) => r.bookId === state.bookId) : [];
+    const failures: string[] = [];
+    for (const { i } of pending) {
+      try {
+        const other = formValue(form, `fr_other_${i}`);
+        const out = formValue(form, `fr_dir_${i}`) !== 'in';
+        const certainty = formValue(form, `fr_cert_${i}`) as Certainty;
+        const checked = validateRelation({ fromId: out ? character.id : other, toId: out ? other : character.id, type: formValue(form, `fr_type_${i}`), description: formValue(form, `fr_desc_${i}`), certainty }, { bookId: state.bookId, characters: fresh!.characters.filter((c) => c.bookId === state.bookId), relations });
+        if (!checked.ok || !checked.value) throw Error(checked.errors.join(' '));
+        const basis = formValue(form, `fr_basis_${i}`).trim();
+        const record: CharacterRelation = { ...checked.value.record, description: formValue(form, `fr_desc_${i}`).trim().slice(0, LIMITS.relationDescription), certainty, evidence: basis ? [{ kind: 'other', ref: 'Consulta a la IA', text: basis.slice(0, LIMITS.evidenceText) }] : [] };
+        await api().saveRelation(record);
+        if (checked.value.replacesId && checked.value.replacesId !== record.id) await api().deleteRelation(checked.value.replacesId).catch(() => {});
+        relations = [...relations.filter((r) => r.id !== record.id), record];
+      } catch (err: any) { failures.push(`${formValue(form, `fr_type_${i}`)}: ${String(err?.message || err)}`); }
+    }
     await reload();
+    if (failures.length) return fail(`Algunos vínculos no se pudieron guardar: ${failures.join(' · ')}`);
     state.ai = null;
-    state.notice = 'Datos aplicados a la ficha.';
+    state.notice = 'Datos y vínculos aplicados a la ficha.';
     paint(true);
   } catch (err: any) { fail(String(err?.message || err)); }
 }
