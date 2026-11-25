@@ -16,6 +16,7 @@ import type {
   Quote,
 } from '../types';
 import {
+  CERTAINTIES,
   CERTAINTY_LABELS,
   EVIDENCE_KINDS,
   EVIDENCE_LABELS,
@@ -122,7 +123,24 @@ interface State {
   notice: string;
   ai: AIState | null;
   pendingRelatives: Array<{ name: string; type: string; direction: 'out' | 'in'; certainty: Certainty; evidence: string }>;
-  characterSearch: { status: 'idle' | 'searching' | 'results' | 'error' | 'investigating' | 'ready'; name: string; candidates: Array<{ name: string; aliases: string[]; description: string; confidence: string }>; sources: Array<{ title: string; url: string }>; error: string; errorKind: 'quota' | 'web' | 'other' | null; suggestion: any | null; controller: AbortController | null };
+  characterSearch: { status: 'idle' | 'candidate-prompt' | 'candidates' | 'profile-prompt' | 'ready'; name: string; candidates: Array<{ name: string; aliases: string[]; description: string; confidence: string }>; sources: Array<{ title: string; url: string }>; error: string; suggestion: any | null; prompt: string; responseText: string };
+  networkReview: { status: 'idle' | 'prompt' | 'review'; prompt: string; responseText: string; error: string; proposals: NetworkProposal[]; manualFindings: Array<{ category: string; characterIds: string[]; reason: string; evidence: string; sourceUrl: string }> };
+}
+
+interface NetworkProposal {
+  action: 'add' | 'correct';
+  targetRelationId?: string;
+  fromId: string;
+  toId: string;
+  type: string;
+  description: string;
+  certainty: Certainty;
+  confidence: 'high' | 'medium' | 'low';
+  reason: string;
+  evidence: string;
+  sourceUrl: string;
+  decision: 'pending' | 'accepted' | 'rejected';
+  validationError?: string;
 }
 
 const emptyState = (bookId = ''): State => ({
@@ -139,7 +157,8 @@ const emptyState = (bookId = ''): State => ({
   notice: '',
   ai: null,
   pendingRelatives: [],
-  characterSearch: { status: 'idle', name: '', candidates: [], sources: [], error: '', errorKind: null, suggestion: null, controller: null },
+  characterSearch: { status: 'idle', name: '', candidates: [], sources: [], error: '', suggestion: null, prompt: '', responseText: '' },
+  networkReview: { status: 'idle', prompt: '', responseText: '', error: '', proposals: [], manualFindings: [] },
 });
 
 let state: State = emptyState();
@@ -202,7 +221,6 @@ function characterById(id: string | null | undefined): Character | undefined {
 
 function go(mode: Mode, patch: Partial<State> = {}) {
   abortAI();
-  state.characterSearch.controller?.abort();
   state = { ...state, ai: null, notice: '', ...patch, mode };
   paint(true);
 }
@@ -462,6 +480,53 @@ function relationColor(type: string): string {
   return `hsl(${Math.abs(hash) % 360} 76% 62%)`;
 }
 
+function networkAnalysisPrompt(): string {
+  const page = Math.max(0, Number(book?.currentPage) || 0);
+  const characters = data.characters.map((c) => ({
+    id: c.id, name: c.name, aliases: c.aliases, age: c.age, description: c.description,
+    traits: c.traits, occupation: c.occupation, affiliation: c.affiliation,
+    certainty: c.certainty, evidence: c.evidence.slice(0, 8),
+  }));
+  const relations = data.relations.map((r) => ({
+    id: r.id, fromId: r.fromId, toId: r.toId, type: r.type, description: r.description,
+    certainty: r.certainty, evidence: r.evidence.slice(0, 8),
+  }));
+  const notes = data.notes.filter((n) => n.endPage != null && n.endPage <= page).slice(0, 60).map((n) => `[N${n.number}, p. ${n.endPage}] ${n.text}${n.comment ? ` — ${n.comment}` : ''}`);
+  const entries = data.entries.filter((e) => e.page != null && e.page <= page).slice(0, 60).map((e, i) => `[E${i + 1}, p. ${e.page}] ${e.title ? `${e.title}: ` : ''}${e.text || ''}${e.comment ? ` — ${e.comment}` : ''}`);
+  const quotes = data.quotes.filter((q) => q.page != null && q.page <= page).slice(0, 60).map((q, i) => `[Q${i + 1}, p. ${q.page}] ${q.text}${q.analysis ? ` — ${q.analysis}` : ''}`);
+  return [
+    'Analizá el mapa completo de personajes y ayudame a detectar vínculos ausentes, errores de tipo o dirección, duplicados, inconsistencias, personajes mencionados sin ficha y casos que requieran revisión. Usá la búsqueda web de Gemini solo para desambiguar identidades; para relaciones de trama, priorizá exclusivamente la evidencia de lectura incluida abajo.',
+    `LIBRO:\n${promptBookContext()}`,
+    `AVANCE Y SPOILERS: leí hasta la página ${page}. El material sin número de página y las páginas posteriores fueron excluidos. Las fuentes web describen la obra completa y no se pueden mapear a la paginación de mi edición. No reveles sucesos futuros ni infieras parentescos por conocimiento general.`,
+    `PERSONAJES (usá estos IDs exactos; no inventes nombres ni IDs):\n${JSON.stringify(characters)}`,
+    `RELACIONES EXISTENTES (dirección real desde fromId hacia toId):\n${JSON.stringify(relations)}`,
+    `NOTAS CON PÁGINA HASTA EL AVANCE:\n${notes.join('\n') || 'Ninguna.'}`,
+    `ANOTACIONES CON PÁGINA HASTA EL AVANCE:\n${entries.join('\n') || 'Ninguna.'}`,
+    `CITAS CON PÁGINA HASTA EL AVANCE:\n${quotes.join('\n') || 'Ninguna.'}`,
+    'No propongas crear fichas ni relaciones respaldadas solo por la web. Si encontrás un nombre propio posiblemente referido a un personaje sin ficha, agregalo a manualFindings con category missing_character y explica la mención; no inventes un ID. Para nuevas relaciones, comprobá que no estén ya registradas, citá códigos [N], [E], [Q] concretos y poné certainty explicit solo si el fragmento lo afirma directamente; si es interpretación, inferred. Para correcciones, indicá relationId exacto y el cambio de extremos/tipo/dirección. Si no hay evidencia suficiente, enviá el caso a manualFindings y no inventes.',
+    'Respondé únicamente JSON válido, sin Markdown: {"proposals":[{"action":"add_relation|correct_relation","relationId":"ID existente solo para correcciones","fromId":"ID exacto","toId":"ID exacto","type":"tipo de vínculo","description":"descripción breve","certainty":"explicit|inferred|unknown","confidence":"high|medium|low","reason":"justificación","evidence":"cita breve o códigos del cuaderno","sourceUrl":"URL externa opcional"}],"manualFindings":[{"category":"duplicado|inconsistencia|aislado|missing_character|revisión manual","characterIds":["IDs existentes"],"reason":"qué revisar","evidence":"respaldo concreto","sourceUrl":"URL opcional"}]}. Límite: 40 propuestas y 40 hallazgos. No pidas que se guarde nada: la persona revisará y confirmará cada cambio.',
+  ].join('\n\n');
+}
+
+function networkReviewHTML(): string {
+  const review = state.networkReview;
+  if (review.status === 'idle') return '';
+  if (review.status === 'prompt') return `<section class="chr-research chr-network-review"><h3>Analizar y mejorar mi red</h3><p>Este prompt incluye los IDs, fichas, vínculos y material con página conocida hasta la página ${Math.max(0, Number(book?.currentPage) || 0)}. Se lo enviarás manualmente a Gemini Plus; Librarium no consulta la API ni guarda cambios durante el análisis.</p><label for="chrNetworkPrompt">Prompt para Gemini</label><textarea id="chrNetworkPrompt" readonly rows="16">${esc(review.prompt)}</textarea><div class="chr-row-actions"><button type="button" class="secondary" data-chr="copy-network-prompt">Copiar prompt</button><a class="secondary" href="https://gemini.google.com/app" target="_blank" rel="noopener noreferrer">Abrir Gemini</a><button type="button" class="secondary" data-chr="cancel-network-review">Cancelar</button></div><p class="muted chr-review-copy-status" role="status"></p><label for="chrNetworkResponse">Pegá la respuesta JSON de Gemini</label><textarea id="chrNetworkResponse" rows="10" placeholder="Pegá aquí el análisis completo…">${esc(review.responseText)}</textarea>${review.error ? `<p class="chr-ai-error" role="alert">${esc(review.error)}</p>` : ''}<button type="button" class="primary" data-chr="parse-network-review">Revisar propuestas</button><p class="muted">Los enlaces y citas pegados provienen de Gemini y requieren revisión. Ningún cambio se guarda automáticamente.</p></section>`;
+  const cards = review.proposals.map((proposal, index) => networkProposalHTML(proposal, index)).join('');
+  const findings = review.manualFindings.map((finding) => `<article class="chr-review-finding"><strong>${esc(finding.category)}</strong><span>${finding.characterIds.map((id) => characterById(id)?.name || `ID no encontrado: ${id}`).map(esc).join(', ')}</span><p>${esc(finding.reason)}</p>${finding.evidence ? `<blockquote>${esc(finding.evidence)}</blockquote>` : ''}${/^https?:\/\//i.test(finding.sourceUrl) ? `<a href="${esc(finding.sourceUrl)}" target="_blank" rel="noopener noreferrer">Abrir fuente citada</a>` : ''}</article>`).join('');
+  return `<section class="chr-research chr-network-review"><div class="chr-review-heading"><div><h3>Revisión de propuestas</h3><p>${review.proposals.length} cambios propuestos · ${review.manualFindings.length} casos para revisar manualmente</p></div><button type="button" class="secondary" data-chr="new-network-analysis">Nuevo análisis</button></div>${review.error ? `<p class="chr-ai-error" role="alert">${esc(review.error)}</p>` : ''}${review.proposals.length ? `<h4>Relaciones nuevas y correcciones</h4><div class="chr-review-cards">${cards}</div><div class="chr-form-actions"><button type="button" class="primary" data-chr="apply-network-selected">Aplicar aceptadas seleccionadas</button><button type="button" class="secondary" data-chr="apply-network-accepted">Aplicar todas las aceptadas</button><button type="button" class="secondary" data-chr="discard-network-selected">Descartar seleccionadas</button></div>` : '<p class="muted">No hay cambios de relación propuestos.</p>'}${findings ? `<h4>Casos para revisión manual</h4><div class="chr-review-cards">${findings}</div>` : ''}<p class="muted">Aceptar una propuesta solo la marca para revisión. El guardado requiere una acción aparte y una confirmación final.</p></section>`;
+}
+
+function networkProposalHTML(proposal: NetworkProposal, index: number): string {
+  const chars = data.characters.map((c) => `<option value="${esc(c.id)}" ${c.id === proposal.fromId ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+  const charsTo = data.characters.map((c) => `<option value="${esc(c.id)}" ${c.id === proposal.toId ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+  const current = proposal.targetRelationId ? data.relations.find((r) => r.id === proposal.targetRelationId) : undefined;
+  const existing = current ? `Actual: ${characterById(current.fromId)?.name} → ${current.type} → ${characterById(current.toId)?.name} · ${CERTAINTY_LABELS[current.certainty]}` : 'Nueva relación';
+  const selected = proposal.decision === 'accepted' ? 'checked' : '';
+  const relationChoices = data.relations.map((r) => `<option value="${esc(r.id)}" ${r.id === proposal.targetRelationId ? 'selected' : ''}>${esc(characterById(r.fromId)?.name)} · ${esc(r.type)} · ${esc(characterById(r.toId)?.name)}</option>`).join('');
+  return `<article class="chr-review-proposal" data-review-card="${index}"><div class="chr-review-proposal-head"><label><input type="checkbox" data-review-select ${selected} ${proposal.decision === 'rejected' ? 'disabled' : ''}/> ${proposal.decision === 'accepted' ? 'Aceptada para aplicar' : proposal.decision === 'rejected' ? 'Rechazada' : 'Pendiente de revisión'}</label><span class="chr-confidence chr-confidence--${proposal.confidence}">Confianza ${esc(proposal.confidence)}</span></div><p class="muted">${esc(existing)}${proposal.action === 'correct' ? ' · corrección sugerida' : ''}</p><div class="chr-review-fields">${proposal.action === 'correct' ? `<label class="chr-review-wide">Vínculo a corregir<select data-review-field="targetRelationId">${relationChoices}</select></label>` : ''}<label>Desde<select data-review-field="fromId">${chars}</select></label><label>Hacia<select data-review-field="toId">${charsTo}</select></label><label>Tipo<input data-review-field="type" maxlength="${LIMITS.relationType}" value="${esc(proposal.type)}" /></label><label>Certeza<select data-review-field="certainty">${(['explicit','inferred','unknown'] as Certainty[]).map((v) => `<option value="${v}" ${proposal.certainty === v ? 'selected' : ''}>${CERTAINTY_LABELS[v]}</option>`).join('')}</select></label><label class="chr-review-wide">Descripción<textarea data-review-field="description" maxlength="${LIMITS.relationDescription}" rows="2">${esc(proposal.description)}</textarea></label><label class="chr-review-wide">Evidencia propuesta<textarea data-review-field="evidence" maxlength="${LIMITS.evidenceText}" rows="2">${esc(proposal.evidence)}</textarea></label><label class="chr-review-wide">URL citada<input data-review-field="sourceUrl" type="url" value="${esc(proposal.sourceUrl)}" placeholder="https://…" /></label></div><p><strong>Justificación:</strong> ${esc(proposal.reason)}</p>${proposal.validationError ? `<p class="chr-ai-error" role="alert">${esc(proposal.validationError)}</p>` : ''}<div class="chr-row-actions"><button type="button" class="secondary" data-chr="accept-network-proposal" data-index="${index}" ${proposal.decision === 'rejected' ? 'disabled' : ''}>Aceptar propuesta</button><button type="button" class="secondary" data-chr="reject-network-proposal" data-index="${index}">Rechazar</button>${current ? `<button type="button" class="secondary" data-chr="edit-relation" data-rel="${esc(current.id)}">Abrir vínculo actual</button>` : ''}</div></article>`;
+}
+
 function networkHTML(): string {
   if (!data.characters.length) return '<p class="empty-inline">Cargá personajes y vínculos para ver la red de relaciones.</p>';
   if (!characterById(state.netFocus)) state.netFocus = characterById(state.selectedId)?.id ?? mostConnected();
@@ -490,7 +555,7 @@ function networkHTML(): string {
   const types = [...new Set(data.relations.map((r) => r.type))];
   const allGroups = buildConnectedGroups(data.characters, data.relations);
   const detail = selected ? `<aside class="chr-net-details"><strong>${esc(selected.name)}</strong><span>${relationCount(selected.id)} vínculos · ${isolated && relationCount(selected.id) === 0 ? 'personaje aislado' : `grupo ${allGroups.findIndex((g) => g.includes(selected.id)) + 1}`}</span><div class="chr-row-actions"><button type="button" class="secondary" data-chr="open" data-id="${esc(selected.id)}">Abrir ficha</button><button type="button" class="secondary" data-chr="net-center" data-id="${esc(selected.id)}">Centrar y elegir</button><button type="button" class="secondary" data-chr="add-relation">＋ Agregar vínculo</button></div>${data.relations.filter((r) => r.fromId === selected.id || r.toId === selected.id).map((r) => `<div class="chr-net-rel"><span class="chr-net-dot" style="--edge-color:${relationColor(r.type)}"></span>${esc(characterById(r.fromId)?.name)} ${isDirectedType(r.type) ? '→' : '↔'} ${esc(characterById(r.toId)?.name)} · ${esc(r.type)} <button type="button" class="secondary" data-chr="edit-relation" data-rel="${esc(r.id)}">Editar</button></div>`).join('')}</aside>` : '<p class="muted">Seleccioná cualquier personaje para abrir su ficha o administrar vínculos.</p>';
-  return `<div class="chr-network chr-network--global"><div class="chr-network-header"><div><h3>Universo de personajes</h3><p>${data.characters.length} personajes · ${data.relations.length} vínculos · ${allGroups.length} grupos · ${isolated} aislados</p></div><label for="chrNetFocus">Centrar en<select id="chrNetFocus">${data.characters.map((c) => `<option value="${esc(c.id)}" ${c.id === focusId ? 'selected' : ''}>${esc(c.name)} (${relationCount(c.id)})</option>`).join('')}</select></label><button type="button" class="secondary" data-chr="fullscreen-network">⛶ Pantalla completa</button></div><div class="chr-net-stats"><button type="button" data-chr="filter-isolated" aria-pressed="${state.netIsolatedOnly}">${isolated} aislados</button><span>${connected} conectados</span><span>${allGroups.length} grupos independientes</span></div><div class="chr-net-canvas"><svg class="chr-svg chr-svg--global" viewBox="0 0 ${size} ${size}" role="group" aria-label="Mapa global con todos los personajes y vínculos">${edgeSvg}${nodesSvg}</svg></div><div class="chr-net-legend">${types.map((type) => `<span><i style="--edge-color:${relationColor(type)}"></i>${esc(type)}</span>`).join('')}<span><i class="chr-net-certainty"></i>Línea continua: explícita · discontinua: inferida o desconocida</span></div>${detail}</div>`;
+  return `<div class="chr-network chr-network--global"><div class="chr-network-header"><div><h3>Universo de personajes</h3><p>${data.characters.length} personajes · ${data.relations.length} vínculos · ${allGroups.length} grupos · ${isolated} aislados</p></div><label for="chrNetFocus">Centrar en<select id="chrNetFocus">${data.characters.map((c) => `<option value="${esc(c.id)}" ${c.id === focusId ? 'selected' : ''}>${esc(c.name)} (${relationCount(c.id)})</option>`).join('')}</select></label><button type="button" class="primary" data-chr="analyze-network">✦ Analizar y mejorar mi red</button><button type="button" class="secondary" data-chr="fullscreen-network">⛶ Pantalla completa</button></div><div class="chr-net-stats"><button type="button" data-chr="filter-isolated" aria-pressed="${state.netIsolatedOnly}">${isolated} aislados</button><span>${connected} conectados</span><span>${allGroups.length} grupos independientes</span></div><div class="chr-net-canvas"><svg class="chr-svg chr-svg--global" viewBox="0 0 ${size} ${size}" role="group" aria-label="Mapa global con todos los personajes y vínculos">${edgeSvg}${nodesSvg}</svg></div><div class="chr-net-legend">${types.map((type) => `<span><i style="--edge-color:${relationColor(type)}"></i>${esc(type)}</span>`).join('')}<span><i class="chr-net-certainty"></i>Línea continua: explícita · discontinua: inferida o desconocida</span></div>${detail}${networkReviewHTML()}</div>`;
 }
 
 function buildConnectedGroups(characters: Character[], relations: CharacterRelation[]): string[][] {
@@ -506,6 +571,185 @@ function buildConnectedGroups(characters: Character[], relations: CharacterRelat
     groups.push(group);
   }
   return groups;
+}
+
+function startNetworkAnalysis() {
+  state.networkReview = { status: 'prompt', prompt: networkAnalysisPrompt(), responseText: '', error: '', proposals: [], manualFindings: [] };
+  paint();
+  host?.querySelector<HTMLElement>('.chr-network-review')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+async function copyNetworkPrompt() {
+  const prompt = state.networkReview.prompt;
+  const textarea = host?.querySelector<HTMLTextAreaElement>('#chrNetworkPrompt');
+  try {
+    await navigator.clipboard.writeText(prompt);
+    state.notice = 'Prompt copiado. Pegalo en Gemini Plus y luego traé el JSON a Librarium.';
+  } catch {
+    textarea?.focus(); textarea?.select();
+    state.notice = 'Seleccioné el prompt para copiarlo manualmente con Ctrl+C.';
+  }
+  const notice = host?.querySelector<HTMLElement>('.chr-network-review .chr-review-copy-status');
+  if (notice) notice.textContent = state.notice;
+}
+
+function validateNetworkProposal(proposal: NetworkProposal, relations = data.relations, characters = data.characters): string[] {
+  const errors: string[] = [];
+  const editing = proposal.action === 'correct' ? relations.find((r) => r.id === proposal.targetRelationId && r.bookId === state.bookId) : undefined;
+  if (proposal.action === 'correct' && !editing) errors.push('La relación que se quería corregir ya no existe en este libro.');
+  if (proposal.sourceUrl && !/^https?:\/\//i.test(proposal.sourceUrl)) errors.push('La URL citada debe comenzar con http:// o https://.');
+  const result = validateRelation({
+    fromId: proposal.fromId, toId: proposal.toId, type: proposal.type,
+    description: proposal.description, certainty: proposal.certainty,
+  }, { bookId: state.bookId, characters, relations, editing });
+  errors.push(...result.errors);
+  if (!CERTAINTIES.includes(proposal.certainty)) errors.push('La certeza propuesta no es válida.');
+  return [...new Set(errors)];
+}
+
+function parseNetworkReview() {
+  const review = state.networkReview;
+  const responseText = host?.querySelector<HTMLTextAreaElement>('#chrNetworkResponse')?.value || '';
+  try {
+    const parsed = parsePastedJSON(responseText);
+    const proposals: NetworkProposal[] = [];
+    const manualFindings: State['networkReview']['manualFindings'] = [];
+    const proposedKeys = new Set<string>();
+    for (const raw of (Array.isArray(parsed.proposals) ? parsed.proposals : []).slice(0, 40)) {
+      const action = raw?.action === 'correct_relation' ? 'correct' : raw?.action === 'add_relation' ? 'add' : null;
+      if (!action) continue;
+      const current = action === 'correct' ? data.relations.find((r) => r.id === raw.relationId && r.bookId === state.bookId) : undefined;
+      if (action === 'correct' && !current) {
+        manualFindings.push({ category: 'ID de relación no reconocido', characterIds: [], reason: `Gemini propuso corregir una relación inexistente (${String(raw.relationId || 'sin ID')}). No se puede aplicar automáticamente.`, evidence: String(raw.evidence || '').slice(0, LIMITS.evidenceText), sourceUrl: /^https?:\/\//i.test(String(raw.sourceUrl || '')) ? String(raw.sourceUrl).slice(0, LIMITS.evidenceText) : '' });
+        continue;
+      }
+      const proposal: NetworkProposal = {
+        action,
+        ...(action === 'correct' ? { targetRelationId: current?.id || String(raw.relationId || '') } : {}),
+        fromId: String(raw.fromId || (action === 'correct' ? current?.fromId : '') || ''),
+        toId: String(raw.toId || (action === 'correct' ? current?.toId : '') || ''),
+        type: String(raw.type || (action === 'correct' ? current?.type : '') || '').trim().slice(0, LIMITS.relationType),
+        description: String(raw.description ?? (action === 'correct' ? current?.description : '') ?? '').trim().slice(0, LIMITS.relationDescription),
+        certainty: CERTAINTIES.includes(raw.certainty) ? raw.certainty : current?.certainty || 'unknown',
+        confidence: ['high', 'medium', 'low'].includes(raw.confidence) ? raw.confidence : 'low',
+        reason: String(raw.reason || '').trim().slice(0, 1200),
+        evidence: String(raw.evidence || '').trim().slice(0, LIMITS.evidenceText),
+        sourceUrl: /^https?:\/\//i.test(String(raw.sourceUrl || '')) ? String(raw.sourceUrl).slice(0, LIMITS.evidenceText) : '',
+        decision: 'pending',
+      };
+      const errors = validateNetworkProposal(proposal);
+      const checked = validateRelation({ fromId: proposal.fromId, toId: proposal.toId, type: proposal.type, description: proposal.description, certainty: proposal.certainty }, {
+        bookId: state.bookId, characters: data.characters, relations: data.relations,
+        editing: action === 'correct' ? data.relations.find((r) => r.id === proposal.targetRelationId) : undefined,
+      });
+      if (checked.value) {
+        if (proposedKeys.has(checked.value.record.id)) errors.push('Esta operación duplica otra propuesta de la misma respuesta.');
+        proposedKeys.add(checked.value.record.id);
+      }
+      proposal.validationError = errors.length ? [...new Set(errors)].join(' ') : '';
+      proposals.push(proposal);
+    }
+    const knownIds = new Set(data.characters.filter((c) => c.bookId === state.bookId).map((c) => c.id));
+    for (const raw of (Array.isArray(parsed.manualFindings) ? parsed.manualFindings : []).slice(0, 40)) {
+      const ids = Array.isArray(raw.characterIds) ? raw.characterIds.map(String).filter((id: string) => knownIds.has(id)) : [];
+      manualFindings.push({ category: String(raw.category || 'Revisión manual').slice(0, 80), characterIds: ids, reason: String(raw.reason || '').slice(0, 1200), evidence: String(raw.evidence || '').slice(0, LIMITS.evidenceText), sourceUrl: /^https?:\/\//i.test(String(raw.sourceUrl || '')) ? String(raw.sourceUrl).slice(0, LIMITS.evidenceText) : '' });
+    }
+    state.networkReview = { ...review, status: 'review', responseText: '', error: '', proposals, manualFindings };
+  } catch (err: any) {
+    state.networkReview = { ...review, responseText, error: String(err?.message || err) };
+  }
+  paint();
+}
+
+function proposalFromCard(index: number): NetworkProposal | null {
+  const current = state.networkReview.proposals[index];
+  const card = host?.querySelector<HTMLElement>(`[data-review-card="${index}"]`);
+  if (!current || !card) return current || null;
+  const read = (key: string) => card.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(`[data-review-field="${key}"]`)?.value;
+  const proposal: NetworkProposal = {
+    ...current,
+    fromId: read('fromId') || current.fromId,
+    toId: read('toId') || current.toId,
+    type: read('type') || '',
+    description: read('description') || '',
+    certainty: (read('certainty') || 'unknown') as Certainty,
+    evidence: read('evidence') || '',
+    sourceUrl: read('sourceUrl') || '',
+    targetRelationId: read('targetRelationId') || current.targetRelationId,
+  };
+  proposal.validationError = validateNetworkProposal(proposal).join(' ');
+  return proposal;
+}
+
+function decideNetworkProposal(index: number, decision: 'accepted' | 'rejected') {
+  const proposal = proposalFromCard(index);
+  if (!proposal) return;
+  if (decision === 'accepted' && proposal.validationError) {
+    state.networkReview.proposals[index] = proposal;
+    paint();
+    return;
+  }
+  proposal.decision = decision;
+  state.networkReview.proposals[index] = proposal;
+  paint();
+}
+
+async function applyNetworkProposals(applyAllAccepted: boolean) {
+  const proposals = state.networkReview.proposals.map((proposal, index) => proposalFromCard(index) || proposal);
+  const selected = proposals.filter((proposal, index) => proposal.decision === 'accepted' && !proposal.validationError && (applyAllAccepted || host?.querySelector<HTMLInputElement>(`[data-review-card="${index}"] [data-review-select]`)?.checked));
+  if (!selected.length) {
+    state.networkReview.error = 'Aceptá y seleccioná al menos una propuesta válida antes de aplicar.';
+    return paint();
+  }
+  const preview = selected.map((p) => `${p.action === 'correct' ? 'Corregir' : 'Agregar'}: ${characterById(p.fromId)?.name || p.fromId} → ${p.type} → ${characterById(p.toId)?.name || p.toId}${p.sourceUrl ? `\nFuente: ${p.sourceUrl}` : ''}${p.evidence ? `\nEvidencia: ${p.evidence}` : ''}`).join('\n\n');
+  const approved = await api().confirm({ eyebrow: 'CAMBIOS PROPUESTOS POR GEMINI', title: `¿Aplicar ${selected.length} cambio${selected.length === 1 ? '' : 's'} a la red?`, message: preview, confirmLabel: 'Aplicar cambios' });
+  if (!approved) return;
+  let saved = 0;
+  const failures: string[] = [];
+  const proposalKey = (p: NetworkProposal) => `${p.action}|${p.targetRelationId || ''}|${p.fromId}|${p.toId}|${p.type}`;
+  const applied = new Set<string>();
+  try {
+    const fresh = await api().loadBookData(state.bookId);
+    const freshCharacters = fresh.characters.filter((c) => c.bookId === state.bookId);
+    let freshRelations = fresh.relations.filter((r) => r.bookId === state.bookId);
+    for (const proposal of selected) {
+      try {
+        const editing = proposal.action === 'correct' ? freshRelations.find((r) => r.id === proposal.targetRelationId) : undefined;
+        const errors = validateNetworkProposal(proposal, freshRelations, freshCharacters);
+        if (errors.length) throw Error(errors.join(' '));
+        const checked = validateRelation({ fromId: proposal.fromId, toId: proposal.toId, type: proposal.type, description: proposal.description, certainty: proposal.certainty }, { bookId: state.bookId, characters: freshCharacters, relations: freshRelations, editing });
+        if (!checked.ok || !checked.value) throw Error(checked.errors.join(' '));
+        const sourceEvidence: EvidenceRef[] = [];
+        if (proposal.evidence || proposal.sourceUrl) {
+          const longUrl = proposal.sourceUrl.length > LIMITS.evidenceRef;
+          sourceEvidence.push({ kind: 'other', ref: proposal.sourceUrl && !longUrl ? proposal.sourceUrl : `Gemini Plus${proposal.sourceUrl ? ' · fuente citada' : ''}`, text: `${proposal.evidence}${longUrl ? ` ${proposal.sourceUrl}` : ''}`.trim().slice(0, LIMITS.evidenceText) || (proposal.sourceUrl ? 'Fuente citada por Gemini Plus; verificar manualmente.' : '') });
+        }
+        const mergedEvidence = [...(editing?.evidence || []), ...sourceEvidence].slice(0, LIMITS.evidence);
+        const certainty = editing?.certainty === 'explicit' && proposal.certainty !== 'explicit' ? 'explicit' : proposal.certainty;
+        const record: CharacterRelation = { ...checked.value.record, ...(editing ? { userId: editing.userId, createdAt: editing.createdAt } : {}), description: proposal.description, evidence: mergedEvidence, certainty };
+        await api().saveRelation(record);
+        saved++;
+        applied.add(proposalKey(proposal));
+        if (checked.value.replacesId && checked.value.replacesId !== record.id) {
+          try {
+            await api().deleteRelation(checked.value.replacesId);
+            freshRelations = freshRelations.filter((r) => r.id !== checked.value!.replacesId);
+          } catch (err: any) {
+            failures.push(`${proposal.type} con ${characterById(proposal.toId)?.name || proposal.toId}: se guardó la nueva relación, pero no se pudo borrar la anterior (${checked.value.replacesId}): ${String(err?.message || err)}`);
+          }
+        }
+        freshRelations = [...freshRelations.filter((r) => r.id !== record.id), record];
+      } catch (err: any) {
+        failures.push(`${characterById(proposal.fromId)?.name || proposal.fromId} → ${proposal.type} → ${characterById(proposal.toId)?.name || proposal.toId}: ${String(err?.message || err)}`);
+      }
+    }
+  } catch (err: any) {
+    failures.push(`No se pudo volver a cargar el libro antes de guardar: ${String(err?.message || err)}`);
+  }
+  await reload();
+  state.networkReview.proposals = proposals.filter((proposal) => !applied.has(proposalKey(proposal)));
+  state.networkReview.error = failures.length ? `Se guardaron ${saved} de ${selected.length} cambios. Detalle: ${failures.join(' · ')}` : '';
+  go('index', { view: 'network', notice: failures.length ? `Se guardaron ${saved} de ${selected.length} cambios. Revisá el detalle del panel.` : `Se aplicaron ${saved} cambios confirmados a la red.` });
 }
 
 
@@ -557,7 +801,7 @@ function characterFormHTML(): string {
       <div class="chr-form-field">
         <label for="chr_name">Nombre</label>
         <input id="chr_name" name="name" type="text" maxlength="${LIMITS.name}" required value="${esc(c?.name ?? '')}" />
-        <div class="chr-research-actions"><button type="button" class="secondary" data-chr="search-character">${AI_SPARK} Buscar y completar con IA</button><span class="muted">La búsqueda web se ejecuta al presionar el botón; modo sin spoilers activado (p. ${Math.max(0, Number(book?.currentPage) || 0)}).</span></div>
+        <div class="chr-research-actions"><button type="button" class="secondary" data-chr="search-character">${AI_SPARK} Preparar búsqueda en Gemini</button><span class="muted">Copiás el prompt, buscás con Gemini Plus y pegás aquí la respuesta. Tiene en cuenta tu avance (p. ${Math.max(0, Number(book?.currentPage) || 0)}).</span></div>
       </div>
       ${characterSearchHTML()}
       <div id="chrAiHost"></div>
@@ -588,16 +832,17 @@ function characterFormHTML(): string {
 function characterSearchHTML(): string {
   const search = state.characterSearch;
   if (search.status === 'idle') return '<div id="chrResearchPanel"></div>';
-  if (search.status === 'searching' || search.status === 'investigating') return `<section class="chr-research" id="chrResearchPanel" aria-live="polite"><strong>${search.status === 'searching' ? 'Buscando en Internet…' : 'Investigando el personaje seleccionado…'}</strong><p class="muted">Obra: ${esc(book?.title || '')}${book?.author ? ` · ${esc(book.author)}` : ''}. Avance registrado: página ${Math.max(0, Number(book?.currentPage) || 0)}. Modo sin spoilers.</p><button type="button" class="secondary" data-chr="stop-research">Cancelar búsqueda</button></section>`;
-  if (search.status === 'error') return `<section class="chr-research" id="chrResearchPanel" role="alert"><strong>${search.errorKind === 'quota' ? 'Límite temporal de Gemini alcanzado' : 'No pude realizar la búsqueda web.'}</strong><p>${esc(search.error)}</p>${search.errorKind === 'quota' ? '<p class="muted">La clave personal llegó al límite de consultas de Google. Esperá a que se restablezca y volvé a intentar; Librarium no repetirá la llamada automáticamente.</p>' : ''}<button type="button" class="secondary" data-chr="search-character">${search.errorKind === 'quota' ? 'Reintentar búsqueda' : 'Intentar de nuevo'}</button></section>`;
-  if (search.status === 'results') return `<section class="chr-research" id="chrResearchPanel"><h3>${search.candidates.length ? 'Encontré posibles coincidencias' : 'No encontré coincidencias suficientemente confiables'}</h3><p class="muted">Resultados para «${esc(search.name)}» en ${esc(book?.title || 'esta obra')}${book?.author ? ` de ${esc(book.author)}` : ''}. Avance: página ${Math.max(0, Number(book?.currentPage) || 0)}. La descripción se limita a identificación sin spoilers; las fuentes web no corresponden necesariamente a las páginas de tu edición.</p>${search.candidates.length ? `${search.candidates.length > 1 ? '<p class="chr-ambiguity" role="status">La búsqueda devolvió varias coincidencias posibles. Elegí la que corresponde; no se seleccionó ninguna automáticamente.</p>' : ''}<fieldset class="chr-candidates"><legend>Elegí explícitamente el personaje</legend>${search.candidates.map((c, i) => `<label class="chr-candidate"><input type="radio" name="chrCandidate" value="${i}"/><span><strong>${esc(c.name)}</strong><span>También: ${esc(c.aliases.join(', ') || 'sin variantes encontradas')}</span><span>${esc(c.description || 'Sin descripción introductoria disponible.')}</span><small>Coincidencia ${esc(c.confidence === 'high' ? 'alta' : c.confidence === 'medium' ? 'media' : 'baja')}</small></span></label>`).join('')}</fieldset><button type="button" class="primary" data-chr="investigate-character" disabled>Completar con este</button>` : '<p class="muted">La búsqueda devolvió resultados ambiguos o sin respaldo suficiente. Podés conservar el nombre y completar la ficha manualmente.</p>'}<button type="button" class="secondary" data-chr="none-candidate">Ninguno de estos</button>${characterSourcesHTML(search.sources)}</section>`;
-  if (search.status === 'ready') return `<section class="chr-research" id="chrResearchPanel"><h3>Seleccionaste «${esc(search.name)}»</h3><p class="muted">Revisá las sugerencias. Solo se completarán campos vacíos; los campos que ya escribiste se conservan. La información web se marca como inferida, nunca explícita en el libro.</p>${characterSourcesHTML(search.sources)}<button type="button" class="primary" data-chr="apply-research">Aplicar sugerencias a campos vacíos</button><button type="button" class="secondary" data-chr="none-candidate">Descartar sugerencias</button></section>`;
+  const promptPanel = (title: string, explanation: string, responseLabel: string, responseId: string, action: string, actionLabel: string) => `<section class="chr-research" id="chrResearchPanel"><h3>${title}</h3><p class="muted">${explanation}</p><label for="chrResearchPrompt">Prompt contextual para Gemini</label><textarea id="chrResearchPrompt" readonly rows="12">${esc(search.prompt)}</textarea><div class="chr-row-actions"><button type="button" class="secondary" data-chr="copy-research-prompt">Copiar prompt</button><a class="secondary" href="https://gemini.google.com/app" target="_blank" rel="noopener noreferrer">Abrir Gemini</a></div><label for="${responseId}">${responseLabel}</label><textarea id="${responseId}" rows="8" placeholder="Pegá aquí la respuesta de Gemini…">${esc(search.responseText)}</textarea>${search.error ? `<p class="chr-ai-error" role="alert">${esc(search.error)}</p>` : ''}<button type="button" class="primary" data-chr="${action}">${actionLabel}</button><p class="muted">Copiá la respuesta completa. Librarium puede leer el JSON aunque Gemini lo haya encerrado en un bloque de código. Los enlaces los devuelve Gemini; abrilos para comprobar la fuente.</p></section>`;
+  if (search.status === 'candidate-prompt') return promptPanel('Paso 1 de 2 · Buscar candidatos en Gemini', `Investigá «${esc(search.name)}» en «${esc(book?.title || '')}». El avance registrado es la página ${Math.max(0, Number(book?.currentPage) || 0)}; el prompt pide una identificación introductoria sin spoilers.`, 'Respuesta de Gemini con candidatos', 'chrCandidateResponse', 'parse-candidates', 'Mostrar coincidencias');
+  if (search.status === 'profile-prompt') return `${search.candidates.length ? `<section class="chr-research"><h3>Elegiste «${esc(search.name)}»</h3><p class="muted">Fuentes compartidas por Gemini en la búsqueda:</p>${characterSourcesHTML(search.sources)}</section>` : ''}${promptPanel('Paso 2 de 2 · Preparar la ficha', `Pedile a Gemini datos del personaje en «${esc(book?.title || '')}». El prompt limita la respuesta a la página ${Math.max(0, Number(book?.currentPage) || 0)} y solicita omitir cualquier dato externo que pueda revelar la trama.`, 'Respuesta de Gemini con los datos sugeridos', 'chrProfileResponse', 'parse-profile', 'Revisar sugerencias')}`;
+  if (search.status === 'candidates') return `<section class="chr-research" id="chrResearchPanel"><h3>${search.candidates.length ? 'Encontré posibles coincidencias' : 'No encontré coincidencias confiables'}</h3><p class="muted">Revisá las opciones para «${esc(search.name)}» en ${esc(book?.title || '')}. Avance registrado: página ${Math.max(0, Number(book?.currentPage) || 0)}. La búsqueda fue realizada en Gemini Plus; Librarium no puede verificar independientemente sus resultados.</p>${search.candidates.length && !search.sources.length ? '<p class="chr-ambiguity" role="status">Gemini no incluyó enlaces de fuentes. Considerá repetir la búsqueda y pedirle URLs verificables.</p>' : ''}${search.candidates.length ? `${search.candidates.length > 1 ? '<p class="chr-ambiguity" role="status">Hay varias coincidencias posibles. Elegí una; no se seleccionó ninguna automáticamente.</p>' : ''}<fieldset class="chr-candidates"><legend>Elegí explícitamente el personaje</legend>${search.candidates.map((c, i) => `<label class="chr-candidate"><input type="radio" name="chrCandidate" value="${i}"/><span><strong>${esc(c.name)}</strong><span>También: ${esc(c.aliases.join(', ') || 'sin variantes informadas')}</span><span>${esc(c.description || 'Sin descripción introductoria.')}</span><small>Coincidencia ${esc(c.confidence === 'high' ? 'alta' : c.confidence === 'medium' ? 'media' : 'baja')}</small></span></label>`).join('')}</fieldset><button type="button" class="primary" data-chr="investigate-character" disabled>Completar con este</button>` : '<p class="muted">Podés volver a buscar o conservar el nombre y completar la ficha manualmente.</p>'}<button type="button" class="secondary" data-chr="none-candidate">Ninguno de estos</button>${characterSourcesHTML(search.sources)}</section>`;
+  if (search.status === 'ready') return `<section class="chr-research" id="chrResearchPanel"><h3>Sugerencias para «${esc(search.name)}»</h3><p class="muted">Revisá cada dato. Solo se aplicarán campos vacíos; los que ya escribiste permanecerán intactos. La información tomada de fuentes web se guardará como inferida, no como explícita en el libro.</p>${characterSourcesHTML(search.sources)}<button type="button" class="primary" data-chr="apply-research">Aplicar sugerencias a campos vacíos</button><button type="button" class="secondary" data-chr="none-candidate">Descartar sugerencias</button></section>`;
   return '<div id="chrResearchPanel"></div>';
 }
 
 function characterSourcesHTML(sources: Array<{ title: string; url: string }>): string {
-  if (!sources.length) return '<p class="muted">Gemini no proporcionó citas web verificables.</p>';
-  return `<details class="chr-research-sources"><summary>Fuentes web consultadas (${sources.length})</summary><ul>${sources.map((s) => `<li><a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title || s.url)}</a></li>`).join('')}</ul></details>`;
+  if (!sources.length) return '<p class="muted">Gemini no incluyó enlaces de fuentes.</p>';
+  return `<details class="chr-research-sources"><summary>Fuentes citadas por Gemini (${sources.length})</summary><ul>${sources.map((s) => `<li><a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title || s.url)}</a></li>`).join('')}</ul></details>`;
 }
 
 function readReadingEvidence() {
@@ -606,64 +851,160 @@ function readReadingEvidence() {
   const names = new Set([state.characterSearch.name, ...data.characters.flatMap((c) => [c.name, ...c.aliases])].map(normalize).filter((x) => x.length > 2));
   const containsName = (text: string) => [...names].some((name) => normalize(text).includes(name));
   const records: string[] = [];
-  for (const note of data.notes) if (note.endPage != null && note.endPage <= page && containsName(`${note.text} ${note.comment || ''}`)) records.push(`[Cuaderno: nota ${note.number}, p. ${note.endPage}] ${note.text}${note.comment ? ` — comentario: ${note.comment}` : ''}`);
-  for (const entry of data.entries) if (entry.page != null && entry.page <= page && containsName(`${entry.title || ''} ${entry.text || ''} ${entry.comment || ''}`)) records.push(`[Cuaderno: anotación, p. ${entry.page}] ${entry.title || ''} ${entry.text || ''}${entry.comment ? ` — comentario: ${entry.comment}` : ''}`);
-  for (const quote of data.quotes) if (quote.page != null && quote.page <= page && containsName(`${quote.text} ${quote.analysis || ''}`)) records.push(`[Cuaderno: cita, p. ${quote.page}] ${quote.text}${quote.analysis ? ` — reflexión: ${quote.analysis}` : ''}`);
+  for (const note of data.notes) if (note.endPage != null && note.endPage <= page && containsName(`${note.text} ${note.comment || ''}`)) records.push(`[N${note.number}, p. ${note.endPage}] ${note.text}${note.comment ? ` — comentario: ${note.comment}` : ''}`);
+  for (const entry of data.entries) if (entry.page != null && entry.page <= page && containsName(`${entry.title || ''} ${entry.text || ''} ${entry.comment || ''}`)) records.push(`[E, p. ${entry.page}] ${entry.title || ''} ${entry.text || ''}${entry.comment ? ` — comentario: ${entry.comment}` : ''}`);
+  for (const quote of data.quotes) if (quote.page != null && quote.page <= page && containsName(`${quote.text} ${quote.analysis || ''}`)) records.push(`[Q, p. ${quote.page}] ${quote.text}${quote.analysis ? ` — reflexión: ${quote.analysis}` : ''}`);
   return records.slice(0, 40);
 }
 
-async function searchCharacterWithWeb() {
-  const name = host?.querySelector<HTMLInputElement>('#chr_name')?.value.trim() || '';
-  if (!name) return showFormErrors(['Escribí el nombre antes de buscar coincidencias.']);
-  if (!api().ai.hasKey()) return showFormErrors(['Guardá tu API key personal de Gemini en Ajustes → Ajustes de IA.']);
-  state.characterSearch.controller?.abort();
-  const search = state.characterSearch = { ...state.characterSearch, status: 'searching', name, candidates: [], sources: [], error: '', errorKind: null, suggestion: null, controller: new AbortController() };
-  paint();
-  try {
-    const settings = api().ai.settings();
-    const response = await api().ai.request('character-research', { mode: 'candidates', name, book, characters: data.characters, model: settings.model, thinking: settings.thinking }, search.controller.signal);
-    const result = await response.json();
-    if (!response.ok) { const error: any = Error(result.error || `Error HTTP ${response.status}`); error.status = response.status; throw error; }
-    if (result.usedGoogleSearch !== true) throw Error('Gemini no confirmó que ejecutó Google Search.');
-    state.characterSearch = { ...state.characterSearch, status: 'results', candidates: Array.isArray(result.candidates) ? result.candidates : [], sources: Array.isArray(result.sources) ? result.sources : [], error: '', errorKind: null, controller: null };
-  } catch (err: any) {
-    if (err?.name === 'AbortError') { state.characterSearch = { ...state.characterSearch, status: 'idle', controller: null }; paint(); return; }
-    state.characterSearch = { ...state.characterSearch, status: 'error', error: String(err?.message || err), errorKind: err?.status === 429 ? 'quota' : err?.status === 503 || err instanceof TypeError ? 'web' : 'other', controller: null };
+function promptBookContext(): string {
+  if (!book) return '';
+  return [
+    `Título: ${book.title}`,
+    book.author ? `Autor: ${book.author}` : '',
+    book.publisher ? `Editorial: ${book.publisher}` : '',
+    book.year ? `Año: ${book.year}` : '',
+    book.edition ? `Edición: ${book.edition}` : '',
+    book.isbn ? `ISBN: ${book.isbn}` : '',
+    `Página actual registrada: ${Math.max(0, Number(book.currentPage) || 0)}`,
+  ].filter(Boolean).join('\n');
+}
+
+function buildCandidatePrompt(name: string): string {
+  const registered = data.characters.map((c) => `- ${c.name}${c.aliases.length ? ` (alias: ${c.aliases.join(', ')})` : ''}`).join('\n') || 'Ninguno.';
+  return [
+    'Usá la búsqueda web de Gemini para identificar personajes literarios que puedan corresponder al nombre escrito. Considerá tildes, transliteraciones, nombres traducidos y posibles errores ortográficos. La obra es esencial para desambiguar.',
+    `OBRA:\n${promptBookContext()}`,
+    `NOMBRE INGRESADO: ${name}`,
+    `PERSONAJES YA REGISTRADOS EN ESTE LIBRO:\n${registered}`,
+    'MODO SIN SPOILERS: devolvé solo una identificación introductoria y neutral que permita distinguir candidatos. No menciones sucesos, relaciones reveladoras, giros, muertes, destino ni transformaciones posteriores. No afirmes que una fuente web corresponde a la página actual de mi edición.',
+    'Devolvé únicamente JSON válido, sin Markdown, con esta forma: {"candidates":[{"name":"nombre canónico","aliases":["otros nombres o transliteraciones"],"description":"breve identificación no argumental","confidence":"high|medium|low"}],"sources":[{"title":"título de la fuente","url":"https://..."}]}. Ofrecé hasta 6 candidatos; si no encontrás coincidencias fiables, devolvé candidates vacío. Incluí solo fuentes consultadas de verdad y URLs completas.',
+  ].join('\n\n');
+}
+
+function buildProfilePrompt(candidate: { name: string; aliases: string[] }): string {
+  const currentPage = Math.max(0, Number(book?.currentPage) || 0);
+  const existing = characterById(state.editingCharacterId);
+  const currentFields = FIELD_KEYS.map((key) => {
+    const current = host?.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[name="${key}"]`)?.value || existing?.[key] || '';
+    return `${FIELD_LABELS[key]}: ${current || '(vacío)'}`;
+  }).join('\n');
+  const evidence = readReadingEvidence();
+  return [
+    'Usá la búsqueda web de Gemini para investigar este personaje y sugerir una ficha breve. Diferenciá claramente información externa de evidencia del cuaderno personal.',
+    `OBRA:\n${promptBookContext()}`,
+    `PERSONAJE ELEGIDO POR EL USUARIO: ${candidate.name}`,
+    `ALIAS CONOCIDOS: ${candidate.aliases.join(', ') || 'ninguno informado'}`,
+    `FICHA ACTUAL (no reemplazar datos escritos por el usuario):\n${currentFields}`,
+    `MODO SIN SPOILERS: la persona llegó hasta la página ${currentPage}. Las fuentes web suelen describir la obra completa y no indican la paginación de esta edición. No reveles trama posterior, parentescos no descubiertos, giros ni destinos. Si edad, ocupación o pertenencia puede revelar trama, dejalo vacío. No uses notas sin página conocida ni posteriores a la página ${currentPage}.`,
+    evidence.length ? `EVIDENCIA DEL CUADERNO, toda con página conocida hasta el avance actual:\n${evidence.join('\n')}` : 'No hay notas, citas ni anotaciones pertinentes con página conocida hasta el avance actual.',
+    'Sugerí solamente: nombre canónico, alias, edad si es segura sin spoilers, descripción introductoria, rasgos, ocupación y pertenencia si no revela trama. Los datos basados en web tienen certainty "inferred"; usá "explicit" solo si una fuente del cuaderno provista respalda directamente el dato. Cada campo sin respaldo debe quedar vacío. No inventes citas.',
+    'Devolvé únicamente JSON válido, sin Markdown, con esta forma: {"name":"","aliases":[],"age":"","description":"","traits":[],"occupation":"","affiliation":"","certainty":{"age":"inferred|explicit|unknown","description":"inferred|explicit|unknown","occupation":"inferred|explicit|unknown","affiliation":"inferred|explicit|unknown"},"sources":[{"title":"fuente consultada","url":"https://..."}]}. Incluí fuentes web reales consultadas y URLs completas. No agregues familiares ni relaciones.',
+  ].join('\n\n');
+}
+
+export function parsePastedJSON(text: string): any {
+  const trimmed = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  try { return JSON.parse(trimmed); } catch {}
+  const start = trimmed.indexOf('{');
+  if (start < 0) throw Error('No encontré un objeto JSON en la respuesta. Copiá la respuesta completa de Gemini.');
+  let depth = 0, quoted = false, escaped = false;
+  for (let i = start; i < trimmed.length; i++) {
+    const char = trimmed[i];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') quoted = false;
+    } else if (char === '"') quoted = true;
+    else if (char === '{') depth++;
+    else if (char === '}' && --depth === 0) return JSON.parse(trimmed.slice(start, i + 1));
   }
+  throw Error('El JSON de Gemini quedó incompleto. Copiá la respuesta completa e intentá otra vez.');
+}
+
+function normalizePastedSources(raw: unknown): Array<{ title: string; url: string }> {
+  if (!Array.isArray(raw)) return [];
+  const sources = raw.slice(0, 30).flatMap((source: any) => {
+    const url = typeof source?.url === 'string' ? source.url.trim() : '';
+    if (!/^https?:\/\//i.test(url) || url.length > 2000) return [];
+    return [{ title: String(source.title || url).trim().slice(0, 180), url }];
+  });
+  return [...new Map(sources.map((source) => [source.url, source])).values()];
+}
+
+function startCharacterSearch() {
+  const name = host?.querySelector<HTMLInputElement>('#chr_name')?.value.trim() || '';
+  if (!name) return showFormErrors(['Escribí el nombre antes de preparar la búsqueda.']);
+  state.characterSearch = { status: 'candidate-prompt', name, candidates: [], sources: [], error: '', suggestion: null, prompt: buildCandidatePrompt(name), responseText: '' };
   paint();
 }
 
-async function investigateSelectedCharacter() {
+function parseCandidateResponse() {
+  const search = state.characterSearch;
+  try {
+    const parsed = parsePastedJSON(host?.querySelector<HTMLTextAreaElement>('#chrCandidateResponse')?.value || '');
+    const candidates = Array.isArray(parsed.candidates) ? parsed.candidates.slice(0, 6).flatMap((c: any) => {
+      if (typeof c?.name !== 'string' || !c.name.trim()) return [];
+      return [{ name: c.name.trim().slice(0, LIMITS.name), aliases: Array.isArray(c.aliases) ? c.aliases.map((a: unknown) => String(a).trim().slice(0, LIMITS.alias)).filter(Boolean).slice(0, 12) : [], description: String(c.description || '').trim().slice(0, 600), confidence: ['high', 'medium', 'low'].includes(c.confidence) ? c.confidence : 'low' }];
+    }) : [];
+    state.characterSearch = { ...search, status: 'candidates', candidates, sources: normalizePastedSources(parsed.sources), error: '', responseText: '' };
+  } catch (err: any) { state.characterSearch = { ...search, error: String(err?.message || err), responseText: host?.querySelector<HTMLTextAreaElement>('#chrCandidateResponse')?.value || '' }; }
+  paint();
+}
+
+function prepareSelectedProfile() {
   const index = Number(host?.querySelector<HTMLInputElement>('input[name="chrCandidate"]:checked')?.value);
   const selected = state.characterSearch.candidates[index];
   if (!selected) return showFormErrors(['Elegí explícitamente una coincidencia antes de continuar.']);
+  state.characterSearch = { ...state.characterSearch, status: 'profile-prompt', name: selected.name, prompt: buildProfilePrompt(selected), error: '', responseText: '' };
+  paint();
+}
+
+function parseProfileResponse() {
   const search = state.characterSearch;
-  const controller = new AbortController();
-  state.characterSearch = { ...search, status: 'investigating', name: selected.name, controller };
-  paint();
   try {
-    const settings = api().ai.settings();
-    const response = await api().ai.request('character-research', { mode: 'investigate', name: selected.name, aliases: selected.aliases, book, characters: data.characters, readingEvidence: readReadingEvidence(), model: settings.model, thinking: settings.thinking }, controller.signal);
-    const result = await response.json();
-    if (!response.ok) { const error: any = Error(result.error || `Error HTTP ${response.status}`); error.status = response.status; throw error; }
-    if (result.usedGoogleSearch !== true) throw Error('Gemini no confirmó que ejecutó Google Search.');
-    state.characterSearch = { ...state.characterSearch, status: 'ready', name: selected.name, sources: result.sources || [], suggestion: result.suggestion || {}, controller: null };
-  } catch (err: any) {
-    if (err?.name === 'AbortError') state.characterSearch = { ...state.characterSearch, status: 'idle', controller: null };
-    else state.characterSearch = { ...state.characterSearch, status: 'error', error: String(err?.message || err), errorKind: err?.status === 429 ? 'quota' : err?.status === 503 || err instanceof TypeError ? 'web' : 'other', controller: null };
-  }
+    const parsed = parsePastedJSON(host?.querySelector<HTMLTextAreaElement>('#chrProfileResponse')?.value || '');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw Error('La respuesta no tiene el formato de ficha esperado.');
+    const suggestion = {
+      name: String(parsed.name || search.name).trim().slice(0, LIMITS.name),
+      aliases: Array.isArray(parsed.aliases) ? parsed.aliases.map((x: unknown) => String(x).trim().slice(0, LIMITS.alias)).filter(Boolean).slice(0, LIMITS.aliases) : [],
+      age: String(parsed.age || '').trim().slice(0, LIMITS.age), description: String(parsed.description || '').trim().slice(0, LIMITS.description),
+      traits: Array.isArray(parsed.traits) ? parsed.traits.map((x: unknown) => String(x).trim().slice(0, LIMITS.trait)).filter(Boolean).slice(0, LIMITS.traits) : [],
+      occupation: String(parsed.occupation || '').trim().slice(0, LIMITS.occupation), affiliation: String(parsed.affiliation || '').trim().slice(0, LIMITS.affiliation),
+      certainty: parsed.certainty && typeof parsed.certainty === 'object' ? parsed.certainty : {},
+    };
+    const profileSources = normalizePastedSources(parsed.sources);
+    const sources = [...new Map([...search.sources, ...profileSources].map((source) => [source.url, source])).values()];
+    state.characterSearch = { ...search, status: 'ready', suggestion, sources, error: '', responseText: '' };
+  } catch (err: any) { state.characterSearch = { ...search, error: String(err?.message || err), responseText: host?.querySelector<HTMLTextAreaElement>('#chrProfileResponse')?.value || '' }; }
   paint();
+}
+
+async function copyResearchPrompt() {
+  const prompt = state.characterSearch.prompt;
+  const textarea = host?.querySelector<HTMLTextAreaElement>('#chrResearchPrompt');
+  try {
+    await navigator.clipboard.writeText(prompt);
+    showFormErrors([], ['Prompt copiado. Abrí Gemini, pegalo y después traé la respuesta a Librarium.']);
+  } catch {
+    textarea?.focus(); textarea?.select();
+    showFormErrors([], ['Seleccioné el prompt para copiarlo manualmente con Ctrl+C.']);
+  }
 }
 
 function applyWebResearch() {
   const suggestion = state.characterSearch.suggestion;
   if (!suggestion) return;
+  const filledFields = new Set<string>();
   const setEmpty = (name: string, value: unknown, transform = (x: any) => String(x ?? '')) => {
     const field = host?.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[name="${name}"]`);
-    if (field && !field.value.trim()) field.value = transform(value);
+    if (field && !field.value.trim()) {
+      field.value = transform(value);
+      if (FIELD_KEYS.includes(name as CharacterFieldKey) && field.value.trim()) filledFields.add(name);
+    }
   };
   const nameInput = host?.querySelector<HTMLInputElement>('[name="name"]');
-  if (nameInput && suggestion.name) nameInput.value = String(suggestion.name);
+  if (!state.editingCharacterId && nameInput && suggestion.name) nameInput.value = String(suggestion.name);
   setEmpty('aliases', suggestion.aliases, (x) => Array.isArray(x) ? x.join('\n') : '');
   setEmpty('age', suggestion.age);
   setEmpty('description', suggestion.description);
@@ -673,13 +1014,16 @@ function applyWebResearch() {
   for (const field of FIELD_KEYS) {
     const input = host?.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[name="${field}"]`);
     const certainty = host?.querySelector<HTMLSelectElement>(`[name="cert_${field}"]`);
-    if (input?.value.trim() && !certainty?.value && suggestion[field]) certainty.value = 'inferred';
+    const proposed = suggestion.certainty?.[field];
+    if (filledFields.has(field) && certainty) certainty.value = proposed === 'explicit' ? 'explicit' : 'inferred';
   }
   const evidenceRows = host?.querySelector<HTMLElement>('#chrEvidenceRows');
   for (const source of state.characterSearch.sources) {
-    if (evidenceRows && source.url.length <= LIMITS.evidenceText && evidenceRows.children.length < LIMITS.evidence) evidenceRows.insertAdjacentHTML('beforeend', evidenceRowHTML({ kind: 'other', ref: source.url.length <= LIMITS.evidenceRef ? source.url : `Fuente web: ${source.title}`.slice(0, LIMITS.evidenceRef), text: source.url.length <= LIMITS.evidenceRef ? `Fuente web externa: ${source.title}`.slice(0, LIMITS.evidenceText) : source.url }));
+    if (evidenceRows && source.url.length <= LIMITS.evidenceText && evidenceRows.children.length < LIMITS.evidence) evidenceRows.insertAdjacentHTML('beforeend', evidenceRowHTML({ kind: 'other', ref: source.url.length <= LIMITS.evidenceRef ? source.url : `Fuente web: ${source.title}`.slice(0, LIMITS.evidenceRef), text: source.url.length <= LIMITS.evidenceRef ? `Fuente web externa citada por Gemini: ${source.title}`.slice(0, LIMITS.evidenceText) : source.url }));
   }
-  showFormErrors([], ['Se completaron únicamente campos vacíos. Los datos web quedan como inferidos; revisá cada fuente.']);
+  showFormErrors([], ['Se completaron únicamente campos vacíos. Revisá los enlaces y la certeza antes de guardar.']);
+  const applyButton = host?.querySelector<HTMLButtonElement>('[data-chr="apply-research"]');
+  if (applyButton) applyButton.disabled = true;
 }
 
 function relationFormHTML(): string {
@@ -1389,20 +1733,22 @@ async function handleAction(action: string, el: HTMLElement) {
     case 'autofill':
       return startAI({ kind: 'character' }, true);
     case 'search-character':
-      return searchCharacterWithWeb();
+      return startCharacterSearch();
+    case 'parse-candidates':
+      return parseCandidateResponse();
     case 'investigate-character':
-      return investigateSelectedCharacter();
+      return prepareSelectedProfile();
+    case 'parse-profile':
+      return parseProfileResponse();
+    case 'copy-research-prompt':
+      return copyResearchPrompt();
     case 'apply-research':
       applyWebResearch();
       return;
     case 'none-candidate':
-      state.characterSearch.controller?.abort();
-      state.characterSearch = { status: 'idle', name: '', candidates: [], sources: [], error: '', errorKind: null, suggestion: null, controller: null };
+      state.characterSearch = { status: 'idle', name: '', candidates: [], sources: [], error: '', suggestion: null, prompt: '', responseText: '' };
       paint();
       showFormErrors([], ['No se modificó la ficha. Conservá el nombre y completala manualmente o iniciá otra búsqueda.']);
-      return;
-    case 'stop-research':
-      state.characterSearch.controller?.abort();
       return;
     case 'apply-autofill': {
       const ai = state.ai;
@@ -1466,6 +1812,31 @@ async function handleAction(action: string, el: HTMLElement) {
       return;
     case 'ai-key':
       return api().ai.openSettings();
+    case 'analyze-network':
+    case 'new-network-analysis':
+      return startNetworkAnalysis();
+    case 'copy-network-prompt':
+      return copyNetworkPrompt();
+    case 'parse-network-review':
+      return parseNetworkReview();
+    case 'cancel-network-review':
+      state.networkReview = { status: 'idle', prompt: '', responseText: '', error: '', proposals: [], manualFindings: [] };
+      return paint();
+    case 'accept-network-proposal':
+      return decideNetworkProposal(Number(el.dataset.index), 'accepted');
+    case 'reject-network-proposal':
+      return decideNetworkProposal(Number(el.dataset.index), 'rejected');
+    case 'apply-network-selected':
+      return applyNetworkProposals(false);
+    case 'apply-network-accepted':
+      return applyNetworkProposals(true);
+    case 'discard-network-selected': {
+      const selected = new Set(state.networkReview.proposals.flatMap((_proposal, index) => host?.querySelector<HTMLInputElement>(`[data-review-card="${index}"] [data-review-select]`)?.checked ? [index] : []));
+      if (!selected.size) { state.networkReview.error = 'Marcá las propuestas que quieras descartar.'; return paint(); }
+      state.networkReview.proposals = state.networkReview.proposals.filter((_proposal, index) => !selected.has(index));
+      state.networkReview.error = '';
+      return paint();
+    }
     case 'net-select':
       state.netSelected = id;
       return repaintResults(`[data-chr="net-select"][data-id="${CSS.escape(id)}"]`);

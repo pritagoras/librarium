@@ -17,64 +17,17 @@ import {
 } from '../src/app/characters-model.ts';
 import { parseBackupJSON, restoreBackupData } from '../src/app/data-transfer.ts';
 import type { Character, CharacterRelation } from '../src/types.ts';
-import { directGeminiRequest } from '../src/gemini-direct.ts';
+import { parsePastedJSON } from '../src/app/characters.ts';
 
 const BOOK = 'book-1';
 
-test('character web research uses real Google Search Grounding and retains citations', async () => {
-  const originalFetch = globalThis.fetch;
-  let requestBody: any;
-  try {
-    globalThis.fetch = (async (input: any, init?: RequestInit) => {
-      assert.match(String(input), /\/v1beta\/interactions$/);
-      assert.equal(new Headers(init?.headers).get('x-goog-api-key'), 'personal-key');
-      requestBody = JSON.parse(String(init?.body));
-      return new Response(JSON.stringify({ steps: [
-        { type: 'google_search_call', arguments: { queries: ['Guerra y paz Pierre personaje'] } },
-        { type: 'model_output', content: [{ type: 'text', text: '{"candidates":[{"name":"Pierre Bezújov","aliases":["Piotr"],"description":"Un noble ruso.","confidence":"high"}]}', annotations: [{ type: 'url_citation', title: 'Enciclopedia', url: 'https://example.org/pierre' }] }] },
-      ] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-    }) as typeof fetch;
-    const response = await directGeminiRequest('character-research', {
-      mode: 'candidates', name: 'Pierre', model: 'gemini-2.5-flash',
-      book: { title: 'Guerra y paz', author: 'León Tolstói', publisher: 'Ediciones', year: '1869', edition: '1', isbn: '123', currentPage: 120 },
-    }, 'personal-key');
-    const result = await response.json();
-    assert.deepEqual(requestBody.tools, [{ type: 'google_search' }]);
-    assert.equal(requestBody.model, 'gemini-3.8-flash');
-    assert.match(requestBody.input, /León Tolstói/);
-    assert.match(requestBody.input, /página 120/);
-    assert.equal(result.usedGoogleSearch, true);
-    assert.equal(result.candidates[0].aliases[0], 'Piotr');
-    assert.equal(result.sources[0].url, 'https://example.org/pierre');
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+test('manual Gemini reply parser accepts fenced JSON inside explanatory text', () => {
+  const parsed = parsePastedJSON('Resultado:\n```json\n{"candidates":[{"name":"Pierre Bezújov"}]}\n```\nFin.');
+  assert.equal(parsed.candidates[0].name, 'Pierre Bezújov');
 });
 
-test('character web research rejects a response that did not execute Google Search', async () => {
-  const originalFetch = globalThis.fetch;
-  try {
-    globalThis.fetch = (async () => new Response(JSON.stringify({ steps: [
-      { type: 'model_output', content: [{ type: 'text', text: '{"candidates":[]}' }] },
-    ] }), { status: 200 })) as typeof fetch;
-    const response = await directGeminiRequest('character-research', { name: 'Pierre', book: { title: 'Guerra y paz' } }, 'key');
-    assert.equal(response.status, 503);
-    assert.match((await response.json()).error, /sin ejecutar Google Search/);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test('character web research preserves Gemini quota errors as HTTP 429', async () => {
-  const originalFetch = globalThis.fetch;
-  try {
-    globalThis.fetch = (async () => new Response(JSON.stringify({ error: { message: 'Resource exhausted' } }), { status: 429 })) as typeof fetch;
-    const response = await directGeminiRequest('character-research', { name: 'Pierre', book: { title: 'Guerra y paz' } }, 'key');
-    assert.equal(response.status, 429);
-    assert.match((await response.json()).error, /límite temporal/i);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+test('manual Gemini reply parser rejects incomplete JSON with an actionable message', () => {
+  assert.throws(() => parsePastedJSON('{"candidates": ['), /JSON de Gemini quedó incompleto/);
 });
 
 function character(id: string, name: string, extra: Partial<Character> = {}): Character {
