@@ -1079,3 +1079,50 @@ dialog[open]:not(.book-detail-dialog):not(.photo-viewer-dialog):not(#geminiDialo
   .chr-net-mobile-people button strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
   .chr-net-mobile-people button span{flex:0 0 auto;color:#c4c9bd;font-size:10px}
 }
+
+
+/* Navegación por pasos del formulario de vínculos */
+.chr-form-steps {
+  position: sticky;
+  top: 0.5rem;
+  z-index: 4;
+  display: flex;
+  gap: .4rem;
+  overflow-x: auto;
+  padding: .55rem;
+  margin: .75rem 0 1rem;
+  border: 1px solid var(--border, rgba(128,128,128,.25));
+  border-radius: 12px;
+  background: var(--surface, var(--card, #171717));
+  scrollbar-width: thin;
+}
+.chr-form-steps a {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.25rem;
+  padding: .35rem .7rem;
+  border-radius: 8px;
+  color: var(--text, inherit);
+  text-decoration: none;
+  font-size: .88rem;
+  border: 1px solid transparent;
+}
+.chr-form-steps a:hover, .chr-form-steps a:focus-visible {
+  border-color: var(--border, rgba(128,128,128,.4));
+  background: var(--surface-hover, rgba(128,128,128,.12));
+  outline-offset: 2px;
+}
+.chr-relation-step {
+  scroll-margin-top: 5rem;
+  padding: .9rem 0 1.1rem;
+  border-bottom: 1px solid var(--border, rgba(128,128,128,.2));
+}
+.chr-relation-step > h3 { margin: 0 0 .85rem; font-size: 1.02rem; }
+#chr_other_search { margin-bottom: .65rem; }
+#chr_other { width: 100%; }
+@media (max-width: 600px) {
+  .chr-form-steps { margin-inline: -.15rem; }
+  .chr-form-steps a { font-size: .82rem; padding-inline: .55rem; }
+  .chr-relation-step { padding-block: .8rem; }
+}
