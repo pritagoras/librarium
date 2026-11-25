@@ -982,19 +982,17 @@ function buildProfilePrompt(candidate: { name: string; aliases: string[] }): str
   const currentFields = FIELD_KEYS.map((key) => {
     const current = host?.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[name="${key}"]`)?.value || existing?.[key] || '';
     return `${FIELD_LABELS[key]}: ${current || '(vacío)'}`;
-  }).join('\n');
-  const evidence = readReadingEvidence();
+  }).join('\\n');
   return [
-    'Usá la búsqueda web de Gemini para investigar este personaje y sugerir una ficha breve. Diferenciá claramente información externa de evidencia del cuaderno personal.',
-    `OBRA:\n${promptBookContext()}`,
-    `PERSONAJE ELEGIDO POR EL USUARIO: ${candidate.name}`,
+    'Completá la ficha de este personaje usando exclusivamente tu conocimiento general aprendido sobre la obra. No uses búsqueda web, documentos externos, notas, citas ni fuentes del usuario.',
+    `OBRA: «${promptBookContext()}»`,
+    `PERSONAJE: ${candidate.name}`,
     `ALIAS CONOCIDOS: ${candidate.aliases.join(', ') || 'ninguno informado'}`,
-    `FICHA ACTUAL (no reemplazar datos escritos por el usuario):\n${currentFields}`,
-    `MODO SIN SPOILERS: la persona llegó hasta la página ${currentPage}. Las fuentes web suelen describir la obra completa y no indican la paginación de esta edición. No reveles trama posterior, parentescos no descubiertos, giros ni destinos. Completá edad, ocupación y pertenencia siempre que sean datos conocidos desde el comienzo de la obra o que figuren en la evidencia del cuaderno; si la edad cambia a lo largo de la historia, dá la de la primera aparición y aclaralo (por ejemplo «unos 17 años al comienzo»). Dejá vacío solo lo que no sepas o lo que sería un spoiler. No uses notas sin página conocida ni posteriores a la página ${currentPage}.`,
-    evidence.length ? `EVIDENCIA DEL CUADERNO, toda con página conocida hasta el avance actual:\n${evidence.join('\n')}` : 'No hay notas, citas ni anotaciones pertinentes con página conocida hasta el avance actual.',
-    'Completá todos los campos que puedas: nombre canónico, alias, edad (o edad aproximada), descripción introductoria, entre 3 y 6 rasgos, ocupación y pertenencia. Usá tu conocimiento de la obra y la búsqueda web si está disponible; Usá certainty "explicit" si el cuaderno provisto respalda directamente el dato y "unknown" si no estás seguro. Si de verdad no lo sabés, dejá el campo vacío en lugar de inventar. No inventes citas.',
-    'Devolvé únicamente JSON válido, sin Markdown, con esta forma: {"name":"","aliases":[],"age":"","description":"","traits":[],"occupation":"","affiliation":"","certainty":{"age":"inferred|explicit|unknown","description":"inferred|explicit|unknown","occupation":"inferred|explicit|unknown","affiliation":"inferred|explicit|unknown"},"sources":[{"title":"fuente consultada","url":"https://..."}]}. Incluí fuentes web reales consultadas y URLs completas. No agregues familiares ni relaciones.',
-  ].join('\n\n');
+    `FICHA ACTUAL (conservá los datos ya escritos; no los reemplaces):\\n${currentFields}`,
+    `MODO SIN SPOILERS: la persona llegó hasta la página ${currentPage}. No reveles trama posterior, giros ni destinos. Priorizá datos introductorios y estables. Si la edad cambia, indicá la edad al comienzo.`,
+    'Completá edad, descripción introductoria, entre 3 y 6 rasgos, ocupación y pertenencia. Ofrecé tu mejor dato concreto y probable; no incluyas explicaciones dentro de los campos. Dejá vacío solo aquello que realmente no puedas establecer. No agregues familiares ni relaciones.',
+    'Devolvé únicamente JSON válido, sin Markdown, con esta forma: {"name":"","aliases":[],"age":"","description":"","traits":[],"occupation":"","affiliation":""}.',
+  ].join('\\n\\n');
 }
 
 export function parsePastedJSON(text: string): any {
