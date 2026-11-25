@@ -1570,7 +1570,7 @@ async function runAI(ai: AIState) {
 function saveTargetsFor(ai: AIState, hasRelation: boolean): Array<[SaveTarget, string]> {
   if (ai.scope.kind === 'field' && ai.scope.field !== 'name') {
     return [
-      ['field', `Como dato: ${FIELD_LABELS[fieldKey!].toLowerCase()}`],
+      ['field', `Como dato: ${FIELD_LABELS[ai.scope.field].toLowerCase()}`],
       ['comments', 'Agregar a los comentarios'],
       ['evidence', 'Guardar como fuente o evidencia'],
     ];
