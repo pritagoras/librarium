@@ -745,6 +745,36 @@ export function buildCharacterAIRequest(input: AIContextInput): AIRequestPlan {
   const names = [character.name, ...character.aliases, ...(other ? [other.name, ...other.aliases] : [])];
   const pattern = namePattern(names);
   const currentPage = Math.max(0, Number(book.currentPage) || 0);
+
+  // Las consultas puntuales se resuelven desde el conocimiento general del modelo:
+  // no mezclamos notas, citas, fuentes ni estados de certeza del cuaderno.
+  if (scope.kind === 'field' && scope.field !== 'name') {
+    const fieldLabel = FIELD_LABELS[scope.field];
+    const systemInstruction = [
+      'Sos un asistente de investigación literaria que ayuda a completar fichas de personajes.',
+      'Para esta consulta usá exclusivamente tu conocimiento general aprendido sobre la obra y sus personajes. No uses búsqueda web, documentos externos, notas, citas ni fuentes del usuario.',
+      'Elegí el dato concreto que consideres más probable y útil para completar la ficha. No escribas explicaciones dentro del valor.',
+      'No inventes si realmente no tenés una base razonable; en ese caso dejá VALOR_SUGERIDO vacío.',
+      'Respetá el límite de spoilers indicado en el pedido.',
+      'Respondé en español y devolvé exactamente estas dos líneas, sin Markdown ni texto adicional:',
+      'CONTEXTO_BREVE: una o dos frases naturales que sitúen al personaje y la consulta.',
+      'VALOR_SUGERIDO: el dato concreto, breve y listo para guardar.',
+    ].join('\n');
+    const prompt = [
+      `OBRA: «${book.title}»${book.author ? ` de ${book.author}` : ''}.`,
+      `PERSONAJE: ${character.name}.`,
+      `DATO QUE SE INVESTIGA: ${fieldLabel}.`,
+      `CONTEXTO DE LECTURA: la persona llegó hasta la página ${currentPage}. Evitá revelar acontecimientos posteriores, giros o destinos. Para datos estables o introductorios, ofrecé tu mejor respuesta.`,
+      `FICHA ACTUAL: ${fieldLabel}: ${character[scope.field] || '(sin completar)'}.`,
+      'No consultes ni cites las notas, anotaciones, citas, fuentes o documentos del usuario. No uses internet. No expliques por qué elegiste el valor dentro de VALOR_SUGERIDO.',
+    ].join('\n\n');
+    return {
+      systemInstruction: input.styleInstruction ? `${systemInstruction}\n\nPreferencias de estilo: ${input.styleInstruction}` : systemInstruction,
+      prompt,
+      contextSummary: `Investigación de ${character.name}: ${fieldLabel.toLowerCase()} en «${book.title}».`,
+      sourceCount: { notes: 0, entries: 0, quotes: 0 },
+    };
+  }
   const eligibleNotes = (input.notes ?? []).filter((n) => n.endPage != null && n.endPage <= currentPage);
   const eligibleEntries = (input.entries ?? []).filter((e) => e.page != null && e.page <= currentPage);
   const eligibleQuotes = (input.quotes ?? []).filter((q) => q.page != null && q.page <= currentPage);

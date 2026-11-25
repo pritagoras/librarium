@@ -504,9 +504,9 @@ function groundingToggleHTML(): string {
 
 interface JSONTaskResult { text: string; sources: Array<{ title: string; url: string }>; groundingUsed: boolean; groundingError: string }
 
-async function runJSONTask(prompt: string, signal: AbortSignal): Promise<JSONTaskResult> {
+async function runJSONTask(prompt: string, signal: AbortSignal, useGrounding = groundingEnabled()): Promise<JSONTaskResult> {
   const settings = api().ai.settings();
-  const response = await api().ai.request('json-task', { prompt, grounding: groundingEnabled(), model: settings.model, thinking: settings.thinking }, signal);
+  const response = await api().ai.request('json-task', { prompt, grounding: useGrounding, model: settings.model, thinking: settings.thinking }, signal);
   const body: any = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error: any = Error(String(body?.error || 'No se pudo consultar Gemini.'));
@@ -983,17 +983,15 @@ function buildProfilePrompt(candidate: { name: string; aliases: string[] }): str
     const current = host?.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[name="${key}"]`)?.value || existing?.[key] || '';
     return `${FIELD_LABELS[key]}: ${current || '(vacío)'}`;
   }).join('\n');
-  const evidence = readReadingEvidence();
   return [
-    'Usá la búsqueda web de Gemini para investigar este personaje y sugerir una ficha breve. Diferenciá claramente información externa de evidencia del cuaderno personal.',
-    `OBRA:\n${promptBookContext()}`,
-    `PERSONAJE ELEGIDO POR EL USUARIO: ${candidate.name}`,
+    'Completá la ficha de este personaje usando exclusivamente tu conocimiento general aprendido sobre la obra. No uses búsqueda web, documentos externos, notas, citas ni fuentes del usuario.',
+    `OBRA: «${promptBookContext()}»`,
+    `PERSONAJE: ${candidate.name}`,
     `ALIAS CONOCIDOS: ${candidate.aliases.join(', ') || 'ninguno informado'}`,
-    `FICHA ACTUAL (no reemplazar datos escritos por el usuario):\n${currentFields}`,
-    `MODO SIN SPOILERS: la persona llegó hasta la página ${currentPage}. Las fuentes web suelen describir la obra completa y no indican la paginación de esta edición. No reveles trama posterior, parentescos no descubiertos, giros ni destinos. Completá edad, ocupación y pertenencia siempre que sean datos conocidos desde el comienzo de la obra o que figuren en la evidencia del cuaderno; si la edad cambia a lo largo de la historia, dá la de la primera aparición y aclaralo (por ejemplo «unos 17 años al comienzo»). Dejá vacío solo lo que no sepas o lo que sería un spoiler. No uses notas sin página conocida ni posteriores a la página ${currentPage}.`,
-    evidence.length ? `EVIDENCIA DEL CUADERNO, toda con página conocida hasta el avance actual:\n${evidence.join('\n')}` : 'No hay notas, citas ni anotaciones pertinentes con página conocida hasta el avance actual.',
-    'Completá todos los campos que puedas: nombre canónico, alias, edad (o edad aproximada), descripción introductoria, entre 3 y 6 rasgos, ocupación y pertenencia. Usá tu conocimiento de la obra y la búsqueda web si está disponible; Usá certainty "explicit" si el cuaderno provisto respalda directamente el dato y "unknown" si no estás seguro. Si de verdad no lo sabés, dejá el campo vacío en lugar de inventar. No inventes citas.',
-    'Devolvé únicamente JSON válido, sin Markdown, con esta forma: {"name":"","aliases":[],"age":"","description":"","traits":[],"occupation":"","affiliation":"","certainty":{"age":"inferred|explicit|unknown","description":"inferred|explicit|unknown","occupation":"inferred|explicit|unknown","affiliation":"inferred|explicit|unknown"},"sources":[{"title":"fuente consultada","url":"https://..."}]}. Incluí fuentes web reales consultadas y URLs completas. No agregues familiares ni relaciones.',
+    `FICHA ACTUAL (conservá los datos ya escritos; no los reemplaces):\n${currentFields}`,
+    `MODO SIN SPOILERS: la persona llegó hasta la página ${currentPage}. No reveles trama posterior, giros ni destinos. Priorizá datos introductorios y estables. Si la edad cambia, indicá la edad al comienzo.`,
+    'Completá edad, descripción introductoria, entre 3 y 6 rasgos, ocupación y pertenencia. Ofrecé tu mejor dato concreto y probable; no incluyas explicaciones dentro de los campos. Dejá vacío solo aquello que realmente no puedas establecer. No agregues familiares ni relaciones.',
+    'Devolvé únicamente JSON válido, sin Markdown, con esta forma: {"name":"","aliases":[],"age":"","description":"","traits":[],"occupation":"","affiliation":""}.',
   ].join('\n\n');
 }
 
@@ -1092,11 +1090,11 @@ async function runAutoProfile(selected: { name: string; aliases: string[] }) {
   paint();
   const prompt = buildProfilePrompt(selected);
   try {
-    const result = await runJSONTask(prompt, controller.signal);
+    const result = await runJSONTask(prompt, controller.signal, false);
     if (controller.signal.aborted) return;
     const parsed = parsePastedJSON(result.text);
     const suggestion = suggestionFromParsed(parsed, selected.name);
-    autoNote = groundingNoteFor(result);
+    autoNote = 'Propuesta preparada con el conocimiento general del modelo, sin búsqueda web ni fuentes del cuaderno.';
     state.characterSearch = { ...before, status: 'ready', name: selected.name, suggestion, sources: mergeSources(before.sources, normalizePastedSources(parsed.sources), result.sources), error: '', responseText: '' };
   } catch (err: any) {
     if (controller.signal.aborted) return;
@@ -1616,6 +1614,21 @@ function paintAI() {
     ai.status === 'done' && !ai.formTarget && api().renderMarkdown
       ? `<div class="chr-ai-answer chr-ai-answer--md" id="chrAiAnswer" tabindex="0">${api().renderMarkdown!(suggestion.body)}</div>`
       : `<div class="chr-ai-answer" id="chrAiAnswer" tabindex="0">${esc(suggestion.body)}</div>`;
+  const fieldKey = ai.scope.kind === 'field' && ai.scope.field !== 'name' ? ai.scope.field : null;
+  const isFieldSuggestion = fieldKey !== null;
+  const fieldSuggestionHTML = isFieldSuggestion && ai.status === 'done'
+    ? `<div class="chr-ai-quick-context"><span class="chr-ai-eyebrow">CONTEXTO</span><p>${esc(suggestion.body)}</p></div>
+      <form id="chrAiSave" class="chr-ai-quick-form" novalidate>
+        <input type="hidden" name="target" value="field" />
+        <input type="hidden" name="certainty" value="inferred" />
+        <label for="chrAiSaveText">${esc(FIELD_LABELS[fieldKey!])}</label>
+        ${fieldKey === 'description'
+          ? `<textarea id="chrAiSaveText" name="text" rows="3">${esc(suggestion.value)}</textarea>`
+          : `<input id="chrAiSaveText" name="text" type="text" value="${esc(suggestion.value)}" autocomplete="off" />`}
+        <div class="chr-ai-save-error" id="chrAiSaveError" role="alert"></div>
+        <button type="submit" class="primary">Aplicar a la ficha</button>
+      </form>`
+    : '';
   slot.innerHTML = `<section class="chr-ai" aria-labelledby="chrAiTitle">
     <div class="chr-section-head">
       <h3 id="chrAiTitle">${AI_SPARK} IA · ${esc(ai.label)}</h3>
@@ -1624,15 +1637,14 @@ function paintAI() {
         <button type="button" class="secondary" data-chr="ai-close">Cerrar</button>
       </div>
     </div>
-    ${ai.plan ? `<p class="muted chr-ai-context">${esc(ai.plan.contextSummary)}</p>` : ''}
+    ${!isFieldSuggestion && ai.plan ? `<p class="muted chr-ai-context">${esc(ai.plan.contextSummary)}</p>` : ''}
     <p class="chr-ai-status" role="status" aria-live="polite">${
       ai.status === 'running' ? 'Consultando a la IA…' : ai.status === 'done' ? esc(ai.note) : ''
     }</p>
     ${ai.status === 'error' ? `<div class="chr-ai-error" role="alert">${esc(ai.error)} ${ai.keyError ? '<button type="button" class="ai-key-cta" data-chr="ai-key">Configurar mi API key</button>' : ''}</div>` : ''}
-    ${sheet ? fullSheetFormHTML(sheetCharacter!, sheet) : ai.fullSheet && ai.status === 'running' ? '' : ai.text || ai.status === 'running' ? answerHTML : ''}
+    ${isFieldSuggestion ? fieldSuggestionHTML : sheet ? fullSheetFormHTML(sheetCharacter!, sheet) : ai.fullSheet && ai.status === 'running' ? '' : ai.text || ai.status === 'running' ? answerHTML : ''}
     ${ai.formTarget && ai.status === 'done' ? `<div class="chr-ai-save">${suggestedNameHTML(ai.text)}<p class="muted">Revisá la respuesta. Marcá los familiares que quieras agregar; se crearán al guardar la ficha.</p><div id="chrSuggestedRelatives">${suggestedRelativesHTML(ai.text)}</div><button type="button" class="primary" data-chr="apply-autofill">Aplicar datos seleccionados</button></div>` : ''}
-    ${
-      ai.status === 'done' && ai.text.trim() && !sheet
+    ${!isFieldSuggestion && ai.status === 'done' && ai.text.trim() && !sheet
         ? `<p class="muted chr-ai-disclaimer">La IA puede equivocarse y no leyó el libro completo: revisá lo explícito y lo inferido antes de guardar.</p>
     ${
       targets.length
@@ -1676,7 +1688,9 @@ function paintAI() {
 function splitSuggestion(text: string): { body: string; value: string; certainty: Certainty } {
   const value = /^[ \t]*VALOR_SUGERIDO:[ \t]*(.*)$/im.exec(text)?.[1]?.trim().replace(/^[«"“]+|[»"”]+$/g, '') || '';
   const raw = /^[ \t]*CERTEZA_SUGERIDA:[ \t]*(\w+)/im.exec(text)?.[1]?.toLowerCase() || '';
-  const body = text.replace(/^[ \t]*(?:VALOR_SUGERIDO|CERTEZA_SUGERIDA):.*$/gim, '').replace(/\n{3,}/g, '\n\n').trim();
+  const body = text.replace(/^[ \t]*(?:VALOR_SUGERIDO|CERTEZA_SUGERIDA):.*$/gim, '')
+    .replace(/^[ \t]*CONTEXTO_BREVE:[ \t]*/im, '')
+    .replace(/\n{3,}/g, '\n\n').trim();
   return { body, value, certainty: raw === 'explicit' ? 'explicit' : 'inferred' };
 }
 
@@ -1716,16 +1730,12 @@ function sheetRelationRows(character: Character, parsed: any): string {
 }
 
 function fullSheetFormHTML(character: Character, parsed: any): string {
-  const basis = parsed.basis && typeof parsed.basis === 'object' ? parsed.basis : {};
   const row = (key: string, label: string, aiValue: string, current: string, long: boolean, certainty?: Certainty) => {
-    const value = aiValue || current;
-    const checked = aiValue && aiValue !== current ? 'checked' : '';
-    const why = String(basis[key] || '').trim();
+    const value = current || aiValue;
+    const checked = aiValue && !current ? 'checked' : '';
     return `<div class="chr-form-field chr-fs-row"><label class="chr-fs-check"><input type="checkbox" name="fs_apply_${key}" ${checked}/> <strong>${esc(label)}</strong></label>
-      ${why ? `<p class="muted chr-fs-basis">${esc(why)}</p>` : ''}
-      ${current && current !== aiValue ? `<p class="muted">Ahora en la ficha: ${esc(current)}</p>` : ''}
       ${long ? `<textarea name="fs_${key}" rows="4">${esc(value)}</textarea>` : `<input name="fs_${key}" value="${esc(value)}" />`}
-      ${certainty ? `<select name="fs_cert_${key}" aria-label="Certeza de ${esc(label.toLowerCase())}">${CERTAINTIES.map((c) => `<option value="${c}" ${c === certainty ? 'selected' : ''}>${esc(CERTAINTY_LABELS[c])}</option>`).join('')}</select>` : ''}</div>`;
+      </div>`;
   };
   const list = (value: unknown) => (Array.isArray(value) ? value.map((x) => String(x).trim()).filter(Boolean) : []);
   const rows = FULL_SHEET_FIELDS.map(({ key, long }) => {
@@ -1734,7 +1744,7 @@ function fullSheetFormHTML(character: Character, parsed: any): string {
   }).join('');
   const traits = row('traits', 'Rasgos (separados por coma)', list(parsed.traits).join(', '), character.traits.join(', '), false);
   const aliases = row('aliases', 'Alias (separados por coma)', list(parsed.aliases).join(', '), character.aliases.join(', '), false);
-  return `<form id="chrFullSheet" class="chr-ai-save" novalidate><p class="muted">La IA propone un valor para cada dato y explica de dónde lo saca. Editá lo que quieras, desmarcá lo que no quieras aplicar y confirmá.</p>${rows}${traits}${aliases}${sheetRelationRows(character, parsed)}<div class="chr-ai-save-error" id="chrAiSaveError" role="alert"></div><button type="submit" class="primary">Aplicar a la ficha…</button></form>`;
+  return `<form id="chrFullSheet" class="chr-ai-save" novalidate><p class="muted">La IA completó los datos que pudo establecer. Los valores ya están cargados y podés editarlos antes de aplicar.</p>${rows}${traits}${aliases}${sheetRelationRows(character, parsed)}<div class="chr-ai-save-error" id="chrAiSaveError" role="alert"></div><button type="submit" class="primary">Aplicar ficha completa</button></form>`;
 }
 
 async function submitFullSheet(form: HTMLFormElement) {
@@ -1750,8 +1760,7 @@ async function submitFullSheet(form: HTMLFormElement) {
     const value = formValue(form, `fs_${key}`).trim();
     if (!value) continue;
     if (value.length > LIMITS[key]) return fail(`«${FIELD_LABELS[key]}» supera el máximo de ${LIMITS[key]} caracteres.`);
-    const cert = formValue(form, `fs_cert_${key}`) as Certainty;
-    if (!CERTAINTIES.includes(cert)) return fail(`Elegí la certeza de «${FIELD_LABELS[key]}».`);
+    const cert: Certainty = 'inferred';
     updated[key] = value;
     updated.certainty[key] = cert;
     changes.push(`${FIELD_LABELS[key]}: ${value.slice(0, 120)} (${CERTAINTY_LABELS[cert]})`);
@@ -1766,8 +1775,7 @@ async function submitFullSheet(form: HTMLFormElement) {
   for (const { i } of pending) changes.push(`Vínculo: ${formValue(form, `fr_type_${i}`)} con ${characterById(formValue(form, `fr_other_${i}`))?.name || '?'}`);
   if (!changes.length) return fail('No hay datos marcados para aplicar.');
   try {
-    const ok = await api().confirm({ eyebrow: 'APLICAR DATOS DE LA IA', title: '¿Aplicar a la ficha?', message: `Se modificará la ficha de ${character.name}:\n\n${changes.join('\n')}`, confirmLabel: 'Aplicar' });
-    if (!ok) return;
+
     if (fieldChanges) await api().saveCharacter(updated);
     const fresh = pending.length ? await api().loadBookData(state.bookId) : null;
     let relations = fresh ? fresh.relations.filter((r) => r.bookId === state.bookId) : [];
@@ -1854,13 +1862,15 @@ async function submitAISave(form: HTMLFormElement) {
       preview = `Se modificará la ficha de ${character.name}:\n\n${options.text.trim().slice(0, 600)}`;
       commit = async () => void (await api().saveCharacter(updated));
     }
-    const ok = await api().confirm({
-      eyebrow: 'GUARDAR RESPUESTA DE LA IA',
-      title: '¿Guardar en la ficha?',
-      message: preview,
-      confirmLabel: 'Guardar',
-    });
-    if (!ok) return;
+    if (!(ai.scope.kind === 'field' && options.target === 'field')) {
+      const ok = await api().confirm({
+        eyebrow: 'GUARDAR RESPUESTA DE LA IA',
+        title: '¿Guardar en la ficha?',
+        message: preview,
+        confirmLabel: 'Guardar',
+      });
+      if (!ok) return;
+    }
     await commit();
     await reload();
     state.ai = null;
