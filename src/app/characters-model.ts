@@ -759,7 +759,7 @@ export function buildCharacterAIRequest(input: AIContextInput): AIRequestPlan {
       'Respondé en español y devolvé exactamente estas dos líneas, sin Markdown ni texto adicional:',
       'CONTEXTO_BREVE: una o dos frases naturales que sitúen al personaje y la consulta.',
       'VALOR_SUGERIDO: el dato concreto, breve y listo para guardar.',
-    ].join('\\n');
+    ].join('\n');
     const prompt = [
       `OBRA: «${book.title}»${book.author ? ` de ${book.author}` : ''}.`,
       `PERSONAJE: ${character.name}.`,
@@ -767,9 +767,9 @@ export function buildCharacterAIRequest(input: AIContextInput): AIRequestPlan {
       `CONTEXTO DE LECTURA: la persona llegó hasta la página ${currentPage}. Evitá revelar acontecimientos posteriores, giros o destinos. Para datos estables o introductorios, ofrecé tu mejor respuesta.`,
       `FICHA ACTUAL: ${fieldLabel}: ${character[scope.field] || '(sin completar)'}.`,
       'No consultes ni cites las notas, anotaciones, citas, fuentes o documentos del usuario. No uses internet. No expliques por qué elegiste el valor dentro de VALOR_SUGERIDO.',
-    ].join('\\n\\n');
+    ].join('\n\n');
     return {
-      systemInstruction: input.styleInstruction ? `${systemInstruction}\\n\\nPreferencias de estilo: ${input.styleInstruction}` : systemInstruction,
+      systemInstruction: input.styleInstruction ? `${systemInstruction}\n\nPreferencias de estilo: ${input.styleInstruction}` : systemInstruction,
       prompt,
       contextSummary: `Investigación de ${character.name}: ${fieldLabel.toLowerCase()} en «${book.title}».`,
       sourceCount: { notes: 0, entries: 0, quotes: 0 },
