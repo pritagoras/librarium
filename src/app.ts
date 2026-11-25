@@ -2085,7 +2085,6 @@ function updateAccountUI(status: SyncStatus, message: string, user: any) {
   }
 
   if ($<HTMLDialogElement>('#feedbackDialog')?.open) {
-    syncFeedbackAuthUI();
     void renderMyFeedbackList();
   }
 }

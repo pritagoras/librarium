@@ -1,6 +1,7 @@
 type Payload = Record<string, any>;
 
 const API_ROOT = 'https://generativelanguage.googleapis.com/v1beta/models';
+const INTERACTIONS_ROOT = 'https://generativelanguage.googleapis.com/v1beta/interactions';
 const DEFAULT_MODEL = 'gemini-3.8-flash';
 export const FALLBACK_MODELS = [DEFAULT_MODEL, 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
 
@@ -146,6 +147,58 @@ function responseJSON(data: any) {
   return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
 }
 
+function interactionModelCandidates(preferred: string) {
+  // Google Search Grounding is provided by the Interactions API for Gemini 3 models.
+  const compatible = /^gemini-3(?:[.-]|$)/i.test(preferred) ? preferred : DEFAULT_MODEL;
+  return [...new Set([compatible, DEFAULT_MODEL])];
+}
+
+async function groundedInteraction(apiKey: string, preferred: string, input: string, signal?: AbortSignal) {
+  let lastError: any;
+  for (const model of interactionModelCandidates(preferred)) {
+    const response = await fetch(INTERACTIONS_ROOT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+      body: JSON.stringify({ model, input, tools: [{ type: 'google_search' }], store: false }),
+      signal,
+    });
+    if (!response.ok) {
+      let details: any = {};
+      try { details = await response.json(); } catch {}
+      lastError = apiError(details, response.status);
+      if (![400, 404, 429, 503].includes(response.status) || model === interactionModelCandidates(preferred).at(-1)) throw lastError;
+      continue;
+    }
+    const result = await response.json();
+    const chunks: string[] = [];
+    const citations: Array<{ title: string; url: string }> = [];
+    const queries = new Set<string>();
+    let didSearch = false;
+    for (const step of Array.isArray(result.steps) ? result.steps : []) {
+      if (step.type === 'google_search_call') {
+        didSearch = true;
+        for (const query of step.arguments?.queries || []) if (typeof query === 'string') queries.add(query.slice(0, 300));
+      }
+      if (step.type === 'model_output') for (const block of step.content || []) {
+        if (typeof block.text === 'string') chunks.push(block.text);
+        for (const annotation of block.annotations || []) {
+          if (annotation.type === 'url_citation' && /^https?:\/\//i.test(annotation.url || '')) {
+            citations.push({ title: String(annotation.title || annotation.url).slice(0, 180), url: String(annotation.url).slice(0, 2000) });
+          }
+        }
+      }
+    }
+    const text = chunks.join('\n').trim();
+    if (!text) throw Error('Gemini no devolvió resultados de búsqueda.');
+    return { text, model, citations: [...new Map(citations.map((c) => [c.url, c])).values()].slice(0, 30), queries: [...queries].slice(0, 12), didSearch };
+  }
+  throw lastError || Error('Google Search Grounding no está disponible para el modelo configurado.');
+}
+
+function parseInteractionJSON(text: string) {
+  return parseJson(text);
+}
+
 function errorJSON(error: any) {
   const rawMessage = String(error?.message || '');
   const isNetwork =
@@ -171,6 +224,67 @@ export async function directGeminiRequest(
       return responseJSON({ models: await listModels(apiKey, signal) });
     }
     const preferred = modelFor(payload);
+    if (route === 'character-research') {
+      const book = payload.book && typeof payload.book === 'object' ? payload.book : {};
+      const mode = payload.mode === 'investigate' ? 'investigate' : 'candidates';
+      const requestedName = String(payload.name || '').trim().slice(0, 200);
+      if (!requestedName) throw Error('Escribí el nombre que querés investigar.');
+      const bookContext = [
+        `Título: ${String(book.title || '').slice(0, 300)}`,
+        book.author ? `Autor: ${String(book.author).slice(0, 200)}` : '',
+        book.publisher ? `Editorial: ${String(book.publisher).slice(0, 200)}` : '',
+        book.year ? `Año: ${String(book.year).slice(0, 20)}` : '',
+        book.edition ? `Edición: ${String(book.edition).slice(0, 200)}` : '',
+        book.isbn ? `ISBN: ${String(book.isbn).slice(0, 40)}` : '',
+        `Avance registrado: página ${Math.max(0, Number(book.currentPage) || 0)}`,
+      ].filter(Boolean).join('\n');
+      const knownCharacters = Array.isArray(payload.characters) ? payload.characters.slice(0, 200).map((c: any) => `${String(c.name || '').slice(0, 200)}${Array.isArray(c.aliases) && c.aliases.length ? ` (alias: ${c.aliases.slice(0, 12).join(', ')})` : ''}`).join('\n') : '';
+      const notes = Array.isArray(payload.readingEvidence) ? payload.readingEvidence.slice(0, 40).map((x: any) => String(x).slice(0, 700)).join('\n') : '';
+      const prompt = mode === 'candidates'
+        ? [
+            'Investigá en la web, usando Google Search, quiénes son los personajes literarios que podrían corresponder al nombre dado. La búsqueda debe estar vinculada a la obra y autor indicados, y contemplar tildes, transliteraciones, variantes y errores tipográficos.',
+            `OBRA:\n${bookContext}`,
+            `NOMBRE INGRESADO: ${requestedName}`,
+            knownCharacters ? `PERSONAJES Y ALIAS YA REGISTRADOS EN ESTE LIBRO:\n${knownCharacters}` : 'Todavía no hay personajes registrados en este libro.',
+            'MODO SIN SPOILERS (obligatorio): describí solo la identidad introductoria necesaria para distinguir candidatos. No menciones sucesos, destinos, relaciones reveladoras, giros ni transformaciones que puedan ocurrir más adelante. No asumas que las fuentes web corresponden a la edición o página de lectura de la persona.',
+            'Respondé únicamente JSON: {"candidates":[{"name":"nombre canónico","aliases":["variantes"],"description":"identificación breve sin trama","confidence":"high|medium|low"}]}. Ofrecé hasta 6 candidatos plausibles; no inventes. Si la búsqueda no encuentra candidatos confiables, devolvé lista vacía.',
+          ].join('\n\n')
+        : [
+            'Investigá en la web la identidad seleccionada y proponé datos de ficha literaria conservadores. Google Search debe ejecutarse en esta solicitud.',
+            `OBRA:\n${bookContext}`,
+            `PERSONAJE SELECCIONADO: ${requestedName}`,
+            `ALIAS CONOCIDOS: ${JSON.stringify(Array.isArray(payload.aliases) ? payload.aliases.slice(0, 20) : [])}`,
+            'MODO SIN SPOILERS activo. Omite edad si no es inequívocamente segura sin spoilers. La descripción solo puede ser una identificación introductoria neutral. No propongas parentescos, afiliaciones de trama, eventos, destino, giros ni revelaciones a partir de fuentes web.',
+            'Las notas del usuario son la única evidencia para hechos dependientes de la trama; no las uses como sustituto de la investigación web. Las fuentes sin página y las posteriores al avance registrado no son evidencia de lectura. Si un campo no se puede afirmar sin spoilers, déjalo vacío.',
+            notes ? `EVIDENCIA DEL CUADERNO HASTA LA PÁGINA REGISTRADA (etiquetada como material personal, no como fuente web):\n${notes}` : 'No hay notas/citas/anotaciones pertinentes con página conocida hasta el avance actual.',
+            'Respondé únicamente JSON: {"name":"","aliases":[],"age":"","description":"","traits":[],"occupation":"","affiliation":"","certainty":{"age":"unknown","description":"inferred","occupation":"unknown","affiliation":"unknown"},"sourceUrls":[]}. Cualquier dato procedente de la web debe tener certeza inferred y fuente web. No afirmes que un dato web es explícito en el libro. sourceUrls debe contener URLs presentes en las fuentes consultadas.',
+          ].join('\n\n');
+      const grounded = await groundedInteraction(apiKey, preferred, prompt, signal);
+      if (!grounded.didSearch) {
+        const groundingError: any = Error('Gemini respondió sin ejecutar Google Search. No se puede verificar una investigación web.');
+        groundingError.status = 503;
+        throw groundingError;
+      }
+      const parsed = parseInteractionJSON(grounded.text);
+      const common = { model: grounded.model, sources: grounded.citations, queries: grounded.queries, usedGoogleSearch: true };
+      if (mode === 'candidates') {
+        const candidates = Array.isArray(parsed.candidates) ? parsed.candidates.slice(0, 6).flatMap((c: any) => {
+          if (!c || typeof c.name !== 'string' || !c.name.trim()) return [];
+          const confidence = ['high', 'medium', 'low'].includes(c.confidence) ? c.confidence : 'low';
+          return [{ name: c.name.trim().slice(0, 200), aliases: Array.isArray(c.aliases) ? c.aliases.map((a: unknown) => String(a).trim().slice(0, 100)).filter(Boolean).slice(0, 12) : [], description: String(c.description || '').trim().slice(0, 600), confidence }];
+        }) : [];
+        return responseJSON({ ...common, candidates });
+      }
+      const sourceUrls = Array.isArray(parsed.sourceUrls) ? parsed.sourceUrls.filter((url: unknown) => typeof url === 'string' && grounded.citations.some((c) => c.url === url)).slice(0, 20) : [];
+      return responseJSON({ ...common, suggestion: {
+        name: String(parsed.name || requestedName).trim().slice(0, 200),
+        aliases: Array.isArray(parsed.aliases) ? parsed.aliases.map((x: unknown) => String(x).trim().slice(0, 100)).filter(Boolean).slice(0, 20) : [],
+        age: String(parsed.age || '').trim().slice(0, 60), description: String(parsed.description || '').trim().slice(0, 3000),
+        traits: Array.isArray(parsed.traits) ? parsed.traits.map((x: unknown) => String(x).trim().slice(0, 60)).filter(Boolean).slice(0, 20) : [],
+        occupation: String(parsed.occupation || '').trim().slice(0, 300), affiliation: String(parsed.affiliation || '').trim().slice(0, 300),
+        certainty: parsed.certainty && typeof parsed.certainty === 'object' ? parsed.certainty : {}, sourceUrls,
+      } });
+    }
     if (route === 'chat-stream') {
       // singleModel: la app maneja los reintentos entre modelos (también a mitad de respuesta).
       const models = payload.singleModel ? [preferred] : [preferred, ...FALLBACK_MODELS.filter((model) => model !== preferred)];
