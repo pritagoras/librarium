@@ -1,5 +1,5 @@
 const DB_NAME = 'librarium_local_v1';
-const DB_VERSION = 4;
+const DB_VERSION = 6;
 
 const STORES = [
   'books',
@@ -9,6 +9,8 @@ const STORES = [
   'quotes',
   'analyses',
   'media',
+  'syncConflicts',
+  'syncPending',
 ] as const;
 
 export type StoreName = (typeof STORES)[number];

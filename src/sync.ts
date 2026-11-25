@@ -22,6 +22,7 @@ import {
   testConnection,
 } from './firebase';
 import { all, clearAllStores, del, get, put, type StoreName } from './db';
+import { makeConflictId, reconcileRecords } from './sync-merge';
 import type {
   Book,
   BookAnalysis,
@@ -31,7 +32,10 @@ import type {
   MediaItem,
   Note,
   Quote,
+  SyncConflict,
+  PendingCloudWrite,
   SyncStatus,
+  SyncedStoreName,
 } from './types';
 
 const LAST_UID_KEY = 'librarium-last-uid';
@@ -44,6 +48,16 @@ const cloudIds: Record<StoreName, Set<string>> = {
   analyses: new Set(),
   conversations: new Set(),
   media: new Set(),
+  syncConflicts: new Set(),
+  syncPending: new Set(),
+};
+const pendingCloudWrites: Record<SyncedStoreName, Set<string>> = {
+  books: new Set(), notes: new Set(), entries: new Set(), quotes: new Set(),
+  analyses: new Set(), conversations: new Set(),
+};
+const inFlightCloudWrites: Record<SyncedStoreName, Set<string>> = {
+  books: new Set(), notes: new Set(), entries: new Set(), quotes: new Set(),
+  analyses: new Set(), conversations: new Set(),
 };
 
 let unsubscribers: Unsubscribe[] = [];
@@ -52,11 +66,165 @@ let syncStatus: SyncStatus = 'local';
 let syncMessage = 'Guardado localmente en este dispositivo.';
 let onDataChangedCb: (() => void) | null = null;
 let onSyncStateCb: ((status: SyncStatus, message: string, user: User | null) => void) | null = null;
+let unresolvedConflictCount = 0;
+let cloudWriteFailures = 0;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let retryAttempt = 0;
 
 function setSyncState(status: SyncStatus, message: string) {
+  if (currentUser) {
+    const pendingCount = Object.values(pendingCloudWrites).reduce((total, pending) => total + pending.size, 0);
+    if (unresolvedConflictCount > 0) {
+      status = 'conflict';
+      const pendingMessage = pendingCount
+        ? ` Hay ${pendingCount} cambio${pendingCount === 1 ? '' : 's'} pendiente${pendingCount === 1 ? '' : 's'} de subir.`
+        : '';
+      message = `${unresolvedConflictCount} conflicto${unresolvedConflictCount === 1 ? '' : 's'} de sincronización. Conservamos ambas versiones en este dispositivo; revisalas desde Ajustes.${pendingMessage}`;
+    } else if (pendingCount > 0 && status === 'synced') {
+      status = 'error';
+      message = `${pendingCount} cambio${pendingCount === 1 ? '' : 's'} pendiente${pendingCount === 1 ? '' : 's'} de subir. Tus datos siguen guardados en este dispositivo; reintentaremos automáticamente.`;
+    }
+  }
   syncStatus = status;
   syncMessage = message;
   onSyncStateCb?.(status, message, currentUser);
+}
+
+function scheduleCloudRetry() {
+  if (retryTimer || !currentUser) return;
+  const delay = Math.min(60_000, 2_000 * 2 ** Math.min(retryAttempt, 5));
+  retryAttempt++;
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    if (!currentUser || navigator.onLine === false) return;
+    void migrateLocalDataToCloud();
+  }, delay);
+}
+
+function pendingWriteId(uid: string, storeName: SyncedStoreName, recordId: string) {
+  return `${uid}:${storeName}:${recordId}`;
+}
+
+async function noteCloudWriteFailure(storeName: SyncedStoreName, id: string, message: string) {
+  cloudIds[storeName].delete(id);
+  pendingCloudWrites[storeName].add(id);
+  cloudWriteFailures++;
+  if (currentUser) {
+    const pending: PendingCloudWrite = {
+      id: pendingWriteId(currentUser.uid, storeName, id),
+      userId: currentUser.uid,
+      storeName,
+      recordId: id,
+    };
+    await put('syncPending', pending);
+  }
+  setSyncState('error', `${message} Tus cambios siguen guardados en este dispositivo; reintentaremos la sincronización.`);
+  scheduleCloudRetry();
+}
+
+async function clearPendingCloudWrite(storeName: SyncedStoreName, id: string) {
+  pendingCloudWrites[storeName].delete(id);
+  cloudWriteFailures = Math.max(0, cloudWriteFailures - 1);
+  if (currentUser) await del('syncPending', pendingWriteId(currentUser.uid, storeName, id));
+}
+
+async function pushRecordToCloud(storeName: SyncedStoreName, record: any): Promise<void> {
+  switch (storeName) {
+    case 'books': await pushBookToCloud(record); break;
+    case 'notes': await pushNoteToCloud(record); break;
+    case 'entries': await pushEntryToCloud(record); break;
+    case 'quotes': await pushQuoteToCloud(record); break;
+    case 'analyses': await pushAnalysisToCloud(record); break;
+    case 'conversations': await pushConversationToCloud(record); break;
+  }
+}
+
+async function applyRemoteRecord<T extends { id: string; updatedAt?: string }>(
+  uid: string,
+  storeName: SyncedStoreName,
+  remote: T,
+): Promise<void> {
+  const local = await get<T>(storeName, remote.id);
+  const decision = reconcileRecords(local, remote);
+  if (decision.kind === 'accept-remote') {
+    await put(storeName, decision.record);
+    await clearPendingCloudWrite(storeName, remote.id);
+    return;
+  }
+
+  if (
+    inFlightCloudWrites[storeName].has(remote.id) &&
+    Date.parse(String(decision.local.updatedAt || '')) > Date.parse(String(decision.remote.updatedAt || ''))
+  ) {
+    // Ignore a stale snapshot that raced with this device's own cloud write.
+    return;
+  }
+
+  const conflictId = makeConflictId(
+    storeName,
+    remote.id,
+    String(decision.local.updatedAt || ''),
+    String(decision.remote.updatedAt || ''),
+    decision.local as unknown as Record<string, any>,
+    decision.remote as unknown as Record<string, any>,
+  );
+  const conflict: SyncConflict = {
+    id: conflictId,
+    userId: uid,
+    storeName,
+    recordId: remote.id,
+    local: decision.local,
+    remote: decision.remote,
+    detectedAt: new Date().toISOString(),
+  };
+  const wasAlreadySaved = await get<SyncConflict>('syncConflicts', conflictId);
+  await put('syncConflicts', conflict);
+  if (!wasAlreadySaved || wasAlreadySaved.resolvedAt) {
+    unresolvedConflictCount += 1;
+    setSyncState('conflict', 'Se detectó un conflicto entre dispositivos.');
+  }
+
+  if (decision.winner === 'local') {
+    await pushRecordToCloud(storeName, decision.local);
+  } else {
+    await put(storeName, decision.remote);
+    cloudIds[storeName].add(remote.id);
+    await clearPendingCloudWrite(storeName, remote.id);
+  }
+}
+
+export async function getSyncConflicts(): Promise<SyncConflict[]> {
+  if (!currentUser) return [];
+  return (await all<SyncConflict>('syncConflicts'))
+    .filter((conflict) => conflict.userId === currentUser!.uid && !conflict.resolvedAt)
+    .sort((a, b) => b.detectedAt.localeCompare(a.detectedAt));
+}
+
+export async function resolveSyncConflict(
+  conflictId: string,
+  resolution: 'local' | 'remote',
+): Promise<void> {
+  const conflict = await get<SyncConflict>('syncConflicts', conflictId);
+  if (!currentUser || !conflict || conflict.userId !== currentUser.uid) return;
+  if (resolution === 'local') await pushRecordToCloud(conflict.storeName, conflict.local);
+  else {
+    await put(conflict.storeName, conflict.remote);
+    cloudIds[conflict.storeName].add(conflict.recordId);
+    await clearPendingCloudWrite(conflict.storeName, conflict.recordId);
+  }
+  await put('syncConflicts', {
+    ...conflict,
+    resolution,
+    resolvedAt: new Date().toISOString(),
+  });
+  unresolvedConflictCount = (await getSyncConflicts()).length;
+  setSyncState(
+    unresolvedConflictCount ? 'conflict' : 'synced',
+    unresolvedConflictCount
+      ? 'Quedan conflictos de sincronización por revisar.'
+      : `Conflicto resuelto. Sincronizado (${currentUser.email || 'cuenta Google'}).`,
+  );
+  onDataChangedCb?.();
 }
 
 export function getSyncState() {
@@ -516,6 +684,7 @@ export async function pushBookToCloud(book: Book): Promise<Book> {
       updatedAt: serverTimestamp(),
     };
 
+    inFlightCloudWrites.books.add(id);
     try {
       const exists = await cloudDocExists('books', uid, id);
       if (exists) {
@@ -529,11 +698,14 @@ export async function pushBookToCloud(book: Book): Promise<Book> {
         });
         cloudIds.books.add(id);
       }
+      await clearPendingCloudWrite('books', id);
       setSyncState('synced', `Sincronizado (${currentUser.email || 'cuenta Google'})`);
       scheduleBookSummarySync();
     } catch (error) {
-      setSyncState('error', 'No se pudo sincronizar el libro.');
+      await noteCloudWriteFailure('books', id, 'No se pudo sincronizar el libro.');
       console.error('Firestore book sync error:', path, error);
+    } finally {
+      inFlightCloudWrites.books.delete(id);
     }
   }
 
@@ -578,6 +750,7 @@ export async function pushNoteToCloud(note: Note): Promise<Note> {
       read: normalized.read,
       updatedAt: serverTimestamp(),
     };
+    inFlightCloudWrites.notes.add(id);
     try {
       const exists = await cloudDocExists('notes', uid, id);
       if (exists) {
@@ -593,10 +766,13 @@ export async function pushNoteToCloud(note: Note): Promise<Note> {
         });
         cloudIds.notes.add(id);
       }
+      await clearPendingCloudWrite('notes', id);
       setSyncState('synced', `Sincronizado (${currentUser.email || 'cuenta Google'})`);
     } catch (error) {
-      setSyncState('error', 'No se pudo sincronizar la nota.');
+      await noteCloudWriteFailure('notes', id, 'No se pudo sincronizar la nota.');
       console.error('Firestore note sync error:', path, error);
+    } finally {
+      inFlightCloudWrites.notes.delete(id);
     }
   }
 
@@ -645,6 +821,7 @@ export async function pushEntryToCloud(entry: Entry): Promise<Entry> {
       photoMediaId: normalized.photoMediaId || null,
       updatedAt: serverTimestamp(),
     };
+    inFlightCloudWrites.entries.add(id);
     try {
       const exists = await cloudDocExists('entries', uid, id);
       if (exists) {
@@ -660,10 +837,13 @@ export async function pushEntryToCloud(entry: Entry): Promise<Entry> {
         });
         cloudIds.entries.add(id);
       }
+      await clearPendingCloudWrite('entries', id);
       setSyncState('synced', `Sincronizado (${currentUser.email || 'cuenta Google'})`);
     } catch (error) {
-      setSyncState('error', 'No se pudo sincronizar la anotación.');
+      await noteCloudWriteFailure('entries', id, 'No se pudo sincronizar la anotación.');
       console.error('Firestore entry sync error:', path, error);
+    } finally {
+      inFlightCloudWrites.entries.delete(id);
     }
   }
 
@@ -718,6 +898,7 @@ export async function pushQuoteToCloud(quote: Quote): Promise<Quote> {
       photoMediaIds: normalized.photoMediaIds,
       updatedAt: serverTimestamp(),
     };
+    inFlightCloudWrites.quotes.add(id);
     try {
       const exists = await cloudDocExists('quotes', uid, id);
       if (exists) {
@@ -733,10 +914,13 @@ export async function pushQuoteToCloud(quote: Quote): Promise<Quote> {
         });
         cloudIds.quotes.add(id);
       }
+      await clearPendingCloudWrite('quotes', id);
       setSyncState('synced', `Sincronizado (${currentUser.email || 'cuenta Google'})`);
     } catch (error) {
-      setSyncState('error', 'No se pudo sincronizar la cita.');
+      await noteCloudWriteFailure('quotes', id, 'No se pudo sincronizar la cita.');
       console.error('Firestore quote sync error:', path, error);
+    } finally {
+      inFlightCloudWrites.quotes.delete(id);
     }
   }
 
@@ -777,6 +961,7 @@ export async function pushAnalysisToCloud(analysis: BookAnalysis): Promise<BookA
       model: normalized.model,
       updatedAt: serverTimestamp(),
     };
+    inFlightCloudWrites.analyses.add(id);
     try {
       const exists = await cloudDocExists('analyses', uid, id);
       if (exists) {
@@ -792,10 +977,13 @@ export async function pushAnalysisToCloud(analysis: BookAnalysis): Promise<BookA
         });
         cloudIds.analyses.add(id);
       }
+      await clearPendingCloudWrite('analyses', id);
       setSyncState('synced', `Sincronizado (${currentUser.email || 'cuenta Google'})`);
     } catch (error) {
-      setSyncState('error', 'No se pudo guardar el análisis en la nube.');
+      await noteCloudWriteFailure('analyses', id, 'No se pudo guardar el análisis en la nube.');
       console.error('Firestore analysis sync error:', path, error);
+    } finally {
+      inFlightCloudWrites.analyses.delete(id);
     }
   }
 
@@ -838,6 +1026,7 @@ export async function pushConversationToCloud(conv: Conversation): Promise<Conve
       hadImages: normalized.hadImages,
       updatedAt: serverTimestamp(),
     };
+    inFlightCloudWrites.conversations.add(id);
     try {
       const exists = await cloudDocExists('conversations', uid, id);
       if (exists) {
@@ -854,8 +1043,12 @@ export async function pushConversationToCloud(conv: Conversation): Promise<Conve
         });
         cloudIds.conversations.add(id);
       }
+      await clearPendingCloudWrite('conversations', id);
     } catch (error) {
+      await noteCloudWriteFailure('conversations', id, 'No se pudo sincronizar la conversación.');
       console.error('Firestore conversation sync error:', path, error);
+    } finally {
+      inFlightCloudWrites.conversations.delete(id);
     }
   }
 
@@ -883,13 +1076,14 @@ export async function deleteFromCloud(storeName: StoreName, rawId: string): Prom
 
 export async function migrateLocalDataToCloud(): Promise<number> {
   if (!currentUser) return 0;
+  cloudWriteFailures = 0;
   setSyncState('syncing', 'Subiendo biblioteca local a la nube…');
   let migratedCount = 0;
 
   const localBooks = await all<Book>('books');
   for (const book of localBooks) {
     const bid = sanitizeId(book.id);
-    if (!cloudIds.books.has(bid)) {
+    if (!cloudIds.books.has(bid) || pendingCloudWrites.books.has(bid)) {
       await pushBookToCloud(book);
       migratedCount++;
     }
@@ -898,7 +1092,7 @@ export async function migrateLocalDataToCloud(): Promise<number> {
   const localNotes = await all<Note>('notes');
   for (const note of localNotes) {
     const nid = sanitizeId(note.id);
-    if (!cloudIds.notes.has(nid)) {
+    if (!cloudIds.notes.has(nid) || pendingCloudWrites.notes.has(nid)) {
       await pushNoteToCloud(note);
       migratedCount++;
     }
@@ -907,7 +1101,7 @@ export async function migrateLocalDataToCloud(): Promise<number> {
   const localEntries = await all<Entry>('entries');
   for (const entry of localEntries) {
     const eid = sanitizeId(entry.id);
-    if (!cloudIds.entries.has(eid)) {
+    if (!cloudIds.entries.has(eid) || pendingCloudWrites.entries.has(eid)) {
       await pushEntryToCloud(entry);
       migratedCount++;
     }
@@ -916,7 +1110,7 @@ export async function migrateLocalDataToCloud(): Promise<number> {
   const localQuotes = await all<Quote>('quotes');
   for (const quote of localQuotes) {
     const qid = sanitizeId(quote.id);
-    if (!cloudIds.quotes.has(qid)) {
+    if (!cloudIds.quotes.has(qid) || pendingCloudWrites.quotes.has(qid)) {
       await pushQuoteToCloud(quote);
       migratedCount++;
     }
@@ -925,7 +1119,7 @@ export async function migrateLocalDataToCloud(): Promise<number> {
   const localAnalyses = await all<BookAnalysis>('analyses');
   for (const analysis of localAnalyses) {
     const aid = sanitizeId(analysis.id);
-    if (!cloudIds.analyses.has(aid)) {
+    if (!cloudIds.analyses.has(aid) || pendingCloudWrites.analyses.has(aid)) {
       await pushAnalysisToCloud(analysis);
       migratedCount++;
     }
@@ -934,14 +1128,21 @@ export async function migrateLocalDataToCloud(): Promise<number> {
   const localConvs = await all<Conversation>('conversations');
   for (const conv of localConvs) {
     const cid = sanitizeId(conv.id);
-    if (!cloudIds.conversations.has(cid) && conv.bookId) {
+    if ((!cloudIds.conversations.has(cid) || pendingCloudWrites.conversations.has(cid)) && conv.bookId) {
       await pushConversationToCloud(conv);
       migratedCount++;
     }
   }
 
   void syncUserReadingSummary();
-  setSyncState('synced', `Sincronizado (${currentUser.email || 'cuenta Google'})`);
+  if (cloudWriteFailures > 0) {
+    setSyncState('error', `${cloudWriteFailures} cambios siguen pendientes. Se reintentará automáticamente.`);
+  } else {
+    retryAttempt = 0;
+    if (retryTimer) clearTimeout(retryTimer);
+    retryTimer = null;
+    setSyncState('synced', `Sincronizado (${currentUser.email || 'cuenta Google'})`);
+  }
   return migratedCount;
 }
 
@@ -1033,7 +1234,7 @@ function subscribeUserCollections(uid: string) {
             createdAt: toIso(data.createdAt),
             updatedAt: toIso(data.updatedAt),
           });
-          await put('books', hydrated);
+          await applyRemoteRecord(uid, 'books', hydrated);
         }
         // Remove docs deleted on other devices (if already known in cloud)
         for (const oldId of cloudIds.books) {
@@ -1059,7 +1260,7 @@ function subscribeUserCollections(uid: string) {
         for (const d of snapshot.docs) {
           nextIds.add(d.id);
           const data = d.data() as any;
-          await put('notes', {
+          await applyRemoteRecord(uid, 'notes', {
             id: d.id,
             userId: uid,
             bookId: data.bookId,
@@ -1108,7 +1309,7 @@ function subscribeUserCollections(uid: string) {
             createdAt: toIso(data.createdAt),
             updatedAt: toIso(data.updatedAt),
           });
-          await put('entries', hydrated);
+          await applyRemoteRecord(uid, 'entries', hydrated);
         }
         for (const oldId of cloudIds.entries) {
           if (!nextIds.has(oldId)) await del('entries', oldId);
@@ -1144,7 +1345,7 @@ function subscribeUserCollections(uid: string) {
             createdAt: toIso(data.createdAt),
             updatedAt: toIso(data.updatedAt),
           });
-          await put('quotes', hydrated);
+          await applyRemoteRecord(uid, 'quotes', hydrated);
         }
         for (const oldId of cloudIds.quotes) {
           if (!nextIds.has(oldId)) await del('quotes', oldId);
@@ -1167,7 +1368,7 @@ function subscribeUserCollections(uid: string) {
         for (const d of snapshot.docs) {
           nextIds.add(d.id);
           const data = d.data() as any;
-          await put('analyses', {
+          await applyRemoteRecord(uid, 'analyses', {
             id: d.id,
             userId: uid,
             bookId: data.bookId,
@@ -1202,7 +1403,7 @@ function subscribeUserCollections(uid: string) {
         for (const d of snapshot.docs) {
           nextIds.add(d.id);
           const data = d.data() as any;
-          await put('conversations', {
+          await applyRemoteRecord(uid, 'conversations', {
             id: d.id,
             userId: uid,
             bookId: data.bookId,
@@ -1238,6 +1439,12 @@ export function initSync(
   onAuthStateChanged(auth, async (user) => {
     currentUser = user;
     if (!user) {
+      unresolvedConflictCount = 0;
+      cloudWriteFailures = 0;
+      Object.values(pendingCloudWrites).forEach((pending) => pending.clear());
+      retryAttempt = 0;
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = null;
       stopListeners();
       stopPresenceTracking();
       lastKnownVisitDays = [];
@@ -1259,6 +1466,13 @@ export function initSync(
       // Ignore storage errors
     }
 
+    unresolvedConflictCount = (await all<SyncConflict>('syncConflicts'))
+      .filter((conflict) => conflict.userId === user.uid && !conflict.resolvedAt).length;
+    Object.values(pendingCloudWrites).forEach((pending) => pending.clear());
+    const pendingWrites = (await all<PendingCloudWrite>('syncPending'))
+      .filter((pending) => pending.userId === user.uid);
+    for (const pending of pendingWrites) pendingCloudWrites[pending.storeName].add(pending.recordId);
+    cloudWriteFailures = pendingWrites.length;
     setSyncState('syncing', `Conectando cuenta (${user.email || user.displayName || 'Google'})…`);
     try {
       await upsertUserProfile(user);
@@ -1267,5 +1481,9 @@ export function initSync(
     } catch {
       setSyncState('error', 'No se pudo inicializar la sincronización en la nube.');
     }
+  });
+
+  window.addEventListener('online', () => {
+    if (currentUser && cloudWriteFailures > 0) void migrateLocalDataToCloud();
   });
 }

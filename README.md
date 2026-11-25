@@ -38,6 +38,7 @@ La clave queda guardada **solo en el navegador de ese dispositivo, sin cifrar**,
 ## Tus datos y tu privacidad
 - **Sin iniciar sesión**, todo se guarda únicamente en tu navegador (IndexedDB). No se envía a ningún servidor de Librarium.
 - **Al iniciar sesión con Google**, tus libros, notas, citas, fotos y conversaciones se sincronizan con la base de datos del proyecto Librarium (Firebase), para que puedas usarlos en varios dispositivos. Si preferís que nada salga de tu dispositivo, no inicies sesión.
+- Si dos dispositivos cambian el mismo registro, Librarium conserva ambas versiones y muestra **Revisar conflictos** en el estado de sincronización. Si una escritura falla, queda pendiente en este dispositivo y se reintenta al recuperar la conexión.
 - **Al usar la IA**, el texto y las fotos que consultás se envían a Google (Gemini) con tu propia clave.
 - La búsqueda de libros usa Open Library y las portadas por URL se descargan desde el proveedor indicado.
 
@@ -69,6 +70,7 @@ npm install
 npm run dev      # servidor de desarrollo en http://127.0.0.1:8765
 npm run build    # genera dist/
 npm run lint     # chequeo de tipos y reglas de Firestore
+npm run test     # pruebas de importación, restauración y conflictos de sincronización
 ```
 
 En Windows también podés usar `INSTALAR.bat` (una vez) e `INICIAR_LIBRARIUM.bat`.

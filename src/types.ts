@@ -133,7 +133,28 @@ export interface AISettings {
   customStyle: string;
 }
 
-export type SyncStatus = 'local' | 'syncing' | 'synced' | 'error';
+export type SyncStatus = 'local' | 'syncing' | 'synced' | 'error' | 'conflict';
+
+export type SyncedStoreName = 'books' | 'notes' | 'entries' | 'quotes' | 'analyses' | 'conversations';
+
+export interface SyncConflict {
+  id: string;
+  userId: string;
+  storeName: SyncedStoreName;
+  recordId: string;
+  local: any;
+  remote: any;
+  detectedAt: string;
+  resolvedAt?: string;
+  resolution?: 'local' | 'remote';
+}
+
+export interface PendingCloudWrite {
+  id: string;
+  userId: string;
+  storeName: SyncedStoreName;
+  recordId: string;
+}
 
 export type FeedbackKind = 'bug' | 'idea' | 'other';
 export type FeedbackStatus = 'open' | 'reviewed' | 'resolved' | 'dismissed';
