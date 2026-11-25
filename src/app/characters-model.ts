@@ -671,6 +671,50 @@ function selectMentions<T>(
   return items.filter((item) => pattern.test(normalizeText(textOf(item)))).slice(0, limit);
 }
 
+function editDistance(a: string, b: string): number {
+  const rows = Array.from({ length: a.length + 1 }, () => Array<number>(b.length + 1).fill(0));
+  for (let i = 0; i <= a.length; i++) rows[i][0] = i;
+  for (let j = 0; j <= b.length; j++) rows[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      rows[i][j] = Math.min(rows[i - 1][j] + 1, rows[i][j - 1] + 1, rows[i - 1][j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        rows[i][j] = Math.min(rows[i][j], rows[i - 2][j - 2] + 1);
+      }
+    }
+  }
+  return rows[a.length][b.length];
+}
+
+function likelyNameCandidates(query: string, known: string[], sourceTexts: string[]): string[] {
+  const normalized = normalizeText(query);
+  if (normalized.length < 4) return [];
+  const maxDistance = 1;
+  const candidates = new Map<string, string>();
+  for (const name of known) {
+    const value = String(name ?? '').trim();
+    const key = normalizeText(value);
+    if (key && key !== normalized && key.length >= 4) candidates.set(key, value);
+  }
+  const capitalizedName = /\p{Lu}[\p{L}'’.-]*(?:\s+\p{Lu}[\p{L}'’.-]*){0,2}/gu;
+  for (const text of sourceTexts) {
+    for (const match of String(text ?? '').matchAll(capitalizedName)) {
+      const value = match[0].trim().replace(/[.,;:!?]+$/g, '');
+      const key = normalizeText(value);
+      if (key && key !== normalized && key.length >= 4 && !candidates.has(key)) candidates.set(key, value);
+      if (candidates.size >= 1500) break;
+    }
+    if (candidates.size >= 1500) break;
+  }
+  return [...candidates.entries()]
+    .map(([key, value]) => ({ key, value, distance: editDistance(normalized, key) }))
+    .filter((item) => item.distance <= maxDistance)
+    .sort((a, b) => a.distance - b.distance || a.value.localeCompare(b.value))
+    .slice(0, 8)
+    .map((item) => item.value);
+}
+
 function describeField(character: Character, key: CharacterFieldKey): string {
   const value = character[key];
   if (!value) return `${FIELD_LABELS[key]}: (sin dato)`;
@@ -701,9 +745,23 @@ export function buildCharacterAIRequest(input: AIContextInput): AIRequestPlan {
   const names = [character.name, ...character.aliases, ...(other ? [other.name, ...other.aliases] : [])];
   const pattern = namePattern(names);
   const currentPage = Math.max(0, Number(book.currentPage) || 0);
-  const notes = selectMentions((input.notes ?? []).filter((n) => n.endPage != null && n.endPage <= currentPage), pattern, (n) => `${n.text} ${n.comment ?? ''}`);
-  const entries = selectMentions((input.entries ?? []).filter((e) => e.page != null && e.page <= currentPage), pattern, (e) => `${e.title ?? ''} ${e.text ?? ''} ${e.comment ?? ''}`);
-  const quotes = selectMentions((input.quotes ?? []).filter((q) => q.page != null && q.page <= currentPage), pattern, (q) => `${q.text} ${q.analysis ?? ''}`);
+  const eligibleNotes = (input.notes ?? []).filter((n) => n.endPage != null && n.endPage <= currentPage);
+  const eligibleEntries = (input.entries ?? []).filter((e) => e.page != null && e.page <= currentPage);
+  const eligibleQuotes = (input.quotes ?? []).filter((q) => q.page != null && q.page <= currentPage);
+  const readableSourceTexts = [
+    ...eligibleNotes.map((n) => `${n.text} ${n.comment ?? ''}`),
+    ...eligibleEntries.map((e) => `${e.title ?? ''} ${e.text ?? ''} ${e.comment ?? ''}`),
+    ...eligibleQuotes.map((q) => `${q.text} ${q.analysis ?? ''}`),
+  ];
+  const candidates = likelyNameCandidates(
+    character.name,
+    input.characters.flatMap((c) => [c.name, ...c.aliases]),
+    readableSourceTexts,
+  );
+  const sourcePattern = namePattern([...names, ...candidates]);
+  const notes = selectMentions(eligibleNotes, sourcePattern, (n) => `${n.text} ${n.comment ?? ''}`);
+  const entries = selectMentions(eligibleEntries, sourcePattern, (e) => `${e.title ?? ''} ${e.text ?? ''} ${e.comment ?? ''}`);
+  const quotes = selectMentions(eligibleQuotes, sourcePattern, (q) => `${q.text} ${q.analysis ?? ''}`);
 
   const sections: string[] = [];
   sections.push(
@@ -712,6 +770,7 @@ export function buildCharacterAIRequest(input: AIContextInput): AIRequestPlan {
   );
   sections.push(`FICHA DE «${character.name}»:\n${describeCharacter(character).join('\n')}`);
   sections.push(`LÍMITE ANTISPOILERS: la persona llegó hasta la página ${currentPage}. Solo podés usar fuentes con página conocida hasta ese límite. No reveles ni anticipes hechos posteriores; si una fuente no tiene página, no la uses.`);
+  if (candidates.length) sections.push(`POSIBLES COINCIDENCIAS ORTOGRÁFICAS EN EL MATERIAL HASTA ESA PÁGINA: ${candidates.map((name) => `«${name}»`).join(', ')}. Si una parece claramente la forma correcta del nombre escrito, indicá una sola en nameSuggestion y citá la fuente que la respalda. Si no hay respaldo suficiente, dejá nameSuggestion vacío. No reemplaces ni corrijas el nombre por tu cuenta.`);
 
   if (scope.kind === 'relation' && other) {
     sections.push(`FICHA DE «${other.name}»:\n${describeCharacter(other).join('\n')}`);
