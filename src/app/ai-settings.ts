@@ -269,7 +269,8 @@ export function saveAISettings() {
   syncAIThinkingOptions();
 }
 
-export function aiStyleInstruction(settings = getAISettings()): string {
+/** Solo el tono y la extensión elegidos en Ajustes, sin la política de contexto de las notas. */
+export function aiStyleOnly(settings = getAISettings()): string {
   const styles: Record<string, string> = {
     natural: 'Respondé en español, con claridad y tono natural. Explicá los términos difíciles cuando ayude.',
     concise: 'Respondé en español de forma breve y directa. Priorizá la respuesta principal y evitá repeticiones.',
@@ -279,13 +280,17 @@ export function aiStyleInstruction(settings = getAISettings()): string {
       'Respondé en español con preguntas orientadoras que ayuden a pensar el pasaje, junto con una explicación útil.',
   };
   const base = styles[settings.style] || styles.natural;
+  return `${base}${
+    settings.style === 'custom' && settings.customStyle ? `\nPreferencias adicionales: ${settings.customStyle}` : ''
+  }`;
+}
+
+export function aiStyleInstruction(settings = getAISettings()): string {
   const contextPolicy =
     'Tomá la nota, el pasaje y el libro como contexto. Si el usuario pide relacionarlos, compararlos o aplicarlos a otro autor, obra, época o concepto, contestá directamente esa consigna con conocimiento general pertinente. No empieces aclarando que ese autor o tema no aparece en el fragmento, ni limites la respuesta al material citado, salvo que el usuario pida expresamente un análisis exclusivo de ese material. Separá con naturalidad lo que dice la fuente de la comparación o interpretación cuando sea útil. Evitá advertencias y aclaraciones genéricas; mencioná una limitación solo si cambia de verdad la respuesta.';
-  return `${base}\n${contextPolicy}${
-    settings.style === 'custom' && settings.customStyle
-      ? `\nPreferencias adicionales: ${settings.customStyle}`
-      : ''
-  }`;
+  const style = aiStyleOnly(settings);
+  const [base, ...custom] = style.split('\nPreferencias adicionales: ');
+  return `${base}\n${contextPolicy}${custom.length ? `\nPreferencias adicionales: ${custom.join('')}` : ''}`;
 }
 
 export function commentDiscussionPrompt(subject: string) {

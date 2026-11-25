@@ -23,10 +23,13 @@ import {
 } from './firebase';
 import { all, clearAllStores, del, get, put, type StoreName } from './db';
 import { makeConflictId, reconcileRecords } from './sync-merge';
+import { normalizeCharacter, normalizeRelation } from './app/characters-model';
 import type {
   Book,
   BookAnalysis,
   BookProgressSummary,
+  Character,
+  CharacterRelation,
   Conversation,
   Entry,
   MediaItem,
@@ -47,17 +50,19 @@ const cloudIds: Record<StoreName, Set<string>> = {
   quotes: new Set(),
   analyses: new Set(),
   conversations: new Set(),
+  characters: new Set(),
+  characterRelations: new Set(),
   media: new Set(),
   syncConflicts: new Set(),
   syncPending: new Set(),
 };
 const pendingCloudWrites: Record<SyncedStoreName, Set<string>> = {
   books: new Set(), notes: new Set(), entries: new Set(), quotes: new Set(),
-  analyses: new Set(), conversations: new Set(),
+  analyses: new Set(), conversations: new Set(), characters: new Set(), characterRelations: new Set(),
 };
 const inFlightCloudWrites: Record<SyncedStoreName, Set<string>> = {
   books: new Set(), notes: new Set(), entries: new Set(), quotes: new Set(),
-  analyses: new Set(), conversations: new Set(),
+  analyses: new Set(), conversations: new Set(), characters: new Set(), characterRelations: new Set(),
 };
 
 let unsubscribers: Unsubscribe[] = [];
@@ -136,6 +141,8 @@ async function pushRecordToCloud(storeName: SyncedStoreName, record: any): Promi
     case 'quotes': await pushQuoteToCloud(record); break;
     case 'analyses': await pushAnalysisToCloud(record); break;
     case 'conversations': await pushConversationToCloud(record); break;
+    case 'characters': await pushCharacterToCloud(record); break;
+    case 'characterRelations': await pushCharacterRelationToCloud(record); break;
   }
 }
 
@@ -927,6 +934,134 @@ export async function pushQuoteToCloud(quote: Quote): Promise<Quote> {
   return normalized;
 }
 
+export async function pushCharacterToCloud(character: Character): Promise<Character> {
+  const id = sanitizeId(character.id);
+  const base = normalizeCharacter({ ...character, id, bookId: sanitizeId(character.bookId) });
+  if (!base) throw Error('El personaje necesita un nombre y un libro.');
+  const normalized: Character = {
+    ...base,
+    createdAt: character.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  await put('characters', normalized);
+  if (character.id !== id) await del('characters', character.id);
+
+  if (currentUser) {
+    const uid = currentUser.uid;
+    const path = `users/${uid}/characters/${id}`;
+    const docRef = doc(db, 'users', uid, 'characters', id);
+    const mutableFields = {
+      name: normalized.name,
+      aliases: normalized.aliases,
+      age: normalized.age,
+      description: normalized.description,
+      traits: normalized.traits,
+      occupation: normalized.occupation,
+      affiliation: normalized.affiliation,
+      comments: normalized.comments,
+      evidence: normalized.evidence,
+      certainty: normalized.certainty,
+      updatedAt: serverTimestamp(),
+    };
+    inFlightCloudWrites.characters.add(id);
+    try {
+      const exists = await cloudDocExists('characters', uid, id);
+      if (exists) {
+        await updateDoc(docRef, mutableFields);
+      } else {
+        await ensureParentBookInCloud(normalized.bookId, character.bookId);
+        await setDoc(docRef, {
+          id,
+          userId: uid,
+          bookId: normalized.bookId,
+          ...mutableFields,
+          createdAt: serverTimestamp(),
+        });
+        cloudIds.characters.add(id);
+      }
+      await clearPendingCloudWrite('characters', id);
+      setSyncState('synced', `Sincronizado (${currentUser.email || 'cuenta Google'})`);
+    } catch (error) {
+      await noteCloudWriteFailure('characters', id, 'No se pudo sincronizar el personaje.');
+      console.error('Firestore character sync error:', path, error);
+    } finally {
+      inFlightCloudWrites.characters.delete(id);
+    }
+  }
+
+  return normalized;
+}
+
+async function ensureCharacterInCloud(characterId: string): Promise<void> {
+  if (!currentUser || cloudIds.characters.has(characterId)) return;
+  const local = await get<Character>('characters', characterId);
+  if (local) await pushCharacterToCloud(local);
+}
+
+export async function pushCharacterRelationToCloud(relation: CharacterRelation): Promise<CharacterRelation> {
+  const base = normalizeRelation({
+    ...relation,
+    bookId: sanitizeId(relation.bookId),
+    fromId: sanitizeId(relation.fromId),
+    toId: sanitizeId(relation.toId),
+  });
+  if (!base) throw Error('La relación necesita dos personajes distintos y un tipo de vínculo.');
+  // normalizeRelation recalcula el ID desde la clave lógica: así no hay relaciones duplicadas.
+  const id = base.id;
+  const normalized: CharacterRelation = {
+    ...base,
+    createdAt: relation.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  await put('characterRelations', normalized);
+  if (relation.id !== id) await del('characterRelations', relation.id);
+
+  if (currentUser) {
+    const uid = currentUser.uid;
+    const path = `users/${uid}/characterRelations/${id}`;
+    const docRef = doc(db, 'users', uid, 'characterRelations', id);
+    const mutableFields = {
+      description: normalized.description,
+      evidence: normalized.evidence,
+      certainty: normalized.certainty,
+      updatedAt: serverTimestamp(),
+    };
+    inFlightCloudWrites.characterRelations.add(id);
+    try {
+      const exists = await cloudDocExists('characterRelations', uid, id);
+      if (exists) {
+        await updateDoc(docRef, mutableFields);
+      } else {
+        await ensureParentBookInCloud(normalized.bookId, relation.bookId);
+        await ensureCharacterInCloud(normalized.fromId);
+        await ensureCharacterInCloud(normalized.toId);
+        await setDoc(docRef, {
+          id,
+          userId: uid,
+          bookId: normalized.bookId,
+          fromId: normalized.fromId,
+          toId: normalized.toId,
+          type: normalized.type,
+          ...mutableFields,
+          createdAt: serverTimestamp(),
+        });
+        cloudIds.characterRelations.add(id);
+      }
+      await clearPendingCloudWrite('characterRelations', id);
+      setSyncState('synced', `Sincronizado (${currentUser.email || 'cuenta Google'})`);
+    } catch (error) {
+      await noteCloudWriteFailure('characterRelations', id, 'No se pudo sincronizar la relación.');
+      console.error('Firestore character relation sync error:', path, error);
+    } finally {
+      inFlightCloudWrites.characterRelations.delete(id);
+    }
+  }
+
+  return normalized;
+}
+
 export async function pushAnalysisToCloud(analysis: BookAnalysis): Promise<BookAnalysis> {
   const id = sanitizeId(analysis.id);
   const bookId = sanitizeId(analysis.bookId);
@@ -1125,6 +1260,24 @@ export async function migrateLocalDataToCloud(): Promise<number> {
     }
   }
 
+  const localCharacters = await all<Character>('characters');
+  for (const character of localCharacters) {
+    const cid = sanitizeId(character.id);
+    if (!cloudIds.characters.has(cid) || pendingCloudWrites.characters.has(cid)) {
+      await pushCharacterToCloud(character);
+      migratedCount++;
+    }
+  }
+
+  const localRelations = await all<CharacterRelation>('characterRelations');
+  for (const relation of localRelations) {
+    const rid = sanitizeId(relation.id);
+    if (!cloudIds.characterRelations.has(rid) || pendingCloudWrites.characterRelations.has(rid)) {
+      await pushCharacterRelationToCloud(relation);
+      migratedCount++;
+    }
+  }
+
   const localConvs = await all<Conversation>('conversations');
   for (const conv of localConvs) {
     const cid = sanitizeId(conv.id);
@@ -1154,7 +1307,7 @@ function subscribeUserCollections(uid: string) {
   const maybeMigrateAndNotify = async (colKey: string) => {
     initialLoaded.add(colKey);
     onDataChangedCb?.();
-    if (!migrationTriggered && initialLoaded.size >= 7) {
+    if (!migrationTriggered && initialLoaded.size >= 9) {
       migrationTriggered = true;
       await migrateLocalDataToCloud();
       onDataChangedCb?.();
@@ -1422,6 +1575,67 @@ function subscribeUserCollections(uid: string) {
       },
       (error) => {
         handleFirestoreError(error, OperationType.LIST, `users/${uid}/conversations`);
+      },
+    ),
+  );
+
+  // Characters listener
+  unsubscribers.push(
+    onSnapshot(
+      query(collection(db, 'users', uid, 'characters'), where('userId', '==', uid)),
+      async (snapshot) => {
+        const nextIds = new Set<string>();
+        for (const d of snapshot.docs) {
+          nextIds.add(d.id);
+          const data = d.data() as any;
+          const remote = normalizeCharacter({
+            ...data,
+            id: d.id,
+            userId: uid,
+            createdAt: toIso(data.createdAt),
+            updatedAt: toIso(data.updatedAt),
+          });
+          if (remote) await applyRemoteRecord(uid, 'characters', remote);
+        }
+        for (const oldId of cloudIds.characters) {
+          if (!nextIds.has(oldId)) await del('characters', oldId);
+        }
+        cloudIds.characters = nextIds;
+        await maybeMigrateAndNotify('characters');
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, `users/${uid}/characters`);
+      },
+    ),
+  );
+
+  // Character relations listener
+  unsubscribers.push(
+    onSnapshot(
+      query(collection(db, 'users', uid, 'characterRelations'), where('userId', '==', uid)),
+      async (snapshot) => {
+        const nextIds = new Set<string>();
+        for (const d of snapshot.docs) {
+          nextIds.add(d.id);
+          const data = d.data() as any;
+          const remote = normalizeRelation({
+            ...data,
+            userId: uid,
+            createdAt: toIso(data.createdAt),
+            updatedAt: toIso(data.updatedAt),
+          });
+          if (!remote) continue;
+          // Si el ID en la nube no coincide con la clave lógica (dato antiguo o manipulado), se respeta el de la nube.
+          await applyRemoteRecord(uid, 'characterRelations', { ...remote, id: d.id });
+        }
+        for (const oldId of cloudIds.characterRelations) {
+          if (!nextIds.has(oldId)) await del('characterRelations', oldId);
+        }
+        cloudIds.characterRelations = nextIds;
+        await maybeMigrateAndNotify('characterRelations');
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, `users/${uid}/characterRelations`);
       },
     ),
   );

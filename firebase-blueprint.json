@@ -357,6 +357,48 @@
       },
       "required": ["id", "userId", "bookId", "summary", "themes", "connections", "questions", "sourceCount", "model", "createdAt", "updatedAt"]
     },
+    "Character": {
+      "title": "Character",
+      "description": "Character sheet inside a book.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string" },
+        "bookId": { "type": "string" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "aliases": { "type": "array", "maxItems": 20 },
+        "age": { "type": "string", "maxLength": 60 },
+        "description": { "type": "string", "maxLength": 5000 },
+        "traits": { "type": "array", "maxItems": 30 },
+        "occupation": { "type": "string", "maxLength": 300 },
+        "affiliation": { "type": "string", "maxLength": 300 },
+        "comments": { "type": "string", "maxLength": 5000 },
+        "evidence": { "type": "array", "maxItems": 30, "description": "Items {kind, ref, text}." },
+        "certainty": { "type": "object", "description": "Per-field certainty (explicit | inferred); a missing key means unknown." },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "bookId", "name", "createdAt", "updatedAt"]
+    },
+    "CharacterRelation": {
+      "title": "CharacterRelation",
+      "description": "Relation between two characters of the same book.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string" },
+        "bookId": { "type": "string" },
+        "fromId": { "type": "string" },
+        "toId": { "type": "string" },
+        "type": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "description": { "type": "string", "maxLength": 3000 },
+        "evidence": { "type": "array", "maxItems": 30 },
+        "certainty": { "type": "string", "enum": ["explicit", "inferred", "unknown"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "bookId", "fromId", "toId", "type", "certainty", "createdAt", "updatedAt"]
+    },
     "Conversation": {
       "title": "Conversation",
       "description": "AI conversation history tied to a note, entry, quote, or whole-book synthesis.",
@@ -540,6 +582,14 @@
     "/users/{userId}/quotes/{quoteId}": {
       "schema": { "$ref": "#/entities/Quote" },
       "description": "Favorite quotes belonging to the user's books."
+    },
+    "/users/{userId}/characters/{characterId}": {
+      "schema": { "$ref": "#/entities/Character" },
+      "description": "Character sheets (names, traits, sources and certainty per field) belonging to a book of the user."
+    },
+    "/users/{userId}/characterRelations/{relationId}": {
+      "schema": { "$ref": "#/entities/CharacterRelation" },
+      "description": "Relations between two characters of the same book. The ID is derived from book, type and endpoints so equivalent relations never duplicate."
     },
     "/users/{userId}/analyses/{analysisId}": {
       "schema": { "$ref": "#/entities/BookAnalysis" },

@@ -110,6 +110,52 @@ export interface Conversation {
   updatedAt: string;
 }
 
+export type Certainty = 'explicit' | 'inferred' | 'unknown';
+
+export type CharacterFieldKey = 'age' | 'description' | 'occupation' | 'affiliation';
+
+export type EvidenceKind = 'quote' | 'note' | 'entry' | 'page' | 'chapter' | 'other';
+
+export interface EvidenceRef {
+  kind: EvidenceKind;
+  /** Página, capítulo, número de nota, etc. */
+  ref: string;
+  /** Cita o texto de respaldo (opcional). */
+  text: string;
+}
+
+export interface Character {
+  id: string;
+  userId?: string;
+  bookId: string;
+  name: string;
+  aliases: string[];
+  age: string;
+  description: string;
+  traits: string[];
+  occupation: string;
+  affiliation: string;
+  comments: string;
+  evidence: EvidenceRef[];
+  certainty: Partial<Record<CharacterFieldKey, Certainty>>;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CharacterRelation {
+  id: string;
+  userId?: string;
+  bookId: string;
+  fromId: string;
+  toId: string;
+  type: string;
+  description: string;
+  evidence: EvidenceRef[];
+  certainty: Certainty;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface MediaItem {
   id: string;
   userId?: string;
@@ -135,7 +181,15 @@ export interface AISettings {
 
 export type SyncStatus = 'local' | 'syncing' | 'synced' | 'error' | 'conflict';
 
-export type SyncedStoreName = 'books' | 'notes' | 'entries' | 'quotes' | 'analyses' | 'conversations';
+export type SyncedStoreName =
+  | 'books'
+  | 'notes'
+  | 'entries'
+  | 'quotes'
+  | 'analyses'
+  | 'conversations'
+  | 'characters'
+  | 'characterRelations';
 
 export interface SyncConflict {
   id: string;
