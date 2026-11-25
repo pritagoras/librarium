@@ -182,9 +182,22 @@ let presenceHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let lastPresenceTouchAt = 0;
 let lastHiddenAt = 0;
 let fallbackSiteSessionId = '';
+let lastKnownVisitDays: string[] = [];
 
 const VISIT_COOLDOWN_MS = 15 * 60 * 1000;
 const PWA_RESUME_VISIT_MS = 30 * 60 * 1000;
+
+function getUtcDayKey(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function mergeVisitDays(raw: unknown, dayKey: string): string[] {
+  const valid = Array.isArray(raw)
+    ? raw.filter((v): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v))
+    : [];
+  const unique = Array.from(new Set([...valid, dayKey])).sort();
+  return unique.slice(-30);
+}
 
 function getSiteVisitSessionId(): string {
   const key = 'librarium-site-visit-sid';
@@ -327,6 +340,7 @@ async function touchPresenceHeartbeat(force = false, countVisit = false) {
   if (!force && !countVisit && Date.now() - lastPresenceTouchAt < 60000) return;
   lastPresenceTouchAt = Date.now();
   try {
+    const todayKey = getUtcDayKey();
     const patch: Record<string, unknown> = {
       lastActiveAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -334,6 +348,10 @@ async function touchPresenceHeartbeat(force = false, countVisit = false) {
     if (countVisit) {
       patch.visitCount = increment(1);
       markUserVisitCounted(currentUser.uid);
+    }
+    if (!lastKnownVisitDays.includes(todayKey)) {
+      lastKnownVisitDays = mergeVisitDays(lastKnownVisitDays, todayKey);
+      patch.visitDays = lastKnownVisitDays;
     }
     await updateDoc(doc(db, 'users', currentUser.uid), patch);
   } catch {
@@ -374,6 +392,7 @@ async function upsertUserProfile(user: User) {
   };
   try {
     lastPresenceTouchAt = Date.now();
+    const todayKey = getUtcDayKey();
     const snap = await getDoc(docRef);
     const countThisVisit = shouldCountUserVisit(user.uid);
     if (snap.exists()) {
@@ -384,20 +403,25 @@ async function upsertUserProfile(user: User) {
       const nextVisitCount = hasVisitCount
         ? Math.min(1000000, countThisVisit ? baseVisits + 1 : baseVisits)
         : 1;
+      const nextVisitDays = mergeVisitDays(existingData.visitDays, todayKey);
+      lastKnownVisitDays = nextVisitDays;
       await updateDoc(docRef, {
         displayName: payload.displayName,
         email: payload.email,
         photoURL: payload.photoURL,
         visitCount: nextVisitCount,
+        visitDays: nextVisitDays,
         booksCount: payload.booksCount,
         bookSummaries: payload.bookSummaries,
         lastActiveAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
     } else {
+      lastKnownVisitDays = [todayKey];
       await setDoc(docRef, {
         ...payload,
         visitCount: 1,
+        visitDays: lastKnownVisitDays,
         lastActiveAt: serverTimestamp(),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -1216,6 +1240,7 @@ export function initSync(
     if (!user) {
       stopListeners();
       stopPresenceTracking();
+      lastKnownVisitDays = [];
       void reportSiteVisit(false);
       setSyncState('local', 'Modo local. Iniciá sesión para sincronizar en la nube.');
       onDataChangedCb?.();

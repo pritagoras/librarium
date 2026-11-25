@@ -76,7 +76,7 @@
   </div>
   <div class="backup-actions">
     <button id="accountBtn" class="quiet" type="button">Iniciar sesión</button>
-    <button id="settingsOpen" class="quiet" type="button" aria-haspopup="dialog">⚙ Ajustes</button>
+    <button id="settingsOpen" class="quiet settings-trigger" type="button" aria-haspopup="dialog">⚙ Ajustes <span id="settingsOpenBadge" class="admin-pending-badge hidden" aria-hidden="true"></span></button>
   </div>
 </header>
 
@@ -581,7 +581,7 @@ Notas finales:
         </div>
         <div class="admin-card-actions">
           <button id="openUsersDirectoryBtn" type="button" class="secondary">Usuarios y lecturas</button>
-          <button id="openFeedbackInboxBtn" type="button" class="primary">Buzón de reportes</button>
+          <button id="openFeedbackInboxBtn" type="button" class="primary">Buzón de reportes <span id="inboxPendingBadge" class="admin-pending-badge on-primary hidden" aria-hidden="true"></span></button>
         </div>
       </div>
     </section>
@@ -741,6 +741,7 @@ Notas finales:
     </div>
     <input id="usersDirectorySearch" class="users-directory-search" type="search" placeholder="Buscar por usuario, correo o libro…" aria-label="Buscar usuarios o libros">
     <div id="usersVisitsSummary" class="users-visits-summary hidden" aria-live="polite"></div>
+    <div id="usersDailyBreakdown" class="users-daily-breakdown hidden"></div>
     <p id="usersDirectoryStatus" class="muted" aria-live="polite"></p>
     <div id="usersDirectoryList" class="user-dir-list"></div>
   </section>
