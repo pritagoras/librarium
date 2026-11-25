@@ -474,15 +474,16 @@ function layoutGlobalGraph() {
 
 function relationColor(type: string): string {
   const key = type.toLocaleLowerCase();
-  if (/famili|madre|padre|hijo|herman|abuelo|nieto|tio|sobrino|primo/.test(key)) return '#fb923c';
-  if (/amistad/.test(key)) return '#34d399';
-  if (/alianza/.test(key)) return '#38bdf8';
-  if (/rival/.test(key)) return '#fb7185';
-  if (/rom[aá]nt/.test(key)) return '#e879f9';
-  if (/mentor/.test(key)) return '#a78bfa';
-  if (/labor/.test(key)) return '#22d3ee';
+  if (/famili|madre|padre|hijo|herman|abuelo|nieto|tio|sobrino|primo/.test(key)) return '#c39a68';
+  if (/amistad/.test(key)) return '#91aa87';
+  if (/alianza/.test(key)) return '#829e9b';
+  if (/rival/.test(key)) return '#b77d75';
+  if (/rom[aá]nt/.test(key)) return '#ad8d9e';
+  if (/mentor/.test(key)) return '#a69a78';
+  if (/labor/.test(key)) return '#829b9a';
+  const palette = ['#91a58b', '#b39b77', '#829b9a', '#ad8d9e', '#a69a78', '#b77d75'];
   let hash = 0; for (const char of type) hash = (hash * 31 + char.charCodeAt(0)) | 0;
-  return `hsl(${Math.abs(hash) % 360} 76% 62%)`;
+  return palette[Math.abs(hash) % palette.length];
 }
 
 // ---------------------------------------------------------------------------
