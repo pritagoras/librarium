@@ -1570,7 +1570,7 @@ async function runAI(ai: AIState) {
 function saveTargetsFor(ai: AIState, hasRelation: boolean): Array<[SaveTarget, string]> {
   if (ai.scope.kind === 'field' && ai.scope.field !== 'name') {
     return [
-      ['field', `Como dato: ${FIELD_LABELS[ai.scope.field].toLowerCase()}`],
+      ['field', `Como dato: ${FIELD_LABELS[fieldKey!].toLowerCase()}`],
       ['comments', 'Agregar a los comentarios'],
       ['evidence', 'Guardar como fuente o evidencia'],
     ];
@@ -1616,14 +1616,15 @@ function paintAI() {
     ai.status === 'done' && !ai.formTarget && api().renderMarkdown
       ? `<div class="chr-ai-answer chr-ai-answer--md" id="chrAiAnswer" tabindex="0">${api().renderMarkdown!(suggestion.body)}</div>`
       : `<div class="chr-ai-answer" id="chrAiAnswer" tabindex="0">${esc(suggestion.body)}</div>`;
-  const isFieldSuggestion = ai.scope.kind === 'field' && ai.scope.field !== 'name';
+  const fieldKey = ai.scope.kind === 'field' && ai.scope.field !== 'name' ? ai.scope.field : null;
+  const isFieldSuggestion = fieldKey !== null;
   const fieldSuggestionHTML = isFieldSuggestion && ai.status === 'done'
     ? `<div class="chr-ai-quick-context"><span class="chr-ai-eyebrow">CONTEXTO</span><p>${esc(suggestion.body)}</p></div>
       <form id="chrAiSave" class="chr-ai-quick-form" novalidate>
         <input type="hidden" name="target" value="field" />
         <input type="hidden" name="certainty" value="inferred" />
         <label for="chrAiSaveText">${esc(FIELD_LABELS[ai.scope.field])}</label>
-        ${ai.scope.field === 'description'
+        ${fieldKey === 'description'
           ? `<textarea id="chrAiSaveText" name="text" rows="3">${esc(suggestion.value)}</textarea>`
           : `<input id="chrAiSaveText" name="text" type="text" value="${esc(suggestion.value)}" autocomplete="off" />`}
         <div class="chr-ai-save-error" id="chrAiSaveError" role="alert"></div>
@@ -1638,7 +1639,7 @@ function paintAI() {
         <button type="button" class="secondary" data-chr="ai-close">Cerrar</button>
       </div>
     </div>
-    ${ai.plan ? `<p class="muted chr-ai-context">${esc(ai.plan.contextSummary)}</p>` : ''}
+    ${!isFieldSuggestion && ai.plan ? `<p class="muted chr-ai-context">${esc(ai.plan.contextSummary)}</p>` : ''}
     <p class="chr-ai-status" role="status" aria-live="polite">${
       ai.status === 'running' ? 'Consultando a la IA…' : ai.status === 'done' ? esc(ai.note) : ''
     }</p>
