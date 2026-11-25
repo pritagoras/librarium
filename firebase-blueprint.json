@@ -32,6 +32,10 @@
           "type": "integer",
           "description": "Total recorded visit sessions for this user."
         },
+        "visitDays": {
+          "type": "array",
+          "description": "Bounded list of up to 30 recent YYYY-MM-DD visit dates for daily metrics."
+        },
         "booksCount": {
           "type": "integer"
         },
@@ -487,6 +491,33 @@
         }
       },
       "required": ["id", "userId", "authorName", "authorEmail", "kind", "message", "appContext", "status", "adminNote", "createdAt", "updatedAt"]
+    },
+    "SiteDailyStat": {
+      "title": "SiteDailyStat",
+      "description": "Admin-archived daily anonymous site visit counts keyed by YYYY-MM-DD.",
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 10
+        },
+        "anonBoots": {
+          "type": "object"
+        },
+        "anonTotal": {
+          "type": "integer"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["date", "anonBoots", "anonTotal", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -525,6 +556,10 @@
     "/feedback/{feedbackId}": {
       "schema": { "$ref": "#/entities/Feedback" },
       "description": "Bug reports and improvement suggestions submitted by verified users and triaged by the admin."
+    },
+    "/site_stats/{dateId}": {
+      "schema": { "$ref": "#/entities/SiteDailyStat" },
+      "description": "Admin-archived daily anonymous visit aggregates per YYYY-MM-DD date."
     }
   }
 }

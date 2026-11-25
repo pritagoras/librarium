@@ -171,11 +171,13 @@ export interface UserDirectoryEntry {
   updatedAt: string;
   lastActiveAt: string;
   visitCount: number;
+  visitDays: string[];
   booksCount: number;
   bookSummaries: BookProgressSummary[];
 }
 
 export interface SiteVisitStats {
+  bootId: string;
   startedAt: string;
   totalVisits: number;
   anonVisits: number;
@@ -190,6 +192,11 @@ export interface SiteVisitStats {
     anon: number;
     auth: number;
   }>;
+}
+
+export interface PersistentSiteStatsSummary {
+  totalAnonAllTime: number;
+  byDate: Record<string, number>;
 }
 
 

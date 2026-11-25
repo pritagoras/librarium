@@ -23,6 +23,7 @@ import {
   fetchMyFeedbackReports,
   isFeedbackAdmin,
   submitFeedbackReport,
+  syncAndFetchPersistentSiteStats,
   updateFeedbackReport,
 } from './feedback';
 import type {
@@ -37,6 +38,7 @@ import type {
   FeedbackKind,
   FeedbackStatus,
   Note,
+  PersistentSiteStatsSummary,
   Quote,
   SiteVisitStats,
   SortOption,
@@ -2388,10 +2390,15 @@ function updateAccountUI(_status: SyncStatus, message: string, user: any) {
   }
 
   const adminCard = $('#adminFeedbackCard');
+  const isAdmin = isFeedbackAdmin(user);
   if (adminCard) {
-    const isAdmin = isFeedbackAdmin(user);
     adminCard.classList.toggle('hidden', !isAdmin);
-    if (isAdmin) void refreshAdminFeedbackSummary();
+  }
+  if (isAdmin) {
+    void refreshAdminFeedbackSummary();
+    void archiveAdminSiteVisitsInBackground();
+  } else {
+    updateAdminPendingBadges(0);
   }
 
   if ($<HTMLDialogElement>('#feedbackDialog')?.open) {
@@ -2466,7 +2473,10 @@ function initSettings() {
     button.textContent = revealing ? 'Ocultar' : 'Mostrar';
   });
 
-  $('#settingsOpen')!.onclick = () => $<HTMLDialogElement>('#settingsDialog')?.showModal();
+  $('#settingsOpen')!.onclick = () => {
+    $<HTMLDialogElement>('#settingsDialog')?.showModal();
+    if (isFeedbackAdmin(getSyncState().user)) void refreshAdminFeedbackSummary();
+  };
   $('#accountBtn')!.onclick = () => {
     const { user } = getSyncState();
     if (user) {
@@ -4645,17 +4655,64 @@ async function renderMyFeedbackList() {
   }
 }
 
+let lastBackgroundVisitArchiveAt = 0;
+
+function updateAdminPendingBadges(openCount: number) {
+  const settingsBtn = $('#settingsOpen');
+  const settingsBadge = $('#settingsOpenBadge');
+  const inboxBadge = $('#inboxPendingBadge');
+  const label = openCount > 99 ? '99+' : String(openCount);
+  const show = openCount > 0;
+
+  if (settingsBadge) {
+    settingsBadge.textContent = show ? label : '';
+    settingsBadge.classList.toggle('hidden', !show);
+  }
+  if (inboxBadge) {
+    inboxBadge.textContent = show ? label : '';
+    inboxBadge.classList.toggle('hidden', !show);
+  }
+  if (settingsBtn) {
+    settingsBtn.setAttribute(
+      'aria-label',
+      show
+        ? `Ajustes (${openCount} ${openCount === 1 ? 'reporte pendiente' : 'reportes pendientes'})`
+        : 'Ajustes',
+    );
+  }
+}
+
+async function archiveAdminSiteVisitsInBackground() {
+  if (!isFeedbackAdmin(getSyncState().user)) return;
+  if (Date.now() - lastBackgroundVisitArchiveAt < 2 * 60 * 1000) return;
+  lastBackgroundVisitArchiveAt = Date.now();
+  try {
+    const serverVisits = await fetchAdminSiteVisits();
+    if (serverVisits) await syncAndFetchPersistentSiteStats(serverVisits);
+  } catch {
+    // Non-critical background archival
+  }
+}
+
 async function refreshAdminFeedbackSummary() {
   const summaryEl = $('#adminFeedbackSummary');
-  if (!summaryEl || !isFeedbackAdmin(getSyncState().user)) return;
+  if (!isFeedbackAdmin(getSyncState().user)) {
+    updateAdminPendingBadges(0);
+    return;
+  }
   try {
     const items = await fetchAllFeedbackReports();
     const openCount = items.filter((item) => item.status === 'open').length;
-    summaryEl.textContent = items.length
-      ? `${openCount} ${openCount === 1 ? 'pendiente' : 'pendientes'} · ${items.length} ${items.length === 1 ? 'envío total' : 'envíos totales'}.`
-      : 'Todavía no hay reportes ni propuestas.';
+    updateAdminPendingBadges(openCount);
+    if (summaryEl) {
+      summaryEl.textContent = items.length
+        ? `${openCount} ${openCount === 1 ? 'pendiente' : 'pendientes'} · ${items.length} ${items.length === 1 ? 'envío total' : 'envíos totales'}.`
+        : 'Todavía no hay reportes ni propuestas.';
+    }
   } catch {
-    summaryEl.textContent = 'Revisá los envíos de las personas que usan Librarium.';
+    if (summaryEl) {
+      summaryEl.textContent = 'Revisá los envíos de las personas que usan Librarium.';
+    }
   }
 }
 
@@ -4797,6 +4854,7 @@ function renderFeedbackInboxList() {
 
 let usersDirectoryItems: UserDirectoryEntry[] = [];
 let siteVisitStats: SiteVisitStats | null = null;
+let persistentAnonStats: PersistentSiteStatsSummary = { totalAnonAllTime: 0, byDate: {} };
 let usersDirectoryFilter: 'all' | 'active' | 'today' | 'reading' = 'all';
 
 function isUserOnlineNow(iso: string): boolean {
@@ -4866,11 +4924,31 @@ async function loadUsersDirectory() {
     ]);
     usersDirectoryItems = users;
     siteVisitStats = visits;
+    persistentAnonStats = await syncAndFetchPersistentSiteStats(visits);
+    lastBackgroundVisitArchiveAt = Date.now();
     renderUsersDirectory();
   } catch (err: any) {
     if (statusEl) statusEl.textContent = `No se pudieron cargar los usuarios: ${err?.message || err}`;
     listEl.replaceChildren();
   }
+}
+
+function getLast7UtcDays(): string[] {
+  const days: string[] = [];
+  const now = Date.now();
+  for (let i = 0; i < 7; i++) {
+    days.push(new Date(now - i * 86400000).toISOString().slice(0, 10));
+  }
+  return days;
+}
+
+function formatDayChip(dateStr: string): string {
+  const today = new Date().toISOString().slice(0, 10);
+  if (dateStr === today) return 'Hoy';
+  const parts = dateStr.split('-').map(Number);
+  if (parts.length !== 3) return dateStr;
+  const dt = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 12, 0, 0));
+  return dt.toLocaleDateString('es-AR', { day: 'numeric', month: 'short' });
 }
 
 function renderUsersVisitsSummary() {
@@ -4882,6 +4960,16 @@ function renderUsersVisitsSummary() {
   );
   const usersToday = usersDirectoryItems.filter((u) => isSameLocalDay(u.lastActiveAt)).length;
   const activeNow = usersDirectoryItems.filter((u) => isUserOnlineNow(u.lastActiveAt)).length;
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const anonAllTime = Math.max(
+    persistentAnonStats.totalAnonAllTime,
+    siteVisitStats?.anonVisits || 0,
+  );
+  const anonToday = Math.max(
+    persistentAnonStats.byDate[todayKey] || 0,
+    siteVisitStats?.todayAnonVisits || 0,
+  );
+  const combinedTotal = totalUserVisits + anonAllTime;
 
   const cards: string[] = [
     `<div class="users-visit-stat">
@@ -4889,25 +4977,55 @@ function renderUsersVisitsSummary() {
       <strong>${totalUserVisits}</strong>
       <span class="users-visit-sub">${usersDirectoryItems.length} ${usersDirectoryItems.length === 1 ? 'cuenta' : 'cuentas'} · ${usersToday} hoy · ${activeNow} ahora</span>
     </div>`,
+    `<div class="users-visit-stat">
+      <span class="users-visit-stat-label">Sin cuenta (histórico nube)</span>
+      <strong>${anonAllTime}</strong>
+      <span class="users-visit-sub">Hoy: ${anonToday}${siteVisitStats ? ` · Servidor actual: ${siteVisitStats.anonVisits}` : ''}</span>
+    </div>`,
+    `<div class="users-visit-stat">
+      <span class="users-visit-stat-label">Total histórico combinado</span>
+      <strong>${combinedTotal}</strong>
+      <span class="users-visit-sub">Cuentas registradas + visitantes anónimos archivados</span>
+    </div>`,
   ];
-
-  if (siteVisitStats) {
-    cards.push(
-      `<div class="users-visit-stat">
-        <span class="users-visit-stat-label">Visitas al enlace (servidor)</span>
-        <strong>${siteVisitStats.totalVisits}</strong>
-        <span class="users-visit-sub">Hoy: ${siteVisitStats.todayVisits} (${siteVisitStats.todayAuthVisits} con cuenta · ${siteVisitStats.todayAnonVisits} sin cuenta)</span>
-      </div>`,
-      `<div class="users-visit-stat">
-        <span class="users-visit-stat-label">Visitantes sin cuenta</span>
-        <strong>${siteVisitStats.anonVisits}</strong>
-        <span class="users-visit-sub">${siteVisitStats.authVisits} sesiones con Google desde ${esc(formatShortDate(siteVisitStats.startedAt))}</span>
-      </div>`,
-    );
-  }
 
   host.innerHTML = cards.join('');
   host.classList.remove('hidden');
+
+  const dailyHost = $('#usersDailyBreakdown');
+  if (!dailyHost) return;
+  const days = getLast7UtcDays();
+  const rowsData = days.map((date) => {
+    const authUsers = usersDirectoryItems.filter((u) =>
+      u.visitDays.includes(date) || u.lastActiveAt.slice(0, 10) === date,
+    ).length;
+    const anonVisits = persistentAnonStats.byDate[date] || 0;
+    return { date, authUsers, anonVisits, total: authUsers + anonVisits };
+  });
+  const maxDayTotal = Math.max(1, ...rowsData.map((r) => r.total));
+
+  dailyHost.innerHTML = `
+    <div class="users-daily-head">
+      <p class="eyebrow">HISTÓRICO ÚLTIMOS 7 DÍAS (PERSISTENTE EN NUBE)</p>
+      <span class="users-daily-sub">Verde: cuentas · Marrón: sin cuenta</span>
+    </div>
+    <div class="users-daily-rows">
+      ${rowsData
+        .map((r) => {
+          const authPct = Math.round((r.authUsers / maxDayTotal) * 100);
+          const anonPct = Math.round((r.anonVisits / maxDayTotal) * 100);
+          return `<div class="users-daily-row">
+            <span class="users-daily-date">${esc(formatDayChip(r.date))}</span>
+            <div class="users-daily-bar" aria-hidden="true">
+              <i class="users-daily-seg-auth" style="width:${authPct}%"></i>
+              <i class="users-daily-seg-anon" style="width:${anonPct}%"></i>
+            </div>
+            <span class="users-daily-counts">${r.authUsers} ctas · ${r.anonVisits} anón.</span>
+          </div>`;
+        })
+        .join('')}
+    </div>`;
+  dailyHost.classList.remove('hidden');
 }
 
 function renderUsersDirectory() {

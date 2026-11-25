@@ -69,7 +69,7 @@ service cloud.firestore {
       return data.keys().hasAll(['uid', 'displayName', 'email', 'createdAt', 'updatedAt'])
         && data.keys().hasOnly([
           'uid', 'displayName', 'email', 'photoURL',
-          'lastActiveAt', 'visitCount', 'booksCount', 'bookSummaries',
+          'lastActiveAt', 'visitCount', 'visitDays', 'booksCount', 'bookSummaries',
           'createdAt', 'updatedAt'
         ])
         && data.uid == userId
@@ -79,12 +79,28 @@ service cloud.firestore {
         && isOptionalString(data, 'photoURL', 1000)
         && isOptionalTimestamp(data, 'lastActiveAt')
         && isOptionalPositiveBoundedInt(data, 'visitCount', 1000000)
+        && (!('visitDays' in data) || data.visitDays == null || (
+          data.visitDays is list &&
+          data.visitDays.size() <= 30 &&
+          (data.visitDays.size() == 0 || (data.visitDays[0] is string && data.visitDays[0].size() == 10))
+        ))
         && isOptionalNonNegInt(data, 'booksCount')
         && (!('bookSummaries' in data) || data.bookSummaries == null || (
           data.bookSummaries is list &&
           data.bookSummaries.size() <= 100 &&
           (data.bookSummaries.size() == 0 || data.bookSummaries[0] is map)
         ))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSiteDailyStat(data, dateId) {
+      return dateId.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && data.keys().hasAll(['date', 'anonBoots', 'anonTotal', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['date', 'anonBoots', 'anonTotal', 'createdAt', 'updatedAt'])
+        && data.date == dateId
+        && data.anonBoots is map && data.anonBoots.keys().size() <= 100
+        && data.anonTotal is int && data.anonTotal >= 0 && data.anonTotal <= 10000000
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -276,7 +292,7 @@ service cloud.firestore {
         )
         && incoming().diff(existing()).affectedKeys().hasOnly([
           'displayName', 'email', 'photoURL',
-          'lastActiveAt', 'visitCount', 'booksCount', 'bookSummaries',
+          'lastActiveAt', 'visitCount', 'visitDays', 'booksCount', 'bookSummaries',
           'updatedAt'
         ]);
       allow delete: if isVerifiedOwner(userId) && isValidId(userId);
@@ -463,6 +479,27 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'adminNote', 'updatedAt']);
       allow delete: if isAdmin() && isValidId(feedbackId);
+    }
+
+    // -----------------------------------------------------------------------
+    // Admin-Archived Daily Anonymous Site Visits
+    // -----------------------------------------------------------------------
+    match /site_stats/{dateId} {
+      allow get: if isAdmin() && isValidId(dateId);
+      allow list: if isAdmin();
+      allow create: if isAdmin()
+        && isValidId(dateId)
+        && isValidSiteDailyStat(incoming(), dateId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(dateId)
+        && isValidSiteDailyStat(incoming(), dateId)
+        && incoming().date == existing().date
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['anonBoots', 'anonTotal', 'updatedAt']);
+      allow delete: if isAdmin() && isValidId(dateId);
     }
   }
 }

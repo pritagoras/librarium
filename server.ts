@@ -21,11 +21,16 @@ interface DailyVisitBucket {
 }
 
 interface StoredVisitStats {
+  bootId: string;
   startedAt: string;
   totalVisits: number;
   anonVisits: number;
   authVisits: number;
   daily: Record<string, DailyVisitBucket>;
+}
+
+function makeBootId(): string {
+  return `b_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function getTodayKey(): string {
@@ -46,7 +51,12 @@ function loadVisitStats(): StoredVisitStats {
   try {
     const raw = fs.readFileSync(VISITS_FILE, 'utf8');
     const parsed = JSON.parse(raw) as Partial<StoredVisitStats>;
+    const bootId =
+      typeof parsed.bootId === 'string' && /^[a-zA-Z0-9_-]{3,40}$/.test(parsed.bootId)
+        ? parsed.bootId
+        : makeBootId();
     return {
+      bootId,
       startedAt: typeof parsed.startedAt === 'string' && parsed.startedAt ? parsed.startedAt : new Date().toISOString(),
       totalVisits: Math.max(0, Math.floor(Number(parsed.totalVisits) || 0)),
       anonVisits: Math.max(0, Math.floor(Number(parsed.anonVisits) || 0)),
@@ -55,6 +65,7 @@ function loadVisitStats(): StoredVisitStats {
     };
   } catch {
     return {
+      bootId: makeBootId(),
       startedAt: new Date().toISOString(),
       totalVisits: 0,
       anonVisits: 0,
@@ -181,7 +192,7 @@ async function startServer() {
     const todayBucket = visitStats.daily[todayKey] || { total: 0, anon: 0, auth: 0 };
     const recentDays = Object.keys(visitStats.daily)
       .sort()
-      .slice(-7)
+      .slice(-14)
       .reverse()
       .map((date) => ({
         date,
@@ -191,6 +202,7 @@ async function startServer() {
       }));
 
     res.json({
+      bootId: visitStats.bootId,
       startedAt: visitStats.startedAt,
       totalVisits: visitStats.totalVisits,
       anonVisits: visitStats.anonVisits,

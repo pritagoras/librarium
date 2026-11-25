@@ -19,12 +19,13 @@ import type {
   FeedbackItem,
   FeedbackKind,
   FeedbackStatus,
+  PersistentSiteStatsSummary,
   SiteVisitStats,
   UserDirectoryEntry,
 } from './types';
 
 export const FEEDBACK_ADMIN_EMAIL = '[redacted]';
-const APP_CLIENT_VERSION = 'v38';
+const APP_CLIENT_VERSION = 'v40';
 
 export function isFeedbackAdmin(user: User | null | undefined): boolean {
   return Boolean(
@@ -270,6 +271,11 @@ export async function fetchAdminUserDirectory(): Promise<UserDirectoryEntry[]> {
             typeof data.visitCount === 'number' && data.visitCount >= 1
               ? Math.floor(data.visitCount)
               : 0,
+          visitDays: Array.isArray(data.visitDays)
+            ? data.visitDays
+                .filter((d): d is string => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d))
+                .slice(-30)
+            : [],
           booksCount:
             typeof data.booksCount === 'number' && data.booksCount >= 0
               ? Math.floor(data.booksCount)
@@ -296,4 +302,86 @@ export async function fetchAdminSiteVisits(): Promise<SiteVisitStats | null> {
   } catch {
     return null;
   }
+}
+
+export async function syncAndFetchPersistentSiteStats(
+  serverStats: SiteVisitStats | null,
+): Promise<PersistentSiteStatsSummary> {
+  const user = auth.currentUser;
+  if (!isFeedbackAdmin(user)) {
+    return { totalAnonAllTime: 0, byDate: {} };
+  }
+
+  const cloudByDate = new Map<string, { anonBoots: Record<string, number>; anonTotal: number }>();
+  try {
+    const snap = await getDocs(collection(db, 'site_stats'));
+    for (const d of snap.docs) {
+      const data = d.data() as Record<string, unknown>;
+      const rawBoots = data.anonBoots && typeof data.anonBoots === 'object' ? (data.anonBoots as Record<string, unknown>) : {};
+      const anonBoots: Record<string, number> = {};
+      for (const [k, v] of Object.entries(rawBoots)) {
+        const n = Math.floor(Number(v) || 0);
+        if (n > 0) anonBoots[k] = n;
+      }
+      const anonTotal = Math.max(
+        0,
+        Math.floor(Number(data.anonTotal) || Object.values(anonBoots).reduce((a, b) => a + b, 0)),
+      );
+      cloudByDate.set(d.id, { anonBoots, anonTotal });
+    }
+  } catch (err) {
+    console.warn('No se pudo leer site_stats:', err);
+    return { totalAnonAllTime: 0, byDate: {} };
+  }
+
+  if (serverStats && /^[a-zA-Z0-9_-]{3,40}$/.test(serverStats.bootId)) {
+    for (const day of serverStats.recentDays) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day.date) || day.anon <= 0) continue;
+      const existing = cloudByDate.get(day.date);
+      const currentBootCount = existing?.anonBoots[serverStats.bootId] || 0;
+      const nextBootCount = Math.max(0, Math.floor(day.anon));
+      if (nextBootCount <= currentBootCount) continue;
+
+      const nextBoots: Record<string, number> = {
+        ...(existing?.anonBoots || {}),
+        [serverStats.bootId]: nextBootCount,
+      };
+      const bootKeys = Object.keys(nextBoots);
+      if (bootKeys.length > 95) {
+        const sorted = bootKeys.sort();
+        for (const dropKey of sorted.slice(0, sorted.length - 95)) {
+          delete nextBoots[dropKey];
+        }
+      }
+      const nextTotal = Object.values(nextBoots).reduce((a, b) => a + b, 0);
+      try {
+        if (!existing) {
+          await setDoc(doc(db, 'site_stats', day.date), {
+            date: day.date,
+            anonBoots: nextBoots,
+            anonTotal: nextTotal,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        } else {
+          await updateDoc(doc(db, 'site_stats', day.date), {
+            anonBoots: nextBoots,
+            anonTotal: nextTotal,
+            updatedAt: serverTimestamp(),
+          });
+        }
+        cloudByDate.set(day.date, { anonBoots: nextBoots, anonTotal: nextTotal });
+      } catch (err) {
+        console.warn('No se pudo archivar site_stats para', day.date, err);
+      }
+    }
+  }
+
+  const byDate: Record<string, number> = {};
+  let totalAnonAllTime = 0;
+  for (const [date, entry] of cloudByDate.entries()) {
+    byDate[date] = entry.anonTotal;
+    totalAnonAllTime += entry.anonTotal;
+  }
+  return { totalAnonAllTime, byDate };
 }
