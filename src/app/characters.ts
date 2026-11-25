@@ -1730,16 +1730,13 @@ function sheetRelationRows(character: Character, parsed: any): string {
 }
 
 function fullSheetFormHTML(character: Character, parsed: any): string {
-  const basis = parsed.basis && typeof parsed.basis === 'object' ? parsed.basis : {};
   const row = (key: string, label: string, aiValue: string, current: string, long: boolean, certainty?: Certainty) => {
     const value = aiValue || current;
     const checked = aiValue && aiValue !== current ? 'checked' : '';
-    const why = String(basis[key] || '').trim();
     return `<div class="chr-form-field chr-fs-row"><label class="chr-fs-check"><input type="checkbox" name="fs_apply_${key}" ${checked}/> <strong>${esc(label)}</strong></label>
-      ${why ? `<p class="muted chr-fs-basis">${esc(why)}</p>` : ''}
       ${current && current !== aiValue ? `<p class="muted">Ahora en la ficha: ${esc(current)}</p>` : ''}
       ${long ? `<textarea name="fs_${key}" rows="4">${esc(value)}</textarea>` : `<input name="fs_${key}" value="${esc(value)}" />`}
-      ${certainty ? `<select name="fs_cert_${key}" aria-label="Certeza de ${esc(label.toLowerCase())}">${CERTAINTIES.map((c) => `<option value="${c}" ${c === certainty ? 'selected' : ''}>${esc(CERTAINTY_LABELS[c])}</option>`).join('')}</select>` : ''}</div>`;
+      </div>`;
   };
   const list = (value: unknown) => (Array.isArray(value) ? value.map((x) => String(x).trim()).filter(Boolean) : []);
   const rows = FULL_SHEET_FIELDS.map(({ key, long }) => {
@@ -1748,7 +1745,7 @@ function fullSheetFormHTML(character: Character, parsed: any): string {
   }).join('');
   const traits = row('traits', 'Rasgos (separados por coma)', list(parsed.traits).join(', '), character.traits.join(', '), false);
   const aliases = row('aliases', 'Alias (separados por coma)', list(parsed.aliases).join(', '), character.aliases.join(', '), false);
-  return `<form id="chrFullSheet" class="chr-ai-save" novalidate><p class="muted">La IA propone un valor para cada dato y explica de dónde lo saca. Editá lo que quieras, desmarcá lo que no quieras aplicar y confirmá.</p>${rows}${traits}${aliases}${sheetRelationRows(character, parsed)}<div class="chr-ai-save-error" id="chrAiSaveError" role="alert"></div><button type="submit" class="primary">Aplicar a la ficha…</button></form>`;
+  return `<form id="chrFullSheet" class="chr-ai-save" novalidate><p class="muted">La IA completó los datos que pudo establecer. Los valores ya están cargados y podés editarlos antes de aplicar.</p>${rows}${traits}${aliases}${sheetRelationRows(character, parsed)}<div class="chr-ai-save-error" id="chrAiSaveError" role="alert"></div><button type="submit" class="primary">Aplicar ficha completa</button></form>`;
 }
 
 async function submitFullSheet(form: HTMLFormElement) {
@@ -1764,8 +1761,7 @@ async function submitFullSheet(form: HTMLFormElement) {
     const value = formValue(form, `fs_${key}`).trim();
     if (!value) continue;
     if (value.length > LIMITS[key]) return fail(`«${FIELD_LABELS[key]}» supera el máximo de ${LIMITS[key]} caracteres.`);
-    const cert = formValue(form, `fs_cert_${key}`) as Certainty;
-    if (!CERTAINTIES.includes(cert)) return fail(`Elegí la certeza de «${FIELD_LABELS[key]}».`);
+    const cert: Certainty = 'inferred';
     updated[key] = value;
     updated.certainty[key] = cert;
     changes.push(`${FIELD_LABELS[key]}: ${value.slice(0, 120)} (${CERTAINTY_LABELS[cert]})`);
