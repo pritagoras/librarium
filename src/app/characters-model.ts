@@ -818,7 +818,7 @@ export function buildCharacterAIRequest(input: AIContextInput): AIRequestPlan {
   );
   sections.push(
     material.length
-      ? 'MATERIAL GUARDADO POR LA PERSONA que menciona a los personajes (única evidencia textual disponible):\n' + material.join('\n')
+      ? 'MATERIAL GUARDADO POR LA PERSONA que menciona a los personajes (evidencia textual guardada; podés complementarla con tu conocimiento de la obra):\n' + material.join('\n')
       : 'MATERIAL GUARDADO POR LA PERSONA: no hay notas, anotaciones ni citas que mencionen a estos personajes. No tenés texto del libro.',
   );
 
