@@ -893,6 +893,7 @@ async function renderDetail() {
       <h1>${esc(b.title)}</h1>
       <p class="muted">${esc(b.author || 'Autor desconocido')}</p>
       ${metaParts.length ? `<p class="book-detail-meta-line">${metaParts.join(' · ')}</p>` : ''}
+      <div class="book-page-actions">
       <button type="button" id="readingProgressOpen" class="reading-progress-trigger">
         <strong>Página ${b.currentPage || 0}${b.totalPages ? ` de ${b.totalPages}` : ''}</strong>
         <span>${
@@ -902,6 +903,8 @@ async function renderDetail() {
         }Hoy leíste ${pagesToday} ${pagesToday === 1 ? 'página' : 'páginas'}</span>
         <small>Tocá para actualizar tu avance</small>
       </button>
+      <button type="button" id="openBookCharacters" class="primary book-characters-trigger">✦ Personajes</button>
+      </div>
     </div>
   </header>
   <div class="detail-tabs">
@@ -911,7 +914,6 @@ async function renderDetail() {
         ['entries', 'Anotaciones'],
         ['photos', 'Fotografías'],
         ['quotes', 'Citas'],
-        ['characters', 'Personajes'],
         ['review', 'Reseña'],
         ['settings', 'Ajustes'],
       ] as Array<[DetailTab, string]>
@@ -1275,6 +1277,10 @@ async function renderDetail() {
   }
 
   $('#readingProgressOpen')?.addEventListener('click', () => openReadingProgressDialog(b));
+  $('#openBookCharacters')?.addEventListener('click', () => {
+    detailTab = 'characters';
+    void renderDetail();
+  });
   $('#addQuote')?.addEventListener('click', () => openQuoteForm(b.id));
   if (detailTab === 'quotes') bindQuoteActions(p);
   if (detailTab === 'characters') await renderCharactersPanel(p, b);

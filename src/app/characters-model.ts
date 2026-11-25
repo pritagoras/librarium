@@ -43,10 +43,10 @@ export const EVIDENCE_LABELS: Record<EvidenceKind, string> = {
   other: 'Otra referencia',
 };
 
-export const RELATION_TYPES = ['Familiar', 'Amistad', 'Rivalidad', 'Alianza', 'Mentoría', 'Romántico', 'Laboral'] as const;
+export const RELATION_TYPES = ['Familiar', 'Madre de', 'Padre de', 'Hijo/a de', 'Hermano/a de', 'Abuelo/a de', 'Nieto/a de', 'Tío/a de', 'Sobrino/a de', 'Primo/a de', 'Amistad', 'Rivalidad', 'Alianza', 'Mentoría', 'Romántico', 'Laboral'] as const;
 
 /** Tipos cuyo sentido depende de quién es el origen (mentor → aprendiz). El resto es simétrico. */
-const DIRECTED_TYPE_KEYS = new Set(['mentoria']);
+const DIRECTED_TYPE_KEYS = new Set(['mentoria', 'madre de', 'padre de', 'hijo/a de', 'abuelo/a de', 'nieto/a de', 'tio/a de', 'sobrino/a de']);
 
 export const LIMITS = {
   name: 200,
@@ -609,7 +609,7 @@ export type AIScope =
   | { kind: 'relation'; otherId: string; relationId?: string };
 
 export interface AIContextInput {
-  book: Pick<Book, 'id' | 'title' | 'author' | 'publisher' | 'year' | 'edition'>;
+  book: Pick<Book, 'id' | 'title' | 'author' | 'publisher' | 'year' | 'edition' | 'currentPage'>;
   character: Character;
   characters: Character[];
   relations: CharacterRelation[];
@@ -700,9 +700,10 @@ export function buildCharacterAIRequest(input: AIContextInput): AIRequestPlan {
 
   const names = [character.name, ...character.aliases, ...(other ? [other.name, ...other.aliases] : [])];
   const pattern = namePattern(names);
-  const notes = selectMentions(input.notes ?? [], pattern, (n) => `${n.text} ${n.comment ?? ''}`);
-  const entries = selectMentions(input.entries ?? [], pattern, (e) => `${e.title ?? ''} ${e.text ?? ''} ${e.comment ?? ''}`);
-  const quotes = selectMentions(input.quotes ?? [], pattern, (q) => `${q.text} ${q.analysis ?? ''}`);
+  const currentPage = Math.max(0, Number(book.currentPage) || 0);
+  const notes = selectMentions((input.notes ?? []).filter((n) => n.endPage != null && n.endPage <= currentPage), pattern, (n) => `${n.text} ${n.comment ?? ''}`);
+  const entries = selectMentions((input.entries ?? []).filter((e) => e.page != null && e.page <= currentPage), pattern, (e) => `${e.title ?? ''} ${e.text ?? ''} ${e.comment ?? ''}`);
+  const quotes = selectMentions((input.quotes ?? []).filter((q) => q.page != null && q.page <= currentPage), pattern, (q) => `${q.text} ${q.analysis ?? ''}`);
 
   const sections: string[] = [];
   sections.push(
@@ -710,6 +711,7 @@ export function buildCharacterAIRequest(input: AIContextInput): AIRequestPlan {
       `${book.publisher || book.year ? ` (${[book.publisher, book.year].filter(Boolean).join(', ')})` : ''}.`,
   );
   sections.push(`FICHA DE «${character.name}»:\n${describeCharacter(character).join('\n')}`);
+  sections.push(`LÍMITE ANTISPOILERS: la persona llegó hasta la página ${currentPage}. Solo podés usar fuentes con página conocida hasta ese límite. No reveles ni anticipes hechos posteriores; si una fuente no tiene página, no la uses.`);
 
   if (scope.kind === 'relation' && other) {
     sections.push(`FICHA DE «${other.name}»:\n${describeCharacter(other).join('\n')}`);

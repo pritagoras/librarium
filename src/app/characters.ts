@@ -106,6 +106,7 @@ interface AIState {
   keyError: boolean;
   note: string;
   controller: AbortController | null;
+  formTarget?: boolean;
 }
 
 interface State {
@@ -121,6 +122,7 @@ interface State {
   netSelected: string | null;
   notice: string;
   ai: AIState | null;
+  pendingRelatives: Array<{ name: string; type: string; direction: 'out' | 'in'; certainty: Certainty; evidence: string }>;
 }
 
 const emptyState = (bookId = ''): State => ({
@@ -136,6 +138,7 @@ const emptyState = (bookId = ''): State => ({
   netSelected: null,
   notice: '',
   ai: null,
+  pendingRelatives: [],
 });
 
 let state: State = emptyState();
@@ -373,11 +376,11 @@ function sheetHTML(character: Character): string {
       <div class="chr-section-head">
         <h3 id="chrRelations">Vínculos (${links.length})</h3>
         <div class="chr-row-actions">
-          <button type="button" class="secondary" data-chr="add-relation" ${others.length ? '' : 'disabled'}>＋ Agregar vínculo</button>
+          <button type="button" class="secondary" data-chr="add-relation">＋ Agregar vínculo o familiar</button>
           <button type="button" class="secondary" data-chr="show-network" ${links.length ? '' : 'disabled'}>Ver en la red</button>
         </div>
       </div>
-      ${others.length ? '' : '<p class="muted">Cargá al menos otro personaje para poder relacionarlos.</p>'}
+      ${others.length ? '' : '<p class="muted">Podés crear familiares y vínculos desde este botón.</p>'}
       ${links.length ? `<ul class="chr-relations">${links.map((n) => relationRowHTML(character, n.relation)).join('')}</ul>` : others.length ? '<p class="empty-inline">Todavía no registraste vínculos de este personaje.</p>' : ''}
       ${
         others.length
@@ -567,7 +570,9 @@ function characterFormHTML(): string {
       <div class="chr-form-field">
         <label for="chr_name">Nombre</label>
         <input id="chr_name" name="name" type="text" maxlength="${LIMITS.name}" required value="${esc(c?.name ?? '')}" />
+        <button type="button" class="secondary" data-chr="autofill">${AI_SPARK} Completar ficha con IA</button>
       </div>
+      <div id="chrAiHost"></div>
       <div class="chr-form-field">
         <label for="chr_aliases">Otros nombres o alias (uno por línea)</label>
         <textarea id="chr_aliases" name="aliases">${esc((c?.aliases ?? []).join('\n'))}</textarea>
@@ -607,9 +612,12 @@ function relationFormHTML(): string {
       <div class="chr-form-field">
         <label for="chr_other">Otro personaje</label>
         <select id="chr_other" name="other" ${editing ? 'disabled' : ''}>
+          <option value="" ${!otherId ? 'selected' : ''}>Elegir personaje…</option>
           ${others.map((c) => `<option value="${esc(c.id)}" ${c.id === otherId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+          ${editing ? '' : '<option value="__new__">＋ Crear familiar nuevo…</option>'}
         </select>
       </div>
+      ${!editing ? `<div class="chr-form-field hidden" id="chrNewRelativeWrap"><label for="chr_new_relative">Nombre del familiar</label><input id="chr_new_relative" name="newRelative" type="text" maxlength="${LIMITS.name}" /></div>` : ''}
       <div class="chr-form-field">
         <label for="chr_direction">Sentido del vínculo</label>
         <select id="chr_direction" name="direction">
@@ -691,10 +699,32 @@ async function submitCharacterForm(form: HTMLFormElement) {
   try {
     const saved = await api().saveCharacter({ ...result.value, userId: editing?.userId, createdAt: editing?.createdAt });
     await reload();
+    let relativeCount = 0;
+    for (const suggestion of state.pendingRelatives) {
+      let relative = data.characters.find((c) => c.name.trim().toLowerCase() === suggestion.name.trim().toLowerCase());
+      if (!relative) {
+        const created = validateCharacter({ name: suggestion.name }, { bookId: state.bookId, existing: data.characters });
+        if (!created.ok || !created.value) continue;
+        relative = await api().saveCharacter(created.value);
+        data.characters.push(relative);
+      }
+      const relation = validateRelation({
+        fromId: suggestion.direction === 'out' ? saved.id : relative.id,
+        toId: suggestion.direction === 'out' ? relative.id : saved.id,
+        type: suggestion.type,
+        description: '', evidence: suggestion.evidence ? [{ kind: 'other', ref: 'Fuente sugerida por IA', text: suggestion.evidence.slice(0, LIMITS.evidenceText) }] : [], certainty: suggestion.certainty,
+      }, { bookId: state.bookId, characters: data.characters, relations: data.relations });
+      if (relation.ok && relation.value) {
+        await api().saveRelation(relation.value.record);
+        relativeCount++;
+      }
+    }
+    state.pendingRelatives = [];
+    await reload();
     go('sheet', {
       selectedId: saved.id,
       editingCharacterId: null,
-      notice: [editing ? 'Ficha actualizada.' : 'Ficha creada.', ...result.warnings].join(' '),
+      notice: [editing ? 'Ficha actualizada.' : 'Ficha creada.', relativeCount ? `Se guardaron ${relativeCount} vínculo(s) familiar(es) seleccionados.` : '', ...result.warnings].filter(Boolean).join(' '),
     });
   } catch (err: any) {
     showFormErrors([`No se pudo guardar: ${err?.message || err}`]);
@@ -705,7 +735,20 @@ async function submitRelationForm(form: HTMLFormElement) {
   const draft = state.relationDraft;
   if (!draft) return;
   const editing = draft.editingId ? data.relations.find((r) => r.id === draft.editingId) : undefined;
-  const otherId = editing ? (editing.fromId === draft.fromId ? editing.toId : editing.fromId) : formValue(form, 'other');
+  let otherId = editing ? (editing.fromId === draft.fromId ? editing.toId : editing.fromId) : formValue(form, 'other');
+  let createdRelative: Character | null = null;
+  if (otherId === '__new__') {
+    const name = formValue(form, 'newRelative').trim();
+    if (!name) return showFormErrors(['Escribí el nombre del familiar.']);
+    const characterResult = validateCharacter({ name }, { bookId: state.bookId, existing: data.characters });
+    if (!characterResult.ok || !characterResult.value) return showFormErrors(characterResult.errors);
+    try {
+      createdRelative = await api().saveCharacter(characterResult.value);
+      otherId = createdRelative.id;
+    } catch (err: any) {
+      return showFormErrors([`No se pudo crear el familiar: ${err?.message || err}`]);
+    }
+  }
   const outgoing = formValue(form, 'direction') !== 'in';
   const result = validateRelation(
     {
@@ -728,7 +771,7 @@ async function submitRelationForm(form: HTMLFormElement) {
     await reload();
     go('sheet', { selectedId: draft.fromId, relationDraft: null, notice: editing ? 'Vínculo actualizado.' : 'Vínculo creado.' });
   } catch (err: any) {
-    showFormErrors([`No se pudo guardar: ${err?.message || err}`]);
+    showFormErrors([`${createdRelative ? `Se creó «${createdRelative.name}», pero ` : ''}no se pudo guardar el vínculo: ${err?.message || err}`]);
   }
 }
 
@@ -746,9 +789,15 @@ function scopeLabel(character: Character, scope: AIScope): string {
   return `vínculo entre ${character.name} y ${characterById(scope.otherId)?.name ?? 'otro personaje'}`;
 }
 
-async function startAI(scope: AIScope) {
-  const character = characterById(state.selectedId);
+async function startAI(scope: AIScope, formTarget = false) {
+  const character = formTarget
+    ? (characterById(state.editingCharacterId) ?? {
+        id: 'character-draft', bookId: state.bookId, name: host?.querySelector<HTMLInputElement>('#chr_name')?.value.trim() || '',
+        aliases: [], age: '', description: '', traits: [], occupation: '', affiliation: '', comments: '', evidence: [], certainty: {},
+      })
+    : characterById(state.selectedId);
   if (!character || !book) return;
+  if (!character.name.trim()) return showFormErrors(['Escribí el nombre del personaje antes de consultar a la IA.']);
   abortAI();
   const ai: AIState = {
     scope,
@@ -760,6 +809,7 @@ async function startAI(scope: AIScope) {
     keyError: false,
     note: '',
     controller: null,
+    formTarget,
   };
   state.ai = ai;
   if (!api().ai.hasKey()) {
@@ -781,6 +831,10 @@ async function startAI(scope: AIScope) {
       quotes: data.quotes,
       styleInstruction: api().ai.styleInstruction(),
     });
+    if (formTarget) {
+      ai.plan.prompt += '\n\nLa persona pidió completar una ficha y quizá agregar familiares. Respondé únicamente JSON válido, sin markdown, con esta forma: {"aliases":[],"age":"","description":"","traits":[],"occupation":"","affiliation":"","certainty":{"age":"explicit","description":"inferred","occupation":"explicit","affiliation":"inferred"},"evidence":{"age":"código de fuente y referencia o vacío","description":"código de fuente y referencia o vacío","occupation":"código de fuente y referencia o vacío","affiliation":"código de fuente y referencia o vacío"},"relatives":[{"name":"","type":"Hermano/a de","direction":"out","certainty":"explicit","evidence":"código de fuente y referencia"}]}. En certainty usá solo los valores exactos explicit, inferred o unknown, según corresponda. Para direction usá solo out o in. Usá cadenas vacías y listas vacías si no hay respaldo. No inventes ni uses conocimiento general. Solo proponé familiares respaldados por las fuentes permitidas; la persona revisará las sugerencias antes de aplicarlas.';
+      ai.plan.systemInstruction += '\n\nPara esta solicitud devolvé solo el objeto JSON pedido, sin completar datos por conjetura.';
+    }
   } catch (err: any) {
     ai.status = 'error';
     ai.error = String(err?.message || err);
@@ -940,9 +994,9 @@ function paintAI() {
     return;
   }
   const relations = pairRelations(ai);
-  const targets = ai.status === 'done' ? saveTargetsFor(ai, relations.length > 0) : [];
+  const targets = ai.status === 'done' && !ai.formTarget ? saveTargetsFor(ai, relations.length > 0) : [];
   const answerHTML =
-    ai.status === 'done' && api().renderMarkdown
+    ai.status === 'done' && !ai.formTarget && api().renderMarkdown
       ? `<div class="chr-ai-answer chr-ai-answer--md" id="chrAiAnswer" tabindex="0">${api().renderMarkdown!(ai.text)}</div>`
       : `<div class="chr-ai-answer" id="chrAiAnswer" tabindex="0">${esc(ai.text)}</div>`;
   slot.innerHTML = `<section class="chr-ai" aria-labelledby="chrAiTitle">
@@ -959,6 +1013,7 @@ function paintAI() {
     }</p>
     ${ai.status === 'error' ? `<div class="chr-ai-error" role="alert">${esc(ai.error)} ${ai.keyError ? '<button type="button" class="ai-key-cta" data-chr="ai-key">Configurar mi API key</button>' : ''}</div>` : ''}
     ${ai.text || ai.status === 'running' ? answerHTML : ''}
+    ${ai.formTarget && ai.status === 'done' ? `<div class="chr-ai-save"><p class="muted">Revisá la respuesta. Marcá los familiares que quieras agregar; se crearán al guardar la ficha.</p><div id="chrSuggestedRelatives">${suggestedRelativesHTML(ai.text)}</div><button type="button" class="primary" data-chr="apply-autofill">Aplicar datos seleccionados</button></div>` : ''}
     ${
       ai.status === 'done' && ai.text.trim()
         ? `<p class="muted chr-ai-disclaimer">La IA puede equivocarse y no leyó el libro completo: revisá lo explícito y lo inferido antes de guardar.</p>
@@ -1004,6 +1059,15 @@ function syncAISaveForm() {
   const target = host?.querySelector<HTMLSelectElement>('#chrAiTarget');
   const wrap = host?.querySelector<HTMLElement>('#chrAiCertaintyWrap');
   if (target && wrap) wrap.classList.toggle('hidden', target.value !== 'field');
+}
+
+function suggestedRelativesHTML(text: string): string {
+  try {
+    const raw = text.replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '');
+    const relatives = JSON.parse(raw).relatives;
+    if (!Array.isArray(relatives) || !relatives.length) return '<p class="muted">La IA no encontró familiares con respaldo suficiente en el material consultado.</p>';
+    return relatives.filter((r: any) => typeof r.name === 'string' && r.name.trim()).slice(0, 20).map((r: any, i: number) => `<label class="chr-form-field"><span><input type="checkbox" data-relative-index="${i}" /> ${esc(r.name)} · ${esc(r.type || 'Familiar')} (${r.direction === 'in' ? 'el familiar → personaje' : 'personaje → familiar'})</span></label>`).join('');
+  } catch { return '<p class="muted">No se pudieron interpretar las propuestas de familiares.</p>'; }
 }
 
 async function submitAISave(form: HTMLFormElement) {
@@ -1088,6 +1152,7 @@ function bindEvents() {
   host.onchange = (event) => {
     const target = event.target as HTMLElement;
     if (target.id === 'chrAiTarget') syncAISaveForm();
+    if (target.id === 'chr_other') host!.querySelector<HTMLElement>('#chrNewRelativeWrap')?.classList.toggle('hidden', (target as HTMLSelectElement).value !== '__new__');
     if (target.id === 'chrNetFocus') {
       state.netFocus = (target as HTMLSelectElement).value;
       state.netExpanded = new Set();
@@ -1110,7 +1175,7 @@ async function handleAction(action: string, el: HTMLElement) {
   const current = characterById(state.selectedId);
   switch (action) {
     case 'new':
-      return go('character-form', { editingCharacterId: null });
+      return go('character-form', { editingCharacterId: null, pendingRelatives: [] });
     case 'open':
       return go('sheet', { selectedId: id });
     case 'back':
@@ -1127,7 +1192,7 @@ async function handleAction(action: string, el: HTMLElement) {
       }
       return paint();
     case 'edit':
-      return current ? go('character-form', { editingCharacterId: current.id }) : undefined;
+      return current ? go('character-form', { editingCharacterId: current.id, pendingRelatives: [] }) : undefined;
     case 'delete': {
       if (!current) return;
       const links = relationCount(current.id);
@@ -1188,6 +1253,48 @@ async function handleAction(action: string, el: HTMLElement) {
       if (scope === 'character') return startAI({ kind: 'character' });
       if (scope === 'field') return startAI({ kind: 'field', field: el.dataset.field as CharacterFieldKey | 'name' });
       if (scope === 'relation') return startAI({ kind: 'relation', otherId: el.dataset.other || '', relationId: el.dataset.rel });
+      return;
+    }
+    case 'autofill':
+      return startAI({ kind: 'character' }, true);
+    case 'apply-autofill': {
+      const ai = state.ai;
+      if (!ai?.formTarget) return;
+      try {
+        const raw = ai.text.replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '');
+        const suggestion = JSON.parse(raw);
+        state.pendingRelatives = (Array.isArray(suggestion.relatives) ? suggestion.relatives : []).slice(0, 20).flatMap((r: any, index: number) => {
+          const checked = host?.querySelector<HTMLInputElement>(`[data-relative-index="${index}"]`)?.checked;
+          if (!checked || typeof r.name !== 'string' || !r.name.trim()) return [];
+          return [{ name: r.name.trim(), type: typeof r.type === 'string' ? r.type : 'Familiar', direction: r.direction === 'in' ? 'in' as const : 'out' as const, certainty: r.certainty === 'explicit' || r.certainty === 'inferred' ? r.certainty : 'unknown' as Certainty, evidence: String(r.evidence ?? '') }];
+        });
+        const setValue = (name: string, value: unknown, transform = (x: any) => String(x ?? '')) => {
+          const field = host?.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[name="${name}"]`);
+          if (field && !field.value.trim()) field.value = transform(value);
+        };
+        setValue('aliases', suggestion.aliases, (x) => Array.isArray(x) ? x.join('\n') : '');
+        setValue('age', suggestion.age);
+        setValue('description', suggestion.description);
+        setValue('traits', suggestion.traits, (x) => Array.isArray(x) ? x.join(', ') : '');
+        setValue('occupation', suggestion.occupation);
+        setValue('affiliation', suggestion.affiliation);
+        for (const field of FIELD_KEYS) {
+          const cert = host?.querySelector<HTMLSelectElement>(`[name="cert_${field}"]`);
+          const value = suggestion.certainty?.[field];
+          if (cert && !cert.value && ['explicit', 'inferred'].includes(value)) cert.value = value;
+        }
+        const evidenceRows = host?.querySelector<HTMLElement>('#chrEvidenceRows');
+        const evidenceMap = suggestion.evidence && typeof suggestion.evidence === 'object' ? suggestion.evidence : {};
+        for (const field of FIELD_KEYS) {
+          const ref = String(evidenceMap[field] ?? '').trim();
+          if (ref && evidenceRows && evidenceRows.children.length < LIMITS.evidence) {
+            evidenceRows.insertAdjacentHTML('beforeend', evidenceRowHTML({ kind: 'other', ref: ref.slice(0, LIMITS.evidenceRef), text: `Respaldo sugerido para ${FIELD_LABELS[field]} (revisar)` }));
+          }
+        }
+        showFormErrors([], ['Se aplicaron solo los campos vacíos. Revisá los datos y sus fuentes antes de guardar.']);
+      } catch {
+        showFormErrors(['La respuesta de la IA no tiene el formato esperado. Volvé a consultar o copiá los datos manualmente.']);
+      }
       return;
     }
     case 'ask-pair': {

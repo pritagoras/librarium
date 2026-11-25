@@ -960,3 +960,6 @@ dialog[open]:not(.book-detail-dialog):not(.photo-viewer-dialog):not(#geminiDialo
   .chr-view-toggle{width:100%}
   .chr-view-toggle button{flex:1}
 }
+.book-page-actions{display:flex;align-items:stretch;gap:10px;flex-wrap:wrap;margin-top:14px}.book-page-actions .reading-progress-trigger{margin:0}.book-characters-trigger{align-self:stretch;min-width:140px;font-size:14px;font-weight:700}
+#chrSuggestedRelatives input[type="checkbox"]{width:auto;margin-right:7px}
+@media(max-width:620px){.book-page-actions{gap:7px}.book-page-actions .reading-progress-trigger,.book-characters-trigger{width:auto;min-height:50px;flex:1 1 135px;padding:9px 10px;font-size:12px}}
