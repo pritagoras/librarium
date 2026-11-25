@@ -69,6 +69,12 @@ let photoData: string | null = null;
 let quotePhotoData: string[] = [];
 let quoteOCRGeneration = 0;
 let isbnScannerStream: MediaStream | null = null;
+let cameraCaptureStream: MediaStream | null = null;
+let cameraFacingMode: 'environment' | 'user' = 'environment';
+let cameraCapturedBlob: Blob | null = null;
+let cameraShotUrl: string | null = null;
+let cameraOnCapture: ((file: File) => Promise<void> | void) | null = null;
+let cameraFallbackInput: HTMLInputElement | null = null;
 let installPromptEvent: any = null;
 let isAnalyzingBook = false;
 
@@ -693,6 +699,7 @@ function openBookForm(b: Book | null = null) {
   renderBookTagSuggestions();
 
   coverData = b?.cover || null;
+  updateCoverPreview(coverData ? 'Portada cargada.' : '');
   const autofillStatus = $('#aiAutofillStatus');
   if (autofillStatus) autofillStatus.textContent = '';
   $('#catalogPanel')?.classList.add('hidden');
@@ -856,6 +863,149 @@ function stopISBNScanner() {
   }
   if (video) video.srcObject = null;
   $('#isbnScanner')?.classList.add('hidden');
+}
+
+function prefersNativeMobileCamera(): boolean {
+  return (
+    window.matchMedia('(pointer: coarse)').matches ||
+    /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+  );
+}
+
+function revokeCameraShotUrl() {
+  if (cameraShotUrl) {
+    URL.revokeObjectURL(cameraShotUrl);
+    cameraShotUrl = null;
+  }
+}
+
+function stopCameraCapture() {
+  const video = $<HTMLVideoElement>('#cameraVideo');
+  const shotPreview = $<HTMLImageElement>('#cameraShotPreview');
+  video?.pause?.();
+  if (cameraCaptureStream) {
+    cameraCaptureStream.getTracks().forEach((track) => track.stop());
+    cameraCaptureStream = null;
+  }
+  if (video) video.srcObject = null;
+  if (shotPreview) {
+    shotPreview.classList.add('hidden');
+    shotPreview.removeAttribute('src');
+  }
+  revokeCameraShotUrl();
+  cameraCapturedBlob = null;
+}
+
+async function startCameraStream() {
+  const video = $<HTMLVideoElement>('#cameraVideo');
+  const shotPreview = $<HTMLImageElement>('#cameraShotPreview');
+  const status = $('#cameraCaptureStatus');
+  const snapBtn = $<HTMLButtonElement>('#cameraSnapBtn');
+  const retakeBtn = $<HTMLButtonElement>('#cameraRetakeBtn');
+  const useBtn = $<HTMLButtonElement>('#cameraUseBtn');
+  const flipBtn = $<HTMLButtonElement>('#cameraFlipBtn');
+  if (!video || !shotPreview || !status || !snapBtn || !retakeBtn || !useBtn) return;
+
+  stopCameraCapture();
+  video.classList.remove('hidden');
+  shotPreview.classList.add('hidden');
+  snapBtn.classList.remove('hidden');
+  snapBtn.disabled = true;
+  retakeBtn.classList.add('hidden');
+  useBtn.classList.add('hidden');
+  if (flipBtn) flipBtn.classList.add('hidden');
+  status.textContent = 'Abriendo cámara…';
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    status.textContent =
+      'Este navegador no permite abrir la cámara desde acá. Podés elegir una imagen desde tus archivos.';
+    return;
+  }
+
+  try {
+    cameraCaptureStream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: cameraFacingMode },
+        width: { ideal: 1600 },
+        height: { ideal: 1200 },
+      },
+      audio: false,
+    });
+    video.srcObject = cameraCaptureStream;
+    await video.play();
+    snapBtn.disabled = false;
+    status.textContent = 'Enfocá y tocá «Sacar foto».';
+    if (flipBtn && navigator.mediaDevices.enumerateDevices) {
+      const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+      const videoCount = devices.filter((d) => d.kind === 'videoinput').length;
+      flipBtn.classList.toggle('hidden', videoCount < 2);
+    }
+  } catch {
+    stopCameraCapture();
+    status.textContent =
+      'No se pudo acceder a la cámara. Verificá los permisos del navegador o elegí una imagen desde tus archivos.';
+  }
+}
+
+function openCameraCapture(options: {
+  title: string;
+  cameraInput: HTMLInputElement;
+  fallbackInput: HTMLInputElement;
+  onFile: (file: File) => Promise<void> | void;
+  canCapture?: () => boolean;
+}) {
+  if (options.canCapture && !options.canCapture()) return;
+  if (prefersNativeMobileCamera()) {
+    options.cameraInput.click();
+    return;
+  }
+  const dlg = $<HTMLDialogElement>('#cameraCaptureDialog');
+  if (!dlg) {
+    options.cameraInput.click();
+    return;
+  }
+  cameraOnCapture = options.onFile;
+  cameraFallbackInput = options.fallbackInput;
+  cameraFacingMode = 'environment';
+  $('#cameraCaptureTitle')!.textContent = options.title;
+  dlg.showModal();
+  void startCameraStream();
+}
+
+function updateCoverPreview(message = '') {
+  const wrap = $('#coverPreviewWrap');
+  const img = $<HTMLImageElement>('#coverPreviewImg');
+  const status = $('#coverStatus');
+  const urlVal = ($<HTMLInputElement>('#coverUrl')?.value || '').trim();
+  const src = coverData || (urlVal.startsWith('http') || urlVal.startsWith('data:image/') ? urlVal : '');
+  if (wrap && img) {
+    if (src) {
+      img.src = src;
+      wrap.classList.remove('hidden');
+    } else {
+      img.removeAttribute('src');
+      wrap.classList.add('hidden');
+    }
+  }
+  if (status) status.textContent = message;
+}
+
+function updateAnnotationPhotoPreview(message = '') {
+  const wrap = $('#annotationPhotoPreviewWrap');
+  const img = $<HTMLImageElement>('#annotationPhotoPreviewImg');
+  const status = $('#annotationPhotoStatus');
+  const emptyStatus = $('#annotationPhotoEmptyStatus');
+  if (wrap && img) {
+    if (photoData) {
+      img.src = photoData;
+      wrap.classList.remove('hidden');
+    } else {
+      img.removeAttribute('src');
+      wrap.classList.add('hidden');
+    }
+  }
+  if (status) status.textContent = photoData ? message : '';
+  if (emptyStatus) emptyStatus.textContent = photoData ? '' : message;
 }
 
 async function openDetail(id: string) {
@@ -1836,12 +1986,12 @@ function renderQuotePhotoPreview() {
     .join('');
 }
 
-function optimizeQuotePhoto(file: File): Promise<string> {
+function optimizeImagePhoto(file: File, maxSide = 1400, quality = 0.78): Promise<string> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const image = new Image();
     image.onload = () => {
-      const scale = Math.min(1, 1400 / Math.max(image.naturalWidth, image.naturalHeight));
+      const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
       const canvas = document.createElement('canvas');
       canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
       canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
@@ -1853,14 +2003,14 @@ function optimizeQuotePhoto(file: File): Promise<string> {
       }
       URL.revokeObjectURL(url);
       try {
-        resolve(canvas.toDataURL('image/jpeg', 0.78));
+        resolve(canvas.toDataURL('image/jpeg', quality));
       } catch (error) {
         reject(error);
       }
     };
     image.onerror = () => {
       URL.revokeObjectURL(url);
-      reject(Error('No se pudo leer una de las fotos.'));
+      reject(Error('No se pudo leer una de las imágenes.'));
     };
     image.src = url;
   });
@@ -2090,10 +2240,10 @@ function openAnnotation(bookId: string, entry: Entry | null = null) {
   ($<HTMLInputElement>('#annotationHeading')!).value = entry?.title || '';
   ($<HTMLTextAreaElement>('#annotationText')!).value = entry?.text || '';
   ($<HTMLTextAreaElement>('#annotationPersonalComment')!).value = entry?.comment || '';
-  $('#annotationPhotoStatus')!.textContent = entry?.photo
-    ? 'Ya hay una fotografía. Elegí otra solo si querés reemplazarla.'
-    : '';
   photoData = entry?.photo || null;
+  updateAnnotationPhotoPreview(
+    entry?.photo ? 'Ya hay una fotografía. Podés sacar o elegir otra para reemplazarla.' : '',
+  );
   $<HTMLDialogElement>('#annotationDialog')?.showModal();
 }
 
@@ -3847,9 +3997,47 @@ function wireEvents() {
     }
   };
 
-  $('#coverFile')?.addEventListener('change', async (e) => {
-    const file = (e.target as HTMLInputElement).files?.[0];
-    if (file) coverData = await fileData(file);
+  const handleCoverFile = async (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      updateCoverPreview('Elegí un archivo de imagen.');
+      return;
+    }
+    coverData = await optimizeImagePhoto(file, 1200, 0.8);
+    updateCoverPreview('Foto de portada optimizada y lista.');
+  };
+
+  $('#coverFileBtn')?.addEventListener('click', () => {
+    $<HTMLInputElement>('#coverFile')?.click();
+  });
+  $('#coverCameraBtn')?.addEventListener('click', () => {
+    openCameraCapture({
+      title: 'Foto de portada',
+      cameraInput: $<HTMLInputElement>('#coverCameraInput')!,
+      fallbackInput: $<HTMLInputElement>('#coverFile')!,
+      onFile: handleCoverFile,
+    });
+  });
+  $('#clearCoverBtn')?.addEventListener('click', () => {
+    coverData = null;
+    ($<HTMLInputElement>('#coverUrl')!).value = '';
+    ($<HTMLInputElement>('#coverFile')!).value = '';
+    ($<HTMLInputElement>('#coverCameraInput')!).value = '';
+    updateCoverPreview('');
+  });
+  $('#coverUrl')?.addEventListener('input', () => {
+    if (!coverData || !coverData.startsWith('data:')) {
+      coverData = null;
+      const hasUrl = Boolean(($<HTMLInputElement>('#coverUrl')!).value.trim());
+      updateCoverPreview(hasUrl ? 'Portada desde URL.' : '');
+    }
+  });
+  ['#coverFile', '#coverCameraInput'].forEach((selector) => {
+    $<HTMLInputElement>(selector)?.addEventListener('change', async (e) => {
+      const input = e.target as HTMLInputElement;
+      const file = input.files?.[0];
+      if (file) await handleCoverFile(file);
+      input.value = '';
+    });
   });
 
   $('#lookupIsbnBtn')!.onclick = () => lookupISBN($<HTMLInputElement>('#isbn')!.value);
@@ -4007,14 +4195,11 @@ function wireEvents() {
     await renderDetail();
   };
 
-  $('#quotePhotos')?.addEventListener('change', async (e) => {
-    const input = e.target as HTMLInputElement;
-    const files = Array.from(input.files || []);
+  const handleQuotePhotoFiles = async (files: File[]) => {
     if (!files.length) return;
     if (quotePhotoData.length + files.length > 5) {
       $('#quotePhotoStatus')!.textContent =
         'El máximo es 5 fotos por cita. Quitá alguna para agregar otras.';
-      input.value = '';
       return;
     }
     try {
@@ -4023,16 +4208,42 @@ function wireEvents() {
       }
       $('#quotePhotoStatus')!.textContent = 'Optimizando fotos…';
       const optimized: string[] = [];
-      for (const file of files) optimized.push(await optimizeQuotePhoto(file));
+      for (const file of files) optimized.push(await optimizeImagePhoto(file, 1400, 0.78));
       quotePhotoData.push(...optimized);
       renderQuotePhotoPreview();
       $('#quotePhotoStatus')!.textContent =
         `${quotePhotoData.length} de 5 fotos. Se guardarán optimizadas y sincronizadas.`;
     } catch (error: any) {
       $('#quotePhotoStatus')!.textContent = error.message;
-    } finally {
-      input.value = '';
     }
+  };
+
+  $('#quoteFileBtn')?.addEventListener('click', () => {
+    $<HTMLInputElement>('#quotePhotos')?.click();
+  });
+  $('#quoteCameraBtn')?.addEventListener('click', () => {
+    openCameraCapture({
+      title: 'Foto para la cita',
+      cameraInput: $<HTMLInputElement>('#quoteCameraInput')!,
+      fallbackInput: $<HTMLInputElement>('#quotePhotos')!,
+      canCapture: () => {
+        if (quotePhotoData.length >= 5) {
+          $('#quotePhotoStatus')!.textContent =
+            'El máximo es 5 fotos por cita. Quitá alguna para agregar otras.';
+          return false;
+        }
+        return true;
+      },
+      onFile: async (file) => handleQuotePhotoFiles([file]),
+    });
+  });
+  ['#quotePhotos', '#quoteCameraInput'].forEach((selector) => {
+    $<HTMLInputElement>(selector)?.addEventListener('change', async (e) => {
+      const input = e.target as HTMLInputElement;
+      const files = Array.from(input.files || []);
+      await handleQuotePhotoFiles(files);
+      input.value = '';
+    });
   });
 
   $('#quotePhotoPreview')!.onclick = async (e) => {
@@ -4204,13 +4415,108 @@ function wireEvents() {
     await renderDetail();
   };
 
-  $('#annotationPhoto')?.addEventListener('change', async (e) => {
-    const f = (e.target as HTMLInputElement).files?.[0];
-    if (f) {
-      photoData = await fileData(f);
-      $('#annotationPhotoStatus')!.textContent =
-        'Nueva fotografía seleccionada; reemplazará la anterior al guardar.';
+  const handleAnnotationPhotoFile = async (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      updateAnnotationPhotoPreview('Elegí un archivo de imagen.');
+      return;
     }
+    photoData = await optimizeImagePhoto(file, 1400, 0.8);
+    updateAnnotationPhotoPreview('Nueva fotografía optimizada y lista; reemplazará la anterior al guardar.');
+  };
+
+  $('#annotationFileBtn')?.addEventListener('click', () => {
+    $<HTMLInputElement>('#annotationPhoto')?.click();
+  });
+  $('#annotationCameraBtn')?.addEventListener('click', () => {
+    openCameraCapture({
+      title: 'Foto para la anotación',
+      cameraInput: $<HTMLInputElement>('#annotationCameraInput')!,
+      fallbackInput: $<HTMLInputElement>('#annotationPhoto')!,
+      onFile: handleAnnotationPhotoFile,
+    });
+  });
+  $('#clearAnnotationPhotoBtn')?.addEventListener('click', () => {
+    photoData = null;
+    ($<HTMLInputElement>('#annotationPhoto')!).value = '';
+    ($<HTMLInputElement>('#annotationCameraInput')!).value = '';
+    updateAnnotationPhotoPreview('Fotografía eliminada.');
+  });
+  ['#annotationPhoto', '#annotationCameraInput'].forEach((selector) => {
+    $<HTMLInputElement>(selector)?.addEventListener('change', async (e) => {
+      const input = e.target as HTMLInputElement;
+      const f = input.files?.[0];
+      if (f) await handleAnnotationPhotoFile(f);
+      input.value = '';
+    });
+  });
+
+  $('#cameraSnapBtn')?.addEventListener('click', () => {
+    const video = $<HTMLVideoElement>('#cameraVideo');
+    const shotPreview = $<HTMLImageElement>('#cameraShotPreview');
+    const status = $('#cameraCaptureStatus');
+    const snapBtn = $<HTMLButtonElement>('#cameraSnapBtn');
+    const retakeBtn = $<HTMLButtonElement>('#cameraRetakeBtn');
+    const useBtn = $<HTMLButtonElement>('#cameraUseBtn');
+    const flipBtn = $<HTMLButtonElement>('#cameraFlipBtn');
+    if (!video || !shotPreview || !video.videoWidth || !video.videoHeight) return;
+
+    const maxSide = 1800;
+    const scale = Math.min(1, maxSide / Math.max(video.videoWidth, video.videoHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) return;
+        stopCameraCapture();
+        cameraCapturedBlob = blob;
+        cameraShotUrl = URL.createObjectURL(blob);
+        shotPreview.src = cameraShotUrl;
+        shotPreview.classList.remove('hidden');
+        video.classList.add('hidden');
+        snapBtn?.classList.add('hidden');
+        flipBtn?.classList.add('hidden');
+        retakeBtn?.classList.remove('hidden');
+        useBtn?.classList.remove('hidden');
+        if (status) status.textContent = 'Revisá la foto o repetila antes de usarla.';
+      },
+      'image/jpeg',
+      0.9,
+    );
+  });
+
+  $('#cameraRetakeBtn')?.addEventListener('click', () => {
+    void startCameraStream();
+  });
+
+  $('#cameraFlipBtn')?.addEventListener('click', () => {
+    cameraFacingMode = cameraFacingMode === 'environment' ? 'user' : 'environment';
+    void startCameraStream();
+  });
+
+  $('#cameraUseBtn')?.addEventListener('click', async () => {
+    if (!cameraCapturedBlob) return;
+    const file = new File([cameraCapturedBlob], `foto-${Date.now()}.jpg`, {
+      type: 'image/jpeg',
+    });
+    const handler = cameraOnCapture;
+    $<HTMLDialogElement>('#cameraCaptureDialog')?.close();
+    if (handler) await handler(file);
+  });
+
+  $('#cameraFallbackFileBtn')?.addEventListener('click', () => {
+    const fallback = cameraFallbackInput;
+    $<HTMLDialogElement>('#cameraCaptureDialog')?.close();
+    fallback?.click();
+  });
+
+  $('#cameraCaptureDialog')?.addEventListener('close', () => {
+    stopCameraCapture();
+    cameraOnCapture = null;
+    cameraFallbackInput = null;
   });
 
   $('#annotationForm')!.onsubmit = async (e) => {

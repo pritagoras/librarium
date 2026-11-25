@@ -238,11 +238,24 @@
       <label class="wide">Reseña personal
         <textarea id="bookReviewInput" rows="3" maxlength="10000" placeholder="¿Qué te dejó este libro?"></textarea>
       </label>
-      <label class="wide">Portada
-        <input id="coverFile" type="file" accept="image/*">
+      <div class="wide photo-field">
+        <span class="field-label">Portada</span>
+        <div class="photo-input-actions">
+          <button type="button" id="coverCameraBtn" class="secondary photo-source-btn">📷 Sacar foto</button>
+          <button type="button" id="coverFileBtn" class="secondary photo-source-btn">🖼 Elegir archivo</button>
+        </div>
+        <input id="coverFile" type="file" accept="image/*" hidden>
+        <input id="coverCameraInput" type="file" accept="image/*" capture="environment" hidden>
+        <div id="coverPreviewWrap" class="photo-preview-inline hidden">
+          <img id="coverPreviewImg" class="photo-preview-thumb" alt="Vista previa de portada">
+          <div class="photo-preview-meta">
+            <small id="coverStatus" class="muted" aria-live="polite"></small>
+            <button type="button" id="clearCoverBtn" class="mini">Quitar portada</button>
+          </div>
+        </div>
         <small class="muted">También podés pegar una URL de portada.</small>
-        <input id="coverUrl" placeholder="https://…">
-      </label>
+        <input id="coverUrl" placeholder="https://…" aria-label="URL de portada">
+      </div>
     </div>
     <div class="dialog-actions">
       <button type="button" class="secondary" data-close>Cancelar</button>
@@ -341,7 +354,23 @@ Notas finales:
     <textarea id="annotationText" rows="5" placeholder="¿Qué querés conservar de esta página?"></textarea>
     <label for="annotationPersonalComment">Mi comentario sobre esta anotación o foto</label>
     <textarea id="annotationPersonalComment" rows="3" placeholder="Una idea propia, duda, desacuerdo o reflexión…"></textarea>
-    <label>Fotografía (opcional)<input id="annotationPhoto" type="file" accept="image/*"><small id="annotationPhotoStatus" class="muted"></small></label>
+    <div class="photo-field">
+      <span class="field-label">Fotografía (opcional)</span>
+      <div class="photo-input-actions">
+        <button type="button" id="annotationCameraBtn" class="secondary photo-source-btn">📷 Sacar foto</button>
+        <button type="button" id="annotationFileBtn" class="secondary photo-source-btn">🖼 Elegir archivo</button>
+      </div>
+      <input id="annotationPhoto" type="file" accept="image/*" hidden>
+      <input id="annotationCameraInput" type="file" accept="image/*" capture="environment" hidden>
+      <div id="annotationPhotoPreviewWrap" class="photo-preview-inline hidden">
+        <img id="annotationPhotoPreviewImg" class="photo-preview-thumb" alt="Vista previa de fotografía">
+        <div class="photo-preview-meta">
+          <small id="annotationPhotoStatus" class="muted" aria-live="polite"></small>
+          <button type="button" id="clearAnnotationPhotoBtn" class="mini">Quitar fotografía</button>
+        </div>
+      </div>
+      <small id="annotationPhotoEmptyStatus" class="muted" aria-live="polite"></small>
+    </div>
     <div class="dialog-actions">
       <button type="button" id="askAnnotationGemini" class="secondary"><svg class="ai-spark" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true" focusable="false"><path d="M10 3c.7 4.6 3.4 7.3 8 8-4.6.7-7.3 3.4-8 8-.7-4.6-3.4-7.3-8-8 4.6-.7 7.3-3.4 8-8z"/><path d="M19 1.5c.25 1.7 1.1 2.55 2.8 2.8-1.7.25-2.55 1.1-2.8 2.8-.25-1.7-1.1-2.55-2.8-2.8 1.7-.25 2.55-1.1 2.8-2.8z"/></svg>Guardar y debatir con IA</button>
       <button type="button" class="secondary" data-close>Cancelar</button>
@@ -389,7 +418,16 @@ Notas finales:
     </div>
     <label for="quoteAnalysis">Mi análisis o comentario</label>
     <textarea id="quoteAnalysis" rows="4" placeholder="¿Qué te llamó la atención? ¿Con qué lo relacionás?"></textarea>
-    <label>Fotos (opcional)<input id="quotePhotos" type="file" accept="image/*" multiple><small class="muted" id="quotePhotoStatus" role="status" aria-live="polite">Podés guardar hasta 5 fotos por cita. Se optimizan para ocupar menos espacio.</small></label>
+    <div class="photo-field">
+      <span class="field-label">Fotos (opcional)</span>
+      <div class="photo-input-actions">
+        <button type="button" id="quoteCameraBtn" class="secondary photo-source-btn">📷 Sacar foto</button>
+        <button type="button" id="quoteFileBtn" class="secondary photo-source-btn">🖼 Elegir archivo</button>
+      </div>
+      <input id="quotePhotos" type="file" accept="image/*" multiple hidden>
+      <input id="quoteCameraInput" type="file" accept="image/*" capture="environment" hidden>
+      <small class="muted" id="quotePhotoStatus" role="status" aria-live="polite">Podés guardar hasta 5 fotos por cita. Se optimizan para ocupar menos espacio.</small>
+    </div>
     <p class="quote-ocr-privacy">Podés extraer texto de una foto con Gemini. La transcripción queda acá para que la revises antes de guardar.</p>
     <div id="quotePhotoPreview" class="quote-photo-preview"></div>
     <div class="dialog-actions">
@@ -745,6 +783,30 @@ Notas finales:
     <p id="usersDirectoryStatus" class="muted" aria-live="polite"></p>
     <div id="usersDirectoryList" class="user-dir-list"></div>
   </section>
+</dialog>
+
+<dialog id="cameraCaptureDialog" class="camera-capture-dialog">
+  <div class="camera-capture-shell">
+    <div class="dialog-head">
+      <div>
+        <p class="eyebrow">CÁMARA</p>
+        <h2 id="cameraCaptureTitle">Sacar foto</h2>
+      </div>
+      <button type="button" class="close" data-close aria-label="Cerrar">×</button>
+    </div>
+    <div class="camera-stage">
+      <video id="cameraVideo" playsinline autoplay muted></video>
+      <img id="cameraShotPreview" class="hidden" alt="Foto capturada">
+    </div>
+    <p id="cameraCaptureStatus" class="muted" aria-live="polite"></p>
+    <div class="dialog-actions">
+      <button type="button" id="cameraFallbackFileBtn" class="secondary">Elegir archivo</button>
+      <button type="button" id="cameraFlipBtn" class="secondary hidden">Cambiar cámara</button>
+      <button type="button" id="cameraRetakeBtn" class="secondary hidden">Repetir</button>
+      <button type="button" id="cameraSnapBtn" class="primary">Sacar foto</button>
+      <button type="button" id="cameraUseBtn" class="primary hidden">Usar esta foto</button>
+    </div>
+  </div>
 </dialog>
 
 <input id="restoreFile" type="file" accept=".json,application/json" hidden>

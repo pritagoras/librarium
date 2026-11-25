@@ -732,3 +732,131 @@ dialog[open]:not(.book-detail-dialog):not(.photo-viewer-dialog):not(#geminiDialo
     max-width:108px;
   }
 }
+
+/* ===== Captura directa con cámara y selección de fotos (v41) ===== */
+.photo-field{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+.photo-field .field-label{
+  font-size:12px;
+  font-weight:600;
+  color:var(--brown);
+}
+.photo-input-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+}
+.photo-source-btn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:6px;
+  min-height:42px;
+  padding:8px 13px;
+  font-size:13px;
+}
+.photo-preview-inline{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding:9px 10px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:var(--white);
+}
+.photo-preview-thumb{
+  width:54px;
+  height:72px;
+  object-fit:cover;
+  border-radius:5px;
+  border:1px solid var(--line);
+  background:var(--paper2);
+  flex:none;
+}
+.photo-preview-meta{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
+  gap:5px;
+  min-width:0;
+  flex:1;
+}
+.photo-preview-meta small{
+  font-size:12px;
+  letter-spacing:0;
+  font-weight:400;
+}
+.photo-preview-meta .mini{
+  padding:4px 8px;
+  border:1px solid var(--line);
+  border-radius:6px;
+}
+:root[data-theme="dark"] .photo-preview-inline{
+  background:#292b28;
+}
+
+.camera-capture-dialog{
+  width:min(560px,calc(100% - 24px));
+}
+.camera-capture-shell{
+  padding:22px;
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+}
+.camera-stage{
+  position:relative;
+  width:100%;
+  aspect-ratio:4/3;
+  max-height:52dvh;
+  border-radius:10px;
+  overflow:hidden;
+  background:#181714;
+  border:1px solid var(--line);
+  display:grid;
+  place-items:center;
+}
+.camera-stage video,.camera-stage img{
+  width:100%;
+  height:100%;
+  object-fit:contain;
+  display:block;
+}
+#cameraCaptureStatus{
+  margin:0;
+  font-size:13px;
+}
+.camera-capture-shell .dialog-actions{
+  margin-top:4px;
+}
+
+@media(max-width:620px){
+  .photo-input-actions{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+  }
+  .photo-source-btn{
+    width:100%;
+    min-height:44px;
+    padding:8px 10px;
+  }
+  #cameraCaptureDialog{
+    position:fixed;
+    inset:auto 0 0;
+    margin:0 auto;
+    width:100%;
+    max-width:none;
+    max-height:calc(92dvh - env(safe-area-inset-top));
+    border-radius:18px 18px 0 0;
+    overscroll-behavior:contain;
+    scrollbar-gutter:auto;
+    padding-bottom:env(safe-area-inset-bottom);
+  }
+  .camera-capture-shell{
+    padding:20px 18px calc(22px + env(safe-area-inset-bottom));
+  }
+}
+
