@@ -1068,3 +1068,14 @@ dialog[open]:not(.book-detail-dialog):not(.photo-viewer-dialog):not(#geminiDialo
   .chr-review-fields{grid-template-columns:1fr}
   .chr-review-wide{grid-column:auto}
 }
+
+.chr-net-mobile-people{display:none}
+@media(max-width:700px){
+  .chr-net-mobile-people{display:grid;gap:7px}
+  .chr-net-mobile-people h4{margin:0;color:#e6e3d8;font-size:14px}
+  .chr-net-mobile-people>div{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+  .chr-net-mobile-people button{display:flex;justify-content:space-between;align-items:center;gap:6px;min-width:0;padding:8px 9px;border:1px solid #59645a;border-radius:9px;background:#303832;color:#eee9df;text-align:left}
+  .chr-net-mobile-people button.active{border-color:#cdb783;background:#41483e}
+  .chr-net-mobile-people button strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+  .chr-net-mobile-people button span{flex:0 0 auto;color:#c4c9bd;font-size:10px}
+}
