@@ -1789,7 +1789,24 @@ async function submitFullSheet(form: HTMLFormElement) {
     if (fieldChanges) await api().saveCharacter(updated);
     let fresh = (pending.length || selectedRelatives.length) ? await api().loadBookData(state.bookId) : null;
     let relations = fresh ? fresh.relations.filter((r) => r.bookId === state.bookId) : [];
-    const relativeFailures: string[] = [];\n    for (const relative of selectedRelatives) {\n      try {\n        let other = fresh!.characters.find((c) => c.bookId === state.bookId && c.name.trim().toLocaleLowerCase() === relative.name.toLocaleLowerCase());\n        if (!other) {\n          const now = new Date().toISOString();\n          other = await api().saveCharacter({ id: crypto.randomUUID(), bookId: state.bookId, name: relative.name, aliases: [], age: formValue(form, `rel_age_${relative.i}`).trim().slice(0, LIMITS.age), description: formValue(form, `rel_description_${relative.i}`).trim().slice(0, LIMITS.description), traits: [], occupation: formValue(form, `rel_occupation_${relative.i}`).trim().slice(0, LIMITS.occupation), affiliation: '', comments: '', evidence: [], certainty: {}, createdAt: now, updatedAt: now });\n          fresh!.characters.push(other);\n        }\n        const input = { fromId: relative.direction === 'out' ? character.id : other.id, toId: relative.direction === 'out' ? other.id : character.id, type: relative.type, description: 'Parentesco sugerido por la IA', certainty: 'inferred' as Certainty };\n        const validation = validateRelation(input, { bookId: state.bookId, characters: fresh!.characters.filter((c) => c.bookId === state.bookId), relations });\n        if (!validation.ok || !validation.value) { if (validation.errors.some((e) => !/duplicad|existe/i.test(e))) throw Error(validation.errors.join(' ')); else continue; }\n        const basis = formValue(form, `rel_basis_${relative.i}`).trim();\n        const record: CharacterRelation = { ...validation.value.record, evidence: basis ? [{ kind: 'other', ref: 'Consulta a la IA', text: basis.slice(0, LIMITS.evidenceText) }] : [] };\n        await api().saveRelation(record);\n        relations = [...relations, record];\n      } catch (err: any) { relativeFailures.push(`${relative.name}: ${String(err?.message || err)}`); }\n    }
+    const relativeFailures: string[] = [];
+    for (const relative of selectedRelatives) {
+      try {
+        let other = fresh!.characters.find((c) => c.bookId === state.bookId && c.name.trim().toLocaleLowerCase() === relative.name.toLocaleLowerCase());
+        if (!other) {
+          const now = new Date().toISOString();
+          other = await api().saveCharacter({ id: crypto.randomUUID(), bookId: state.bookId, name: relative.name, aliases: [], age: formValue(form, `rel_age_${relative.i}`).trim().slice(0, LIMITS.age), description: formValue(form, `rel_description_${relative.i}`).trim().slice(0, LIMITS.description), traits: [], occupation: formValue(form, `rel_occupation_${relative.i}`).trim().slice(0, LIMITS.occupation), affiliation: '', comments: '', evidence: [], certainty: {}, createdAt: now, updatedAt: now });
+          fresh!.characters.push(other);
+        }
+        const input = { fromId: relative.direction === 'out' ? character.id : other.id, toId: relative.direction === 'out' ? other.id : character.id, type: relative.type, description: 'Parentesco sugerido por la IA', certainty: 'inferred' as Certainty };
+        const validation = validateRelation(input, { bookId: state.bookId, characters: fresh!.characters.filter((c) => c.bookId === state.bookId), relations });
+        if (!validation.ok || !validation.value) { if (validation.errors.some((e) => !/duplicad|existe/i.test(e))) throw Error(validation.errors.join(' ')); else continue; }
+        const basis = formValue(form, `rel_basis_${relative.i}`).trim();
+        const record: CharacterRelation = { ...validation.value.record, evidence: basis ? [{ kind: 'other', ref: 'Consulta a la IA', text: basis.slice(0, LIMITS.evidenceText) }] : [] };
+        await api().saveRelation(record);
+        relations = [...relations, record];
+      } catch (err: any) { relativeFailures.push(`${relative.name}: ${String(err?.message || err)}`); }
+    }
     const failures: string[] = [];
     for (const { i } of pending) {
       try {
