@@ -570,8 +570,8 @@ function networkAnalysisPrompt(): string {
     `NOTAS CON PÁGINA HASTA EL AVANCE:\n${notes.join('\n') || 'Ninguna.'}`,
     `ANOTACIONES CON PÁGINA HASTA EL AVANCE:\n${entries.join('\n') || 'Ninguna.'}`,
     `CITAS CON PÁGINA HASTA EL AVANCE:\n${quotes.join('\n') || 'Ninguna.'}`,
-    `Podés proponer relaciones basadas en el conocimiento general de la obra o en la búsqueda web, y solo si el vínculo es introductorio o ya está establecido hasta la página ${page} (parentescos, roles o alianzas que se saben desde el comienzo); si podría ser un spoiler, mandalo a manualFindings sin revelar el detalle. No propongas crear fichas nuevas. ` + 'Si encontrás un nombre propio posiblemente referido a un personaje sin ficha, agregalo a manualFindings con category missing_character y explica la mención; no inventes un ID. Para nuevas relaciones, comprobá que no estén ya registradas, citá códigos [N], [E], [Q] concretos y poné certainty explicit solo si el fragmento lo afirma directamente; si es interpretación, inferred. Para correcciones, indicá relationId exacto y el cambio de extremos/tipo/dirección. Si no hay evidencia suficiente, enviá el caso a manualFindings y no inventes.',
-    'Respondé únicamente JSON válido, sin Markdown: {"proposals":[{"action":"add_relation|correct_relation","relationId":"ID existente solo para correcciones","fromId":"ID exacto","toId":"ID exacto","type":"tipo de vínculo","description":"descripción breve","certainty":"explicit|inferred|unknown","confidence":"high|medium|low","reason":"justificación","evidence":"cita breve o códigos del cuaderno","sourceUrl":"URL externa opcional"}],"manualFindings":[{"category":"duplicado|inconsistencia|aislado|missing_character|revisión manual","characterIds":["IDs existentes"],"reason":"qué revisar","evidence":"respaldo concreto","sourceUrl":"URL opcional"}]}. Límite: 40 propuestas y 40 hallazgos. No pidas que se guarde nada: la persona revisará y confirmará cada cambio.',
+    `Podés proponer relaciones basadas en el conocimiento general de la obra o en la búsqueda web, y solo si el vínculo es introductorio o ya está establecido hasta la página ${page} (parentescos, roles o alianzas que se saben desde el comienzo); si podría ser un spoiler, mandalo a manualFindings sin revelar el detalle. Si detectás un personaje mencionado que todavía no tiene ficha, agregalo a manualFindings con category missing_character, name con el nombre exacto conocido y characterIds con el ID del personaje registrado al que se vincula la mención (si se puede determinar). Explicá brevemente dónde aparece y citá [N], [E] o [Q]. No inventes nombres, IDs ni relaciones. ` + 'Si encontrás un nombre propio posiblemente referido a un personaje sin ficha, agregalo a manualFindings con category missing_character y explica la mención; no inventes un ID. Para nuevas relaciones, comprobá que no estén ya registradas, citá códigos [N], [E], [Q] concretos y poné certainty explicit solo si el fragmento lo afirma directamente; si es interpretación, inferred. Para correcciones, indicá relationId exacto y el cambio de extremos/tipo/dirección. Si no hay evidencia suficiente, enviá el caso a manualFindings y no inventes.',
+    'Respondé únicamente JSON válido, sin Markdown: {"proposals":[{"action":"add_relation|correct_relation","relationId":"ID existente solo para correcciones","fromId":"ID exacto","toId":"ID exacto","type":"tipo de vínculo","description":"descripción breve","certainty":"explicit|inferred|unknown","confidence":"high|medium|low","reason":"justificación","evidence":"cita breve o códigos del cuaderno","sourceUrl":"URL externa opcional"}],"manualFindings":[{"category":"duplicado|inconsistencia|aislado|missing_character|revisión manual","name":"nombre exacto solo para missing_character","characterIds":["IDs existentes relacionados"],"reason":"qué revisar y por qué aparece hasta la página actual","evidence":"respaldo concreto","sourceUrl":"URL opcional"}]}. Límite: 40 propuestas y 40 hallazgos. No pidas que se guarde nada: la persona revisará y confirmará cada cambio.',
   ].join('\n\n');
 }
 
@@ -581,7 +581,7 @@ function networkReviewHTML(): string {
   if (review.status === 'idle') return '';
   if (review.status === 'prompt') return `<section class="chr-research chr-network-review"><h3>Analizar y mejorar mi red</h3><p>Este prompt incluye los IDs, fichas, vínculos y material con página conocida hasta la página ${Math.max(0, Number(book?.currentPage) || 0)}. Se lo enviarás manualmente a Gemini Plus; Librarium no consulta la API ni guarda cambios durante el análisis.</p><label for="chrNetworkPrompt">Prompt para Gemini</label><textarea id="chrNetworkPrompt" readonly rows="16">${esc(review.prompt)}</textarea><div class="chr-row-actions"><button type="button" class="secondary" data-chr="copy-network-prompt">Copiar prompt</button><a class="secondary" href="https://gemini.google.com/app" target="_blank" rel="noopener noreferrer">Abrir Gemini</a><button type="button" class="secondary" data-chr="cancel-network-review">Cancelar</button></div><p class="muted chr-review-copy-status" role="status"></p><label for="chrNetworkResponse">Pegá la respuesta JSON de Gemini</label><textarea id="chrNetworkResponse" rows="10" placeholder="Pegá aquí el análisis completo…">${esc(review.responseText)}</textarea>${review.error ? `<p class="chr-ai-error" role="alert">${esc(review.error)}</p>` : ''}<button type="button" class="primary" data-chr="parse-network-review">Revisar propuestas</button><p class="muted">Los enlaces y citas pegados provienen de Gemini y requieren revisión. Ningún cambio se guarda automáticamente.</p></section>`;
   const cards = review.proposals.map((proposal, index) => networkProposalHTML(proposal, index)).join('');
-  const findings = review.manualFindings.map((finding) => `<article class="chr-review-finding"><strong>${esc(finding.category)}</strong><span>${finding.characterIds.map((id) => characterById(id)?.name || `ID no encontrado: ${id}`).map(esc).join(', ')}</span><p>${esc(finding.reason)}</p>${finding.evidence ? `<blockquote>${esc(finding.evidence)}</blockquote>` : ''}${/^https?:\/\//i.test(finding.sourceUrl) ? `<a href="${esc(finding.sourceUrl)}" target="_blank" rel="noopener noreferrer">Abrir fuente citada</a>` : ''}</article>`).join('');
+  const findings = review.manualFindings.map((finding, index) => `<article class="chr-review-finding"><strong>${esc(finding.category)}</strong>${finding.name ? `<h4>${esc(finding.name)}</h4>` : ''}<span>${finding.characterIds.map((id) => characterById(id)?.name || `ID no encontrado: ${id}`).map(esc).join(', ')}</span><p>${esc(finding.reason)}</p>${finding.evidence ? `<blockquote>${esc(finding.evidence)}</blockquote>` : ''}${/^https?:\/\//i.test(finding.sourceUrl) ? `<a href="${esc(finding.sourceUrl)}" target="_blank" rel="noopener noreferrer">Abrir fuente citada</a>` : ''}${finding.category === 'missing_character' && finding.name ? `<div class="chr-row-actions"><button type="button" class="primary" data-chr="create-missing-character" data-index="${index}">＋ Crear ficha y ubicar en la red</button></div>` : ''}</article>`).join('');
   return `<section class="chr-research chr-network-review"><div class="chr-review-heading"><div><h3>Revisión de propuestas</h3><p>${review.proposals.length} cambios propuestos · ${review.manualFindings.length} casos para revisar manualmente</p>${autoNote ? `<p class="muted">${esc(autoNote)}</p>` : ''}</div><button type="button" class="secondary" data-chr="new-network-analysis">Nuevo análisis</button></div>${review.error ? `<p class="chr-ai-error" role="alert">${esc(review.error)}</p>` : ''}${review.proposals.length ? `<h4>Relaciones nuevas y correcciones</h4><div class="chr-review-cards">${cards}</div><div class="chr-form-actions"><button type="button" class="primary" data-chr="apply-network-selected">Aplicar aceptadas seleccionadas</button><button type="button" class="secondary" data-chr="apply-network-accepted">Aplicar todas las aceptadas</button><button type="button" class="secondary" data-chr="discard-network-selected">Descartar seleccionadas</button></div>` : '<p class="muted">No hay cambios de relación propuestos.</p>'}${findings ? `<h4>Casos para revisión manual</h4><div class="chr-review-cards">${findings}</div>` : ''}<p class="muted">Aceptar una propuesta solo la marca para revisión. El guardado requiere una acción aparte y una confirmación final.</p></section>`;
 }
 
@@ -672,6 +672,22 @@ function startNetworkAnalysis() {
   host?.querySelector<HTMLElement>('.chr-network-review')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
+async function createMissingNetworkCharacter(index: number) {
+  const finding = state.networkReview.manualFindings[index];
+  const name = finding?.name?.trim();
+  if (!finding || finding.category !== 'missing_character' || !name) return;
+  const existing = data.characters.find((c) => c.bookId === state.bookId && [c.name, ...c.aliases].some((value) => value.trim().toLocaleLowerCase() === name.toLocaleLowerCase()));
+  if (existing) {
+    state.netSelected = existing.id; state.netFocus = existing.id;
+    return go('index', { view: 'network', selectedId: existing.id, notice: '«' + existing.name + '» ya tenía ficha; la seleccioné en la red para que puedas conectarlo.' });
+  }
+  const now = new Date().toISOString();
+  const evidence: EvidenceRef[] = finding.evidence ? [{ kind: 'other', ref: 'Análisis de red · revisar', text: finding.evidence.slice(0, LIMITS.evidenceText) }] : [];
+  const character = await api().saveCharacter({ id: crypto.randomUUID(), bookId: state.bookId, name, aliases: [], age: '', description: '', traits: [], occupation: '', affiliation: '', comments: finding.reason.slice(0, LIMITS.comments), evidence, certainty: {}, createdAt: now, updatedAt: now });
+  await reload();
+  state.netSelected = character.id; state.netFocus = character.id;
+  go('index', { view: 'network', selectedId: character.id, notice: 'Se creó la ficha de «' + character.name + '» y quedó seleccionada en la red. Desde su panel podés agregar el vínculo y ubicarlo con los demás.' });
+}
 async function copyNetworkPrompt() {
   const prompt = state.networkReview.prompt;
   const textarea = host?.querySelector<HTMLTextAreaElement>('#chrNetworkPrompt');
@@ -742,7 +758,7 @@ function buildNetworkReview(responseText: string): { proposals: NetworkProposal[
   const knownIds = new Set(data.characters.filter((c) => c.bookId === state.bookId).map((c) => c.id));
   for (const raw of (Array.isArray(parsed.manualFindings) ? parsed.manualFindings : []).slice(0, 40)) {
     const ids = Array.isArray(raw.characterIds) ? raw.characterIds.map(String).filter((id: string) => knownIds.has(id)) : [];
-    manualFindings.push({ category: String(raw.category || 'Revisión manual').slice(0, 80), characterIds: ids, reason: String(raw.reason || '').slice(0, 1200), evidence: String(raw.evidence || '').slice(0, LIMITS.evidenceText), sourceUrl: /^https?:\/\//i.test(String(raw.sourceUrl || '')) ? String(raw.sourceUrl).slice(0, LIMITS.evidenceText) : '' });
+    manualFindings.push({ category: String(raw.category || 'Revisión manual').slice(0, 80), characterIds: ids, ...(typeof raw.name === 'string' && raw.name.trim() ? { name: raw.name.trim().slice(0, LIMITS.name) } : {}), reason: String(raw.reason || '').slice(0, 1200), evidence: String(raw.evidence || '').slice(0, LIMITS.evidenceText), sourceUrl: /^https?:\/\//i.test(String(raw.sourceUrl || '')) ? String(raw.sourceUrl).slice(0, LIMITS.evidenceText) : '' });
   }
   return { proposals, manualFindings };
 }
@@ -2295,6 +2311,8 @@ async function handleAction(action: string, el: HTMLElement) {
       return startNetworkAnalysis();
     case 'copy-network-prompt':
       return copyNetworkPrompt();
+    case 'create-missing-character':
+      return createMissingNetworkCharacter(Number(el.dataset.index));
     case 'parse-network-review':
       return parseNetworkReview();
     case 'cancel-network-review':
