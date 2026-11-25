@@ -748,7 +748,7 @@ export function buildCharacterAIRequest(input: AIContextInput): AIRequestPlan {
 
   // Las consultas puntuales se resuelven desde el conocimiento general del modelo:
   // no mezclamos notas, citas, fuentes ni estados de certeza del cuaderno.
-  if (scope.kind === 'field') {
+  if (scope.kind === 'field' && scope.field !== 'name') {
     const fieldLabel = FIELD_LABELS[scope.field];
     const systemInstruction = [
       'Sos un asistente de investigación literaria que ayuda a completar fichas de personajes.',
