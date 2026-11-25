@@ -290,14 +290,8 @@ export function validateCharacter(
     occupation: clean(input.occupation, LIMITS.occupation),
     affiliation: clean(input.affiliation, LIMITS.affiliation),
   };
-  // Un dato cargado exige decir de dónde sale: explícito en el libro o inferido. Nada se completa solo.
-  for (const key of FIELD_KEYS) {
-    if (!values[key]) continue;
-    const certainty = input.certainty?.[key];
-    if (certainty !== 'explicit' && certainty !== 'inferred') {
-      errors.push(`Indicá si «${FIELD_LABELS[key].toLowerCase()}» es explícito en el libro o inferido.`);
-    }
-  }
+  // La certeza es opcional: un dato puede guardarse como desconocido/no clasificado.
+  // Las referencias y evidencias se conservan aunque no se indique si es explícito o inferido.
 
   const sameBook = ctx.existing.filter((c) => c.bookId === ctx.bookId && c.id !== ctx.editingId);
   const nameKey = normalizeText(name);
