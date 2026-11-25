@@ -1731,10 +1731,9 @@ function sheetRelationRows(character: Character, parsed: any): string {
 
 function fullSheetFormHTML(character: Character, parsed: any): string {
   const row = (key: string, label: string, aiValue: string, current: string, long: boolean, certainty?: Certainty) => {
-    const value = aiValue || current;
-    const checked = aiValue && aiValue !== current ? 'checked' : '';
+    const value = current || aiValue;
+    const checked = aiValue && !current ? 'checked' : '';
     return `<div class="chr-form-field chr-fs-row"><label class="chr-fs-check"><input type="checkbox" name="fs_apply_${key}" ${checked}/> <strong>${esc(label)}</strong></label>
-      ${current && current !== aiValue ? `<p class="muted">Ahora en la ficha: ${esc(current)}</p>` : ''}
       ${long ? `<textarea name="fs_${key}" rows="4">${esc(value)}</textarea>` : `<input name="fs_${key}" value="${esc(value)}" />`}
       </div>`;
   };
