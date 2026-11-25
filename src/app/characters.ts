@@ -1776,8 +1776,7 @@ async function submitFullSheet(form: HTMLFormElement) {
   for (const { i } of pending) changes.push(`Vínculo: ${formValue(form, `fr_type_${i}`)} con ${characterById(formValue(form, `fr_other_${i}`))?.name || '?'}`);
   if (!changes.length) return fail('No hay datos marcados para aplicar.');
   try {
-    const ok = await api().confirm({ eyebrow: 'APLICAR DATOS DE LA IA', title: '¿Aplicar a la ficha?', message: `Se modificará la ficha de ${character.name}:\n\n${changes.join('\n')}`, confirmLabel: 'Aplicar' });
-    if (!ok) return;
+
     if (fieldChanges) await api().saveCharacter(updated);
     const fresh = pending.length ? await api().loadBookData(state.bookId) : null;
     let relations = fresh ? fresh.relations.filter((r) => r.bookId === state.bookId) : [];
