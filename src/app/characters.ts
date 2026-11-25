@@ -1384,13 +1384,23 @@ async function submitRelationForm(form: HTMLFormElement) {
   if (otherId === '__new__') {
     const name = formValue(form, 'newRelative').trim();
     if (!name) return showFormErrors(['Escribí el nombre del nuevo personaje.']);
-    const characterResult = validateCharacter({ name }, { bookId: state.bookId, existing: data.characters });
-    if (!characterResult.ok || !characterResult.value) return showFormErrors(characterResult.errors);
-    try {
-      createdRelative = await api().saveCharacter(characterResult.value);
-      otherId = createdRelative.id;
-    } catch (err: any) {
-      return showFormErrors([`No se pudo crear el familiar: ${err?.message || err}`]);
+    const normalizedName = name.normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLocaleLowerCase();
+    const existingCharacter = data.characters.find((character) =>
+      [character.name, ...character.aliases].some((candidate) =>
+        candidate.normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLocaleLowerCase() === normalizedName,
+      ),
+    );
+    if (existingCharacter) {
+      otherId = existingCharacter.id;
+    } else {
+      const characterResult = validateCharacter({ name }, { bookId: state.bookId, existing: data.characters });
+      if (!characterResult.ok || !characterResult.value) return showFormErrors(characterResult.errors);
+      try {
+        createdRelative = await api().saveCharacter(characterResult.value);
+        otherId = createdRelative.id;
+      } catch (err: any) {
+        return showFormErrors([`No se pudo crear el personaje: ${err?.message || err}`]);
+      }
     }
   }
   const outgoing = formValue(form, 'direction') !== 'in';
