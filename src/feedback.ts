@@ -25,7 +25,7 @@ import type {
 } from './types';
 
 export const FEEDBACK_ADMIN_EMAIL = '[redacted]';
-const APP_CLIENT_VERSION = 'v40';
+const APP_CLIENT_VERSION = 'v42';
 
 export function isFeedbackAdmin(user: User | null | undefined): boolean {
   return Boolean(
