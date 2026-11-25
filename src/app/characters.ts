@@ -26,7 +26,7 @@ import {
   applyAnswerToCharacter,
   applyAnswerToRelation,
   buildCharacterAIRequest,
-  buildEgoGraph,
+  isDirectedType,
   neighborsOf,
   removeCharacterCascade,
   searchCharacters,
@@ -36,7 +36,6 @@ import {
   type AIRequestPlan,
   type AIScope,
   type CharacterInput,
-  type EgoGraph,
   type SaveTarget,
 } from './characters-model';
 
@@ -118,11 +117,12 @@ interface State {
   editingCharacterId: string | null;
   relationDraft: { fromId: string; editingId: string | null } | null;
   netFocus: string | null;
-  netExpanded: Set<string>;
   netSelected: string | null;
+  netIsolatedOnly: boolean;
   notice: string;
   ai: AIState | null;
   pendingRelatives: Array<{ name: string; type: string; direction: 'out' | 'in'; certainty: Certainty; evidence: string }>;
+  characterSearch: { status: 'idle' | 'searching' | 'results' | 'error' | 'investigating' | 'ready'; name: string; candidates: Array<{ name: string; aliases: string[]; description: string; confidence: string }>; sources: Array<{ title: string; url: string }>; error: string; suggestion: any | null; controller: AbortController | null };
 }
 
 const emptyState = (bookId = ''): State => ({
@@ -134,11 +134,12 @@ const emptyState = (bookId = ''): State => ({
   editingCharacterId: null,
   relationDraft: null,
   netFocus: null,
-  netExpanded: new Set(),
   netSelected: null,
+  netIsolatedOnly: false,
   notice: '',
   ai: null,
   pendingRelatives: [],
+  characterSearch: { status: 'idle', name: '', candidates: [], sources: [], error: '', suggestion: null, controller: null },
 });
 
 let state: State = emptyState();
@@ -201,6 +202,7 @@ function characterById(id: string | null | undefined): Character | undefined {
 
 function go(mode: Mode, patch: Partial<State> = {}) {
   abortAI();
+  state.characterSearch.controller?.abort();
   state = { ...state, ai: null, notice: '', ...patch, mode };
   paint(true);
 }
@@ -313,7 +315,7 @@ function evidenceListHTML(items: EvidenceRef[]): string {
   if (!items.length) return '';
   return `<ul class="chr-evidence">${items
     .map(
-      (ev) => `<li><strong>${esc(EVIDENCE_LABELS[ev.kind])}</strong>${ev.ref ? ` · ${esc(ev.ref)}` : ''}${ev.text ? `<br><span class="chr-quote">${esc(ev.text)}</span>` : ''}</li>`,
+      (ev) => `<li><strong>${esc(EVIDENCE_LABELS[ev.kind])}</strong>${ev.ref ? ` · ${/^https?:\/\//i.test(ev.ref) ? `<a href="${esc(ev.ref)}" target="_blank" rel="noopener noreferrer">${esc(ev.ref)}</a>` : esc(ev.ref)}` : ''}${ev.text ? `<br><span class="chr-quote">${/^https?:\/\//i.test(ev.text) ? `<a href="${esc(ev.text)}" target="_blank" rel="noopener noreferrer">${esc(ev.text)}</a>` : esc(ev.text)}</span>` : ''}</li>`,
     )
     .join('')}</ul>`;
 }
@@ -409,118 +411,103 @@ function mostConnected(): string | null {
   return best?.id ?? null;
 }
 
-function layoutGraph(graph: EgoGraph, focusId: string) {
-  const r1 = 130;
-  const gap = 95;
-  const maxDepth = Math.max(...graph.nodes.map((n) => n.depth), 1);
-  const size = 2 * (r1 + (maxDepth - 1) * gap + 60);
-  const c = size / 2;
-  const pos = new Map<string, { x: number; y: number; angle: number }>();
-  pos.set(focusId, { x: c, y: c, angle: 0 });
-  const depthOf = new Map(graph.nodes.map((n) => [n.id, n.depth]));
-  const first = graph.nodes.filter((n) => n.depth === 1);
-  first.forEach((n, i) => {
-    const angle = -Math.PI / 2 + (2 * Math.PI * i) / Math.max(first.length, 1);
-    pos.set(n.id, { x: c + r1 * Math.cos(angle), y: c + r1 * Math.sin(angle), angle });
-  });
-  for (let depth = 2; depth <= maxDepth; depth++) {
-    const byParent = new Map<string, string[]>();
-    for (const n of graph.nodes.filter((x) => x.depth === depth)) {
-      const edge = graph.edges.find((e) => {
-        const other = e.from === n.id ? e.to : e.to === n.id ? e.from : null;
-        return other !== null && (depthOf.get(other) ?? 99) < depth && pos.has(other);
-      });
-      const parent = edge ? (edge.from === n.id ? edge.to : edge.from) : focusId;
-      byParent.set(parent, [...(byParent.get(parent) ?? []), n.id]);
+function layoutGlobalGraph() {
+  const nodes = data.characters;
+  const n = nodes.length;
+  const size = Math.max(760, Math.ceil(150 * Math.sqrt(n)));
+  const center = size / 2;
+  const radius = Math.max(150, size * 0.38);
+  const positions = new Map(nodes.map((c, i) => {
+    const angle = (2 * Math.PI * i) / Math.max(n, 1) - Math.PI / 2;
+    return [c.id, { x: center + radius * Math.cos(angle), y: center + radius * Math.sin(angle), vx: 0, vy: 0 }];
+  }));
+  const edgeLength = Math.max(90, Math.min(170, size / Math.sqrt(Math.max(n, 1))));
+  const iterations = Math.max(8, Math.min(100, Math.floor(250000 / Math.max(n * n, 1))));
+  for (let step = 0; step < iterations; step++) {
+    const list = nodes.map((c) => positions.get(c.id)!);
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      const a = list[i], b = list[j];
+      const dx = a.x - b.x, dy = a.y - b.y;
+      const d2 = Math.max(25, dx * dx + dy * dy), d = Math.sqrt(d2);
+      const force = Math.min(2.5, (size * size) / (d2 * Math.max(n, 1)) * 0.018);
+      a.vx += (dx / d) * force; a.vy += (dy / d) * force;
+      b.vx -= (dx / d) * force; b.vy -= (dy / d) * force;
     }
-    for (const [parent, children] of byParent) {
-      const base = pos.get(parent)?.angle ?? 0;
-      const spread = Math.min(0.55, 1.4 / children.length);
-      children.forEach((id, i) => {
-        const angle = base + (i - (children.length - 1) / 2) * spread;
-        const radius = r1 + (depth - 1) * gap;
-        pos.set(id, { x: c + radius * Math.cos(angle), y: c + radius * Math.sin(angle), angle });
-      });
+    for (const relation of data.relations) {
+      const a = positions.get(relation.fromId), b = positions.get(relation.toId);
+      if (!a || !b) continue;
+      const dx = b.x - a.x, dy = b.y - a.y, d = Math.max(1, Math.hypot(dx, dy));
+      const force = (d - edgeLength) * 0.002;
+      a.vx += dx / d * force; a.vy += dy / d * force; b.vx -= dx / d * force; b.vy -= dy / d * force;
+    }
+    for (const p of list) {
+      p.vx += (center - p.x) * 0.0007; p.vy += (center - p.y) * 0.0007;
+      p.x += Math.max(-8, Math.min(8, p.vx)); p.y += Math.max(-8, Math.min(8, p.vy));
+      p.vx *= 0.82; p.vy *= 0.82;
     }
   }
-  return { pos, size };
+  return { positions, size };
+}
+
+function relationColor(type: string): string {
+  const key = type.toLocaleLowerCase();
+  if (/famili|madre|padre|hijo|herman|abuelo|nieto|tio|sobrino|primo/.test(key)) return '#fb923c';
+  if (/amistad/.test(key)) return '#34d399';
+  if (/alianza/.test(key)) return '#38bdf8';
+  if (/rival/.test(key)) return '#fb7185';
+  if (/rom[aá]nt/.test(key)) return '#e879f9';
+  if (/mentor/.test(key)) return '#a78bfa';
+  if (/labor/.test(key)) return '#22d3ee';
+  let hash = 0; for (const char of type) hash = (hash * 31 + char.charCodeAt(0)) | 0;
+  return `hsl(${Math.abs(hash) % 360} 76% 62%)`;
 }
 
 function networkHTML(): string {
-  if (!data.characters.length) {
-    return '<p class="empty-inline">Cargá personajes y vínculos para ver la red de relaciones.</p>';
-  }
+  if (!data.characters.length) return '<p class="empty-inline">Cargá personajes y vínculos para ver la red de relaciones.</p>';
   if (!characterById(state.netFocus)) state.netFocus = characterById(state.selectedId)?.id ?? mostConnected();
   const focusId = state.netFocus!;
-  const graph = buildEgoGraph(data.characters, data.relations, focusId, state.netExpanded);
-  const { pos, size } = layoutGraph(graph, focusId);
-  const showEdgeLabels = graph.edges.length <= 14;
-  const selected = graph.nodes.find((n) => n.id === state.netSelected) ?? null;
-  const selectedChar = selected ? characterById(selected.id) : undefined;
-
-  const edgesSvg = graph.edges
-    .map((e) => {
-      const a = pos.get(e.from);
-      const b = pos.get(e.to);
-      if (!a || !b) return '';
-      const dashed = e.certainty === 'explicit' ? '' : ' stroke-dasharray="5 4"';
-      const label = `${characterById(e.from)?.name} — ${e.label} — ${characterById(e.to)?.name} (${CERTAINTY_LABELS[e.certainty]})`;
-      return `<g><line class="chr-edge" x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}"${dashed}><title>${esc(label)}</title></line>${
-        showEdgeLabels
-          ? `<text class="chr-edge-label" x="${((a.x + b.x) / 2).toFixed(1)}" y="${((a.y + b.y) / 2 - 3).toFixed(1)}" text-anchor="middle">${esc(e.label.slice(0, 18))}</text>`
-          : ''
-      }</g>`;
-    })
-    .join('');
-  const nodesSvg = graph.nodes
-    .map((n) => {
-      const p = pos.get(n.id);
-      if (!p) return '';
-      const isFocus = n.id === focusId;
-      const label = n.label.length > 16 ? `${n.label.slice(0, 15)}…` : n.label;
-      const hidden = n.hiddenNeighbors ? `, ${n.hiddenNeighbors} vínculo${n.hiddenNeighbors === 1 ? '' : 's'} sin mostrar` : '';
-      return `<g class="chr-node${isFocus ? ' chr-node--focus' : ''}${n.id === state.netSelected ? ' chr-node--selected' : ''}" data-chr="net-select" data-id="${esc(n.id)}" tabindex="0" role="button" aria-label="${esc(n.label)}${esc(hidden)}. Seleccionar">
-        <circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${isFocus ? 30 : 24}"></circle>
-        <text x="${p.x.toFixed(1)}" y="${(p.y + 4).toFixed(1)}" text-anchor="middle">${esc(label)}</text>
-        ${n.hiddenNeighbors ? `<text class="chr-node-more" x="${(p.x + 22).toFixed(1)}" y="${(p.y - 20).toFixed(1)}">+${n.hiddenNeighbors}</text>` : ''}
-      </g>`;
-    })
-    .join('');
-
-  const details = selected && selectedChar
-    ? `<div class="chr-net-details" role="region" aria-label="Personaje seleccionado">
-        <strong>${esc(selectedChar.name)}</strong>
-        <span class="muted">${relationCount(selectedChar.id)} vínculo${relationCount(selectedChar.id) === 1 ? '' : 's'}${selected.hiddenNeighbors ? ` · ${selected.hiddenNeighbors} sin mostrar` : ''}</span>
-        <div class="chr-row-actions">
-          <button type="button" class="secondary" data-chr="open" data-id="${esc(selectedChar.id)}">Abrir ficha</button>
-          ${selected.id !== focusId ? `<button type="button" class="secondary" data-chr="net-center" data-id="${esc(selectedChar.id)}">Centrar aquí</button>` : ''}
-          ${
-            selected.id !== focusId && selected.hiddenNeighbors
-              ? `<button type="button" class="secondary" data-chr="net-expand" data-id="${esc(selectedChar.id)}">Mostrar sus vínculos (+${selected.hiddenNeighbors})</button>`
-              : ''
-          }
-          ${selected.id !== focusId && state.netExpanded.has(selected.id) ? `<button type="button" class="secondary" data-chr="net-collapse" data-id="${esc(selectedChar.id)}">Ocultar sus vínculos</button>` : ''}
-        </div>
-      </div>`
-    : '<p class="muted chr-net-hint">Tocá o elegí con Enter un personaje para abrir su ficha o mostrar más de sus vínculos.</p>';
-
-  return `<div class="chr-network">
-    <div class="chr-net-controls">
-      <label for="chrNetFocus">Centrar la red en</label>
-      <select id="chrNetFocus" data-chr-change="net-focus">
-        ${data.characters.map((c) => `<option value="${esc(c.id)}" ${c.id === focusId ? 'selected' : ''}>${esc(c.name)} (${relationCount(c.id)})</option>`).join('')}
-      </select>
-    </div>
-    ${
-      graph.edges.length
-        ? `<svg class="chr-svg" viewBox="0 0 ${size} ${size}" role="group" aria-label="Red de relaciones de ${esc(characterById(focusId)?.name || '')}">${edgesSvg}${nodesSvg}</svg>
-      <p class="muted chr-net-legend">Línea continua: vínculo explícito en el libro. Línea punteada: inferido o desconocido. Se muestran hasta 10 vínculos por personaje; los demás aparecen como «+N».${graph.omittedAtFocus ? ` Faltan ${graph.omittedAtFocus} del personaje central (están en su ficha).` : ''}</p>
-      ${details}
-      <ul class="chr-sr-only">${graph.edges.map((e) => `<li>${esc(characterById(e.from)?.name)} — ${esc(e.label)} — ${esc(characterById(e.to)?.name)}, ${esc(CERTAINTY_LABELS[e.certainty])}</li>`).join('')}</ul>`
-        : '<p class="empty-inline">Este personaje todavía no tiene vínculos. Registralos desde su ficha o elegí otro personaje para centrar la red.</p>'
-    }
-  </div>`;
+  const { positions, size } = layoutGlobalGraph();
+  const selected = characterById(state.netSelected);
+  const isolated = data.characters.filter((c) => relationCount(c.id) === 0).length;
+  const connected = data.characters.length - isolated;
+  const edgeSvg = data.relations.map((r) => {
+    const a = positions.get(r.fromId), b = positions.get(r.toId);
+    if (!a || !b) return '';
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    const bend = ((r.id.charCodeAt(4) || 7) % 2 ? 1 : -1) * 18;
+    const cx = mx + bend, cy = my - bend;
+    const dashed = r.certainty === 'explicit' ? '' : ' stroke-dasharray="7 6"';
+    return `<path class="chr-edge chr-edge--color${state.netIsolatedOnly ? ' chr-edge--filtered' : ''}" d="M ${a.x.toFixed(1)} ${a.y.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${b.x.toFixed(1)} ${b.y.toFixed(1)}" stroke="${relationColor(r.type)}"${dashed}><title>${esc(characterById(r.fromId)?.name)} → ${esc(characterById(r.toId)?.name)} · ${esc(r.type)} · ${esc(CERTAINTY_LABELS[r.certainty])}</title></path>`;
+  }).join('');
+  const nodesSvg = data.characters.map((c, i) => {
+    const p = positions.get(c.id)!;
+    const focus = c.id === focusId;
+    const isolatedClass = relationCount(c.id) === 0 ? ' chr-node--isolated' : '';
+    const label = c.name.length > 18 ? `${c.name.slice(0, 17)}…` : c.name;
+    const hue = (i * 47 + 195) % 360;
+    return `<g class="chr-node chr-node--global${focus ? ' chr-node--focus' : ''}${c.id === state.netSelected ? ' chr-node--selected' : ''}${isolatedClass}${state.netIsolatedOnly && relationCount(c.id) ? ' chr-node--filtered' : ''}" data-chr="net-select" data-id="${esc(c.id)}" tabindex="0" role="button" aria-label="${esc(c.name)}, ${relationCount(c.id)} vínculos"><circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${focus ? 36 : 29}" style="--node-hue:${hue}"></circle><text x="${p.x.toFixed(1)}" y="${(p.y + 4).toFixed(1)}" text-anchor="middle">${esc(label)}</text></g>`;
+  }).join('');
+  const types = [...new Set(data.relations.map((r) => r.type))];
+  const allGroups = buildConnectedGroups(data.characters, data.relations);
+  const detail = selected ? `<aside class="chr-net-details"><strong>${esc(selected.name)}</strong><span>${relationCount(selected.id)} vínculos · ${isolated && relationCount(selected.id) === 0 ? 'personaje aislado' : `grupo ${allGroups.findIndex((g) => g.includes(selected.id)) + 1}`}</span><div class="chr-row-actions"><button type="button" class="secondary" data-chr="open" data-id="${esc(selected.id)}">Abrir ficha</button><button type="button" class="secondary" data-chr="net-center" data-id="${esc(selected.id)}">Centrar y elegir</button><button type="button" class="secondary" data-chr="add-relation">＋ Agregar vínculo</button></div>${data.relations.filter((r) => r.fromId === selected.id || r.toId === selected.id).map((r) => `<div class="chr-net-rel"><span class="chr-net-dot" style="--edge-color:${relationColor(r.type)}"></span>${esc(characterById(r.fromId)?.name)} ${isDirectedType(r.type) ? '→' : '↔'} ${esc(characterById(r.toId)?.name)} · ${esc(r.type)} <button type="button" class="secondary" data-chr="edit-relation" data-rel="${esc(r.id)}">Editar</button></div>`).join('')}</aside>` : '<p class="muted">Seleccioná cualquier personaje para abrir su ficha o administrar vínculos.</p>';
+  return `<div class="chr-network chr-network--global"><div class="chr-network-header"><div><h3>Universo de personajes</h3><p>${data.characters.length} personajes · ${data.relations.length} vínculos · ${allGroups.length} grupos · ${isolated} aislados</p></div><label for="chrNetFocus">Centrar en<select id="chrNetFocus">${data.characters.map((c) => `<option value="${esc(c.id)}" ${c.id === focusId ? 'selected' : ''}>${esc(c.name)} (${relationCount(c.id)})</option>`).join('')}</select></label><button type="button" class="secondary" data-chr="fullscreen-network">⛶ Pantalla completa</button></div><div class="chr-net-stats"><button type="button" data-chr="filter-isolated" aria-pressed="${state.netIsolatedOnly}">${isolated} aislados</button><span>${connected} conectados</span><span>${allGroups.length} grupos independientes</span></div><div class="chr-net-canvas"><svg class="chr-svg chr-svg--global" viewBox="0 0 ${size} ${size}" role="group" aria-label="Mapa global con todos los personajes y vínculos">${edgeSvg}${nodesSvg}</svg></div><div class="chr-net-legend">${types.map((type) => `<span><i style="--edge-color:${relationColor(type)}"></i>${esc(type)}</span>`).join('')}<span><i class="chr-net-certainty"></i>Línea continua: explícita · discontinua: inferida o desconocida</span></div>${detail}</div>`;
 }
+
+function buildConnectedGroups(characters: Character[], relations: CharacterRelation[]): string[][] {
+  const remaining = new Set(characters.map((c) => c.id));
+  const groups: string[][] = [];
+  while (remaining.size) {
+    const first = remaining.values().next().value as string;
+    const group: string[] = [], queue = [first]; remaining.delete(first);
+    while (queue.length) {
+      const id = queue.shift()!; group.push(id);
+      for (const neighbor of neighborsOf(relations, id)) if (remaining.delete(neighbor.other)) queue.push(neighbor.other);
+    }
+    groups.push(group);
+  }
+  return groups;
+}
+
 
 // ---------------------------------------------------------------------------
 // Formularios
@@ -570,8 +557,9 @@ function characterFormHTML(): string {
       <div class="chr-form-field">
         <label for="chr_name">Nombre</label>
         <input id="chr_name" name="name" type="text" maxlength="${LIMITS.name}" required value="${esc(c?.name ?? '')}" />
-        <button type="button" class="secondary" data-chr="autofill">${AI_SPARK} Completar ficha con IA</button>
+        <div class="chr-research-actions"><button type="button" class="secondary" data-chr="search-character">${AI_SPARK} Buscar y completar con IA</button><span class="muted">La búsqueda web se ejecuta al presionar el botón; modo sin spoilers activado (p. ${Math.max(0, Number(book?.currentPage) || 0)}).</span></div>
       </div>
+      ${characterSearchHTML()}
       <div id="chrAiHost"></div>
       <div class="chr-form-field">
         <label for="chr_aliases">Otros nombres o alias (uno por línea)</label>
@@ -597,6 +585,103 @@ function characterFormHTML(): string {
     </form>`;
 }
 
+function characterSearchHTML(): string {
+  const search = state.characterSearch;
+  if (search.status === 'idle') return '<div id="chrResearchPanel"></div>';
+  if (search.status === 'searching' || search.status === 'investigating') return `<section class="chr-research" id="chrResearchPanel" aria-live="polite"><strong>${search.status === 'searching' ? 'Buscando en Internet…' : 'Investigando el personaje seleccionado…'}</strong><p class="muted">Obra: ${esc(book?.title || '')}${book?.author ? ` · ${esc(book.author)}` : ''}. Avance registrado: página ${Math.max(0, Number(book?.currentPage) || 0)}. Modo sin spoilers.</p><button type="button" class="secondary" data-chr="stop-research">Cancelar búsqueda</button></section>`;
+  if (search.status === 'error') return `<section class="chr-research" id="chrResearchPanel" role="alert"><strong>No pude realizar la búsqueda web.</strong><p>${esc(search.error)}</p><button type="button" class="secondary" data-chr="search-character">Intentar de nuevo</button></section>`;
+  if (search.status === 'results') return `<section class="chr-research" id="chrResearchPanel"><h3>${search.candidates.length ? 'Encontré posibles coincidencias' : 'No encontré coincidencias suficientemente confiables'}</h3><p class="muted">Resultados para «${esc(search.name)}» en ${esc(book?.title || 'esta obra')}${book?.author ? ` de ${esc(book.author)}` : ''}. Avance: página ${Math.max(0, Number(book?.currentPage) || 0)}. La descripción se limita a identificación sin spoilers; las fuentes web no corresponden necesariamente a las páginas de tu edición.</p>${search.candidates.length ? `${search.candidates.length > 1 ? '<p class="chr-ambiguity" role="status">La búsqueda devolvió varias coincidencias posibles. Elegí la que corresponde; no se seleccionó ninguna automáticamente.</p>' : ''}<fieldset class="chr-candidates"><legend>Elegí explícitamente el personaje</legend>${search.candidates.map((c, i) => `<label class="chr-candidate"><input type="radio" name="chrCandidate" value="${i}"/><span><strong>${esc(c.name)}</strong><span>También: ${esc(c.aliases.join(', ') || 'sin variantes encontradas')}</span><span>${esc(c.description || 'Sin descripción introductoria disponible.')}</span><small>Coincidencia ${esc(c.confidence === 'high' ? 'alta' : c.confidence === 'medium' ? 'media' : 'baja')}</small></span></label>`).join('')}</fieldset><button type="button" class="primary" data-chr="investigate-character" disabled>Completar con este</button>` : '<p class="muted">La búsqueda devolvió resultados ambiguos o sin respaldo suficiente. Podés conservar el nombre y completar la ficha manualmente.</p>'}<button type="button" class="secondary" data-chr="none-candidate">Ninguno de estos</button>${characterSourcesHTML(search.sources)}</section>`;
+  if (search.status === 'ready') return `<section class="chr-research" id="chrResearchPanel"><h3>Seleccionaste «${esc(search.name)}»</h3><p class="muted">Revisá las sugerencias. Solo se completarán campos vacíos; los campos que ya escribiste se conservan. La información web se marca como inferida, nunca explícita en el libro.</p>${characterSourcesHTML(search.sources)}<button type="button" class="primary" data-chr="apply-research">Aplicar sugerencias a campos vacíos</button><button type="button" class="secondary" data-chr="none-candidate">Descartar sugerencias</button></section>`;
+  return '<div id="chrResearchPanel"></div>';
+}
+
+function characterSourcesHTML(sources: Array<{ title: string; url: string }>): string {
+  if (!sources.length) return '<p class="muted">Gemini no proporcionó citas web verificables.</p>';
+  return `<details class="chr-research-sources"><summary>Fuentes web consultadas (${sources.length})</summary><ul>${sources.map((s) => `<li><a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title || s.url)}</a></li>`).join('')}</ul></details>`;
+}
+
+function readReadingEvidence() {
+  const page = Math.max(0, Number(book?.currentPage) || 0);
+  const normalize = (text: string) => text.toLocaleLowerCase();
+  const names = new Set([state.characterSearch.name, ...data.characters.flatMap((c) => [c.name, ...c.aliases])].map(normalize).filter((x) => x.length > 2));
+  const containsName = (text: string) => [...names].some((name) => normalize(text).includes(name));
+  const records: string[] = [];
+  for (const note of data.notes) if (note.endPage != null && note.endPage <= page && containsName(`${note.text} ${note.comment || ''}`)) records.push(`[Cuaderno: nota ${note.number}, p. ${note.endPage}] ${note.text}${note.comment ? ` — comentario: ${note.comment}` : ''}`);
+  for (const entry of data.entries) if (entry.page != null && entry.page <= page && containsName(`${entry.title || ''} ${entry.text || ''} ${entry.comment || ''}`)) records.push(`[Cuaderno: anotación, p. ${entry.page}] ${entry.title || ''} ${entry.text || ''}${entry.comment ? ` — comentario: ${entry.comment}` : ''}`);
+  for (const quote of data.quotes) if (quote.page != null && quote.page <= page && containsName(`${quote.text} ${quote.analysis || ''}`)) records.push(`[Cuaderno: cita, p. ${quote.page}] ${quote.text}${quote.analysis ? ` — reflexión: ${quote.analysis}` : ''}`);
+  return records.slice(0, 40);
+}
+
+async function searchCharacterWithWeb() {
+  const name = host?.querySelector<HTMLInputElement>('#chr_name')?.value.trim() || '';
+  if (!name) return showFormErrors(['Escribí el nombre antes de buscar coincidencias.']);
+  if (!api().ai.hasKey()) return showFormErrors(['Guardá tu API key personal de Gemini en Ajustes → Ajustes de IA.']);
+  state.characterSearch.controller?.abort();
+  const search = state.characterSearch = { ...state.characterSearch, status: 'searching', name, candidates: [], sources: [], error: '', suggestion: null, controller: new AbortController() };
+  paint();
+  try {
+    const settings = api().ai.settings();
+    const response = await api().ai.request('character-research', { mode: 'candidates', name, book, characters: data.characters, model: settings.model, thinking: settings.thinking }, search.controller.signal);
+    const result = await response.json();
+    if (!response.ok) throw Error(result.error || `Error HTTP ${response.status}`);
+    if (result.usedGoogleSearch !== true) throw Error('Gemini no confirmó que ejecutó Google Search.');
+    state.characterSearch = { ...state.characterSearch, status: 'results', candidates: Array.isArray(result.candidates) ? result.candidates : [], sources: Array.isArray(result.sources) ? result.sources : [], error: '', controller: null };
+  } catch (err: any) {
+    if (err?.name === 'AbortError') { state.characterSearch = { ...state.characterSearch, status: 'idle', controller: null }; paint(); return; }
+    state.characterSearch = { ...state.characterSearch, status: 'error', error: String(err?.message || err), controller: null };
+  }
+  paint();
+}
+
+async function investigateSelectedCharacter() {
+  const index = Number(host?.querySelector<HTMLInputElement>('input[name="chrCandidate"]:checked')?.value);
+  const selected = state.characterSearch.candidates[index];
+  if (!selected) return showFormErrors(['Elegí explícitamente una coincidencia antes de continuar.']);
+  const search = state.characterSearch;
+  const controller = new AbortController();
+  state.characterSearch = { ...search, status: 'investigating', name: selected.name, controller };
+  paint();
+  try {
+    const settings = api().ai.settings();
+    const response = await api().ai.request('character-research', { mode: 'investigate', name: selected.name, aliases: selected.aliases, book, characters: data.characters, readingEvidence: readReadingEvidence(), model: settings.model, thinking: settings.thinking }, controller.signal);
+    const result = await response.json();
+    if (!response.ok) throw Error(result.error || `Error HTTP ${response.status}`);
+    if (result.usedGoogleSearch !== true) throw Error('Gemini no confirmó que ejecutó Google Search.');
+    state.characterSearch = { ...state.characterSearch, status: 'ready', name: selected.name, sources: result.sources || [], suggestion: result.suggestion || {}, controller: null };
+  } catch (err: any) {
+    if (err?.name === 'AbortError') state.characterSearch = { ...state.characterSearch, status: 'idle', controller: null };
+    else state.characterSearch = { ...state.characterSearch, status: 'error', error: String(err?.message || err), controller: null };
+  }
+  paint();
+}
+
+function applyWebResearch() {
+  const suggestion = state.characterSearch.suggestion;
+  if (!suggestion) return;
+  const setEmpty = (name: string, value: unknown, transform = (x: any) => String(x ?? '')) => {
+    const field = host?.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[name="${name}"]`);
+    if (field && !field.value.trim()) field.value = transform(value);
+  };
+  const nameInput = host?.querySelector<HTMLInputElement>('[name="name"]');
+  if (nameInput && suggestion.name) nameInput.value = String(suggestion.name);
+  setEmpty('aliases', suggestion.aliases, (x) => Array.isArray(x) ? x.join('\n') : '');
+  setEmpty('age', suggestion.age);
+  setEmpty('description', suggestion.description);
+  setEmpty('traits', suggestion.traits, (x) => Array.isArray(x) ? x.join(', ') : '');
+  setEmpty('occupation', suggestion.occupation);
+  setEmpty('affiliation', suggestion.affiliation);
+  for (const field of FIELD_KEYS) {
+    const input = host?.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[name="${field}"]`);
+    const certainty = host?.querySelector<HTMLSelectElement>(`[name="cert_${field}"]`);
+    if (input?.value.trim() && !certainty?.value && suggestion[field]) certainty.value = 'inferred';
+  }
+  const evidenceRows = host?.querySelector<HTMLElement>('#chrEvidenceRows');
+  for (const source of state.characterSearch.sources) {
+    if (evidenceRows && source.url.length <= LIMITS.evidenceText && evidenceRows.children.length < LIMITS.evidence) evidenceRows.insertAdjacentHTML('beforeend', evidenceRowHTML({ kind: 'other', ref: source.url.length <= LIMITS.evidenceRef ? source.url : `Fuente web: ${source.title}`.slice(0, LIMITS.evidenceRef), text: source.url.length <= LIMITS.evidenceRef ? `Fuente web externa: ${source.title}`.slice(0, LIMITS.evidenceText) : source.url }));
+  }
+  showFormErrors([], ['Se completaron únicamente campos vacíos. Los datos web quedan como inferidos; revisá cada fuente.']);
+}
+
 function relationFormHTML(): string {
   const draft = state.relationDraft;
   const from = characterById(draft?.fromId);
@@ -617,6 +702,7 @@ function relationFormHTML(): string {
           ${editing ? '' : '<option value="__new__">＋ Crear familiar nuevo…</option>'}
         </select>
       </div>
+      ${editing ? '' : `<div class="chr-form-field"><label><input type="checkbox" id="chrMultiRelation" /> Crear este vínculo con varios personajes</label><fieldset id="chrMultiTargets" class="chr-fieldset hidden"><legend>Seleccioná los personajes</legend>${others.map((c) => `<label><input type="checkbox" name="multiOther" value="${esc(c.id)}" /> ${esc(c.name)}</label>`).join('')}</fieldset></div>`}
       ${!editing ? `<div class="chr-form-field hidden" id="chrNewRelativeWrap"><label for="chr_new_relative">Nombre del familiar</label><input id="chr_new_relative" name="newRelative" type="text" maxlength="${LIMITS.name}" /></div>` : ''}
       <div class="chr-form-field">
         <label for="chr_direction">Sentido del vínculo</label>
@@ -735,6 +821,35 @@ async function submitRelationForm(form: HTMLFormElement) {
   const draft = state.relationDraft;
   if (!draft) return;
   const editing = draft.editingId ? data.relations.find((r) => r.id === draft.editingId) : undefined;
+  if (!editing && form.querySelector<HTMLInputElement>('#chrMultiRelation')?.checked) {
+    const targets = [...form.querySelectorAll<HTMLInputElement>('input[name="multiOther"]:checked')].map((input) => input.value);
+    if (!targets.length) return showFormErrors(['Seleccioná al menos un personaje para crear los vínculos.']);
+    const outgoing = formValue(form, 'direction') !== 'in';
+    const proposed = targets.map((otherId) => validateRelation({
+      fromId: outgoing ? draft.fromId : otherId, toId: outgoing ? otherId : draft.fromId,
+      type: formValue(form, 'type'), description: formValue(form, 'description'), evidence: readEvidence(form),
+      certainty: (formValue(form, 'certainty') || 'unknown') as Certainty,
+    }, { bookId: state.bookId, characters: data.characters, relations: data.relations }));
+    const errors = proposed.flatMap((r, i) => r.ok ? [] : [`${characterById(targets[i])?.name || 'Personaje'}: ${r.errors.join(' ')}`]);
+    if (errors.length) return showFormErrors(errors);
+    const records = proposed.flatMap((r) => r.value ? [r.value.record] : []);
+    const approved = await api().confirm({ eyebrow: 'VÍNCULOS MÚLTIPLES', title: `Crear ${records.length} vínculos`, message: records.map((r) => `${characterById(r.fromId)?.name} → ${r.type} → ${characterById(r.toId)?.name}`).join('\n'), confirmLabel: 'Crear vínculos' });
+    if (!approved) return;
+    let saved = 0;
+    const failures: string[] = [];
+    for (const record of records) {
+      try {
+        const fresh = await api().loadBookData(state.bookId);
+        const validAgain = validateRelation(record, { bookId: state.bookId, characters: fresh.characters, relations: fresh.relations });
+        if (!validAgain.ok || !validAgain.value) throw Error(validAgain.errors.join(' '));
+        await api().saveRelation(validAgain.value.record);
+        saved++;
+      } catch (err: any) { failures.push(`${characterById(record.toId)?.name || record.toId}: ${String(err?.message || err)}`); }
+    }
+    await reload();
+    go('sheet', { selectedId: draft.fromId, relationDraft: null, notice: `Se guardaron ${saved} de ${records.length} vínculos.${failures.length ? ` No se guardaron: ${failures.join('; ')}` : ''}` });
+    return;
+  }
   let otherId = editing ? (editing.fromId === draft.fromId ? editing.toId : editing.fromId) : formValue(form, 'other');
   let createdRelative: Character | null = null;
   if (otherId === '__new__') {
@@ -1168,10 +1283,11 @@ function bindEvents() {
   host.onchange = (event) => {
     const target = event.target as HTMLElement;
     if (target.id === 'chrAiTarget') syncAISaveForm();
+    if (target.id === 'chrMultiRelation') host?.querySelector<HTMLElement>('#chrMultiTargets')?.classList.toggle('hidden', !(target as HTMLInputElement).checked);
+    if ((target as HTMLInputElement).name === 'chrCandidate') host?.querySelector<HTMLButtonElement>('[data-chr="investigate-character"]')?.removeAttribute('disabled');
     if (target.id === 'chr_other') host!.querySelector<HTMLElement>('#chrNewRelativeWrap')?.classList.toggle('hidden', (target as HTMLSelectElement).value !== '__new__');
     if (target.id === 'chrNetFocus') {
       state.netFocus = (target as HTMLSelectElement).value;
-      state.netExpanded = new Set();
       state.netSelected = null;
       const results = host!.querySelector('#chrResults');
       if (results) results.innerHTML = resultsHTML();
@@ -1188,7 +1304,7 @@ function repaintResults(focusSelector?: string) {
 
 async function handleAction(action: string, el: HTMLElement) {
   const id = el.dataset.id || '';
-  const current = characterById(state.selectedId);
+  const current = characterById(state.selectedId) ?? characterById(state.netSelected);
   switch (action) {
     case 'new':
       return go('character-form', { editingCharacterId: null, pendingRelatives: [] });
@@ -1204,7 +1320,6 @@ async function handleAction(action: string, el: HTMLElement) {
       state.view = el.dataset.view as IndexView;
       if (state.view === 'network') {
         state.netSelected = null;
-        state.netExpanded = new Set();
       }
       return paint();
     case 'edit':
@@ -1249,7 +1364,7 @@ async function handleAction(action: string, el: HTMLElement) {
       return go('sheet', { selectedId: current.id, notice: 'Vínculo quitado.' });
     }
     case 'show-network':
-      return current ? (state.netFocus = current.id, state.netExpanded = new Set(), state.netSelected = null, state.view = 'network', go('index', { selectedId: current.id })) : undefined;
+      return current ? (state.netFocus = current.id, state.netSelected = null, state.view = 'network', go('index', { selectedId: current.id })) : undefined;
     case 'add-evidence': {
       const rows = host?.querySelector('#chrEvidenceRows');
       if (!rows || rows.children.length >= LIMITS.evidence) return;
@@ -1273,6 +1388,22 @@ async function handleAction(action: string, el: HTMLElement) {
     }
     case 'autofill':
       return startAI({ kind: 'character' }, true);
+    case 'search-character':
+      return searchCharacterWithWeb();
+    case 'investigate-character':
+      return investigateSelectedCharacter();
+    case 'apply-research':
+      applyWebResearch();
+      return;
+    case 'none-candidate':
+      state.characterSearch.controller?.abort();
+      state.characterSearch = { status: 'idle', name: '', candidates: [], sources: [], error: '', suggestion: null, controller: null };
+      paint();
+      showFormErrors([], ['No se modificó la ficha. Conservá el nombre y completala manualmente o iniciá otra búsqueda.']);
+      return;
+    case 'stop-research':
+      state.characterSearch.controller?.abort();
+      return;
     case 'apply-autofill': {
       const ai = state.ai;
       if (!ai?.formTarget) return;
@@ -1338,16 +1469,15 @@ async function handleAction(action: string, el: HTMLElement) {
     case 'net-select':
       state.netSelected = id;
       return repaintResults(`[data-chr="net-select"][data-id="${CSS.escape(id)}"]`);
-    case 'net-expand':
-      state.netExpanded.add(id);
-      return repaintResults(`[data-chr="net-select"][data-id="${CSS.escape(id)}"]`);
-    case 'net-collapse':
-      state.netExpanded.delete(id);
-      return repaintResults(`[data-chr="net-select"][data-id="${CSS.escape(id)}"]`);
     case 'net-center':
       state.netFocus = id;
-      state.netExpanded = new Set();
       state.netSelected = id;
       return repaintResults(`[data-chr="net-select"][data-id="${CSS.escape(id)}"]`);
+    case 'fullscreen-network':
+      host?.querySelector('.chr-network--global')?.classList.toggle('chr-network--fullscreen');
+      return;
+    case 'filter-isolated':
+      state.netIsolatedOnly = !state.netIsolatedOnly;
+      return repaintResults('[data-chr="filter-isolated"]');
   }
 }
