@@ -962,4 +962,5 @@ dialog[open]:not(.book-detail-dialog):not(.photo-viewer-dialog):not(#geminiDialo
 }
 .book-page-actions{display:flex;align-items:stretch;gap:10px;flex-wrap:wrap;margin-top:14px}.book-page-actions .reading-progress-trigger{margin:0}.book-characters-trigger{align-self:stretch;min-width:140px;font-size:14px;font-weight:700}
 #chrSuggestedRelatives input[type="checkbox"]{width:auto;margin-right:7px}
+.chr-name-suggestion{padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--paper2);margin:12px 0}.chr-name-suggestion strong{color:var(--brown)}.chr-name-suggestion p{margin:5px 0 10px}
 @media(max-width:620px){.book-page-actions{gap:7px}.book-page-actions .reading-progress-trigger,.book-characters-trigger{width:auto;min-height:50px;flex:1 1 135px;padding:9px 10px;font-size:12px}}

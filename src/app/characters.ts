@@ -832,8 +832,8 @@ async function startAI(scope: AIScope, formTarget = false) {
       styleInstruction: api().ai.styleInstruction(),
     });
     if (formTarget) {
-      ai.plan.prompt += '\n\nLa persona pidió completar una ficha y quizá agregar familiares. Respondé únicamente JSON válido, sin markdown, con esta forma: {"aliases":[],"age":"","description":"","traits":[],"occupation":"","affiliation":"","certainty":{"age":"explicit","description":"inferred","occupation":"explicit","affiliation":"inferred"},"evidence":{"age":"código de fuente y referencia o vacío","description":"código de fuente y referencia o vacío","occupation":"código de fuente y referencia o vacío","affiliation":"código de fuente y referencia o vacío"},"relatives":[{"name":"","type":"Hermano/a de","direction":"out","certainty":"explicit","evidence":"código de fuente y referencia"}]}. En certainty usá solo los valores exactos explicit, inferred o unknown, según corresponda. Para direction usá solo out o in. Usá cadenas vacías y listas vacías si no hay respaldo. No inventes ni uses conocimiento general. Solo proponé familiares respaldados por las fuentes permitidas; la persona revisará las sugerencias antes de aplicarlas.';
-      ai.plan.systemInstruction += '\n\nPara esta solicitud devolvé solo el objeto JSON pedido, sin completar datos por conjetura.';
+      ai.plan.prompt += '\n\nLa persona pidió completar una ficha y quizá agregar familiares. Respondé únicamente JSON válido, sin markdown, con esta forma: {"nameSuggestion":"nombre correcto sugerido o cadena vacía","nameSuggestionBasis":"material|conocimiento_general|vacío","nameSuggestionEvidence":"código de fuente y referencia o vacío","aliases":[],"age":"","description":"","traits":[],"occupation":"","affiliation":"","certainty":{"age":"explicit","description":"inferred","occupation":"explicit","affiliation":"inferred"},"evidence":{"age":"código de fuente y referencia o vacío","description":"código de fuente y referencia o vacío","occupation":"código de fuente y referencia o vacío","affiliation":"código de fuente y referencia o vacío"},"relatives":[{"name":"","type":"Hermano/a de","direction":"out","certainty":"explicit","evidence":"código de fuente y referencia"}]}. Para nameSuggestion podés usar una coincidencia en las fuentes permitidas o tu conocimiento general de la obra para sugerir solo la ortografía/nombre canónico más probable. nameSuggestionBasis debe ser exactamente material, conocimiento_general o vacío. Si usás conocimiento general, marca nameSuggestionBasis como conocimiento_general; no des detalles de trama, relaciones ni eventos al explicar la sugerencia. Si no tenés confianza suficiente, dejá nameSuggestion vacío. Nunca cambies el nombre de la ficha automáticamente. Para todos los demás datos, usá exclusivamente las fuentes permitidas hasta la página actual: no uses conocimiento general ni anticipes eventos. En certainty usá solo los valores exactos explicit, inferred o unknown. Para direction usá solo out o in. Usá cadenas vacías y listas vacías si no hay respaldo. Solo proponé familiares respaldados por las fuentes permitidas; la persona revisará las sugerencias antes de aplicarlas.';
+      ai.plan.systemInstruction += '\n\nEn esta solicitud, la única excepción a la prohibición de usar conocimiento general es sugerir la posible ortografía del nombre en nameSuggestion. Nunca reveles trama, spoilers ni hechos de la obra basados en ese conocimiento. Completá los demás campos solo con el material permitido.';
     }
   } catch (err: any) {
     ai.status = 'error';
@@ -1013,7 +1013,7 @@ function paintAI() {
     }</p>
     ${ai.status === 'error' ? `<div class="chr-ai-error" role="alert">${esc(ai.error)} ${ai.keyError ? '<button type="button" class="ai-key-cta" data-chr="ai-key">Configurar mi API key</button>' : ''}</div>` : ''}
     ${ai.text || ai.status === 'running' ? answerHTML : ''}
-    ${ai.formTarget && ai.status === 'done' ? `<div class="chr-ai-save"><p class="muted">Revisá la respuesta. Marcá los familiares que quieras agregar; se crearán al guardar la ficha.</p><div id="chrSuggestedRelatives">${suggestedRelativesHTML(ai.text)}</div><button type="button" class="primary" data-chr="apply-autofill">Aplicar datos seleccionados</button></div>` : ''}
+    ${ai.formTarget && ai.status === 'done' ? `<div class="chr-ai-save">${suggestedNameHTML(ai.text)}<p class="muted">Revisá la respuesta. Marcá los familiares que quieras agregar; se crearán al guardar la ficha.</p><div id="chrSuggestedRelatives">${suggestedRelativesHTML(ai.text)}</div><button type="button" class="primary" data-chr="apply-autofill">Aplicar datos seleccionados</button></div>` : ''}
     ${
       ai.status === 'done' && ai.text.trim()
         ? `<p class="muted chr-ai-disclaimer">La IA puede equivocarse y no leyó el libro completo: revisá lo explícito y lo inferido antes de guardar.</p>
@@ -1068,6 +1068,22 @@ function suggestedRelativesHTML(text: string): string {
     if (!Array.isArray(relatives) || !relatives.length) return '<p class="muted">La IA no encontró familiares con respaldo suficiente en el material consultado.</p>';
     return relatives.filter((r: any) => typeof r.name === 'string' && r.name.trim()).slice(0, 20).map((r: any, i: number) => `<label class="chr-form-field"><span><input type="checkbox" data-relative-index="${i}" /> ${esc(r.name)} · ${esc(r.type || 'Familiar')} (${r.direction === 'in' ? 'el familiar → personaje' : 'personaje → familiar'})</span></label>`).join('');
   } catch { return '<p class="muted">No se pudieron interpretar las propuestas de familiares.</p>'; }
+}
+
+function suggestedNameHTML(text: string): string {
+  try {
+    const raw = text.replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '');
+    const suggestion = JSON.parse(raw);
+    const name = typeof suggestion.nameSuggestion === 'string' ? suggestion.nameSuggestion.trim() : '';
+    if (!name) return '';
+    const basis = suggestion.nameSuggestionBasis;
+    const explanation = basis === 'conocimiento_general'
+      ? 'Sugerencia basada en el conocimiento general de la IA sobre la obra; no está verificada con tu ejemplar y no incluye información de la trama.'
+      : suggestion.nameSuggestionEvidence
+        ? `La IA la encontró en ${esc(suggestion.nameSuggestionEvidence)}. Revisá la fuente antes de usarla.`
+        : 'La IA la propone como posible corrección; verificá el nombre antes de usarlo.';
+    return `<div class="chr-name-suggestion" role="status"><strong>¿Quisiste decir «${esc(name)}»?</strong><p class="muted">${explanation}</p><button type="button" class="secondary" data-chr="use-name-suggestion" data-suggested-name="${esc(name)}">Usar «${esc(name)}»</button></div>`;
+  } catch { return ''; }
 }
 
 async function submitAISave(form: HTMLFormElement) {
@@ -1294,6 +1310,15 @@ async function handleAction(action: string, el: HTMLElement) {
         showFormErrors([], ['Se aplicaron solo los campos vacíos. Revisá los datos y sus fuentes antes de guardar.']);
       } catch {
         showFormErrors(['La respuesta de la IA no tiene el formato esperado. Volvé a consultar o copiá los datos manualmente.']);
+      }
+      return;
+    }
+    case 'use-name-suggestion': {
+      const nameInput = host?.querySelector<HTMLInputElement>('#chr_name');
+      const suggestedName = el.dataset.suggestedName?.trim();
+      if (nameInput && suggestedName) {
+        nameInput.value = suggestedName;
+        nameInput.focus();
       }
       return;
     }
