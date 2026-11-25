@@ -393,9 +393,9 @@ test('a field query asks only about that field and a relation query includes bot
   });
   assert.match(field.prompt, /DATO QUE SE INVESTIGA: Edad/);
   assert.match(field.prompt, /PERSONAJE: Ana/);
-  assert.match(field.prompt, /exclusivamente tu conocimiento general aprendido/);
+  assert.match(field.systemInstruction, /exclusivamente tu conocimiento general aprendido/);
   assert.doesNotMatch(field.prompt, /Consulta puntual sobre/);
-  assert.doesNotMatch(field.prompt, /notas, anotaciones, citas/);
+  assert.match(field.prompt, /No consultes ni cites las notas, anotaciones, citas, fuentes o documentos del usuario/);
 
   const pair = buildCharacterAIRequest({
     book, character: ana, characters: [ana, beto], relations: [], scope: { kind: 'relation', otherId: 'b' }, notes, quotes,
@@ -479,9 +479,10 @@ test('saving an AI answer on a relation updates its description, comment or evid
 test('a field query asks for a concise context and a concrete editable value without certainty labels', () => {
   const ana = character('a', 'Ana');
   const age = buildCharacterAIRequest({ book, character: ana, characters: [ana], relations: [], scope: { kind: 'field', field: 'age' } });
-  assert.match(age.prompt, /CONTEXTO_BREVE:/);
-  assert.match(age.prompt, /VALOR_SUGERIDO:/);
-  assert.doesNotMatch(age.prompt, /CERTEZA_SUGERIDA:/);
-  assert.match(age.prompt, /No escribas explicaciones dentro del valor/);
-  assert.match(age.prompt, /exclusivamente tu conocimiento general aprendido/);
+  assert.match(age.systemInstruction, /CONTEXTO_BREVE:/);
+  assert.match(age.systemInstruction, /VALOR_SUGERIDO:/);
+  assert.doesNotMatch(age.systemInstruction, /CERTEZA_SUGERIDA:/);
+  assert.match(age.systemInstruction, /No escribas explicaciones dentro del valor/);
+  assert.match(age.systemInstruction, /exclusivamente tu conocimiento general aprendido/);
+  assert.match(age.prompt, /No consultes ni cites las notas, anotaciones, citas, fuentes o documentos del usuario/);
 });
