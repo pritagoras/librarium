@@ -41,6 +41,7 @@ import {
   type SaveTarget,
 } from './characters-model';
 import { computeLayout } from './network-layout';
+import { growthPrompt, readGrowth, type GrowthResult } from './network-growth';
 import { openNetworkShare, relationColor } from './network-share';
 
 // ---------------------------------------------------------------------------
@@ -126,6 +127,7 @@ interface State {
   netIsolatedOnly: boolean;
   netReveal: boolean;
   notice: string;
+  growth: { status: 'idle' | 'running' | 'review' | 'saving'; error: string; result: GrowthResult | null };
   ai: AIState | null;
   pendingRelatives: Array<{ name: string; type: string; direction: 'out' | 'in'; certainty: Certainty; evidence: string }>;
   familyReview: { status: 'idle' | 'running' | 'prompt' | 'review'; prompt: string; responseText: string; error: string; relatives: Array<{ name: string; type: string; direction: 'out' | 'in'; basis: string; certainty: Certainty }> };
@@ -163,6 +165,7 @@ const emptyState = (bookId = ''): State => ({
   netIsolatedOnly: false,
   netReveal: false,
   notice: '',
+  growth: { status: 'idle', error: '', result: null },
   ai: null,
   pendingRelatives: [],
   familyReview: { status: 'idle', prompt: '', responseText: '', error: '', relatives: [] },
@@ -184,7 +187,7 @@ const AI_SPARK = '✦';
 
 /** Verdadero mientras hay un formulario abierto o una consulta en curso: app.ts no debe repintar encima. */
 export function isCharactersBusy(): boolean {
-  return state.mode === 'character-form' || state.mode === 'relation-form' || state.ai?.status === 'running' || state.characterSearch.status === 'running' || state.networkReview.status === 'running';
+  return state.mode === 'character-form' || state.mode === 'relation-form' || state.ai?.status === 'running' || state.characterSearch.status === 'running' || state.networkReview.status === 'running' || state.growth.status !== 'idle';
 }
 
 export async function purgeBookCharacters(bookId: string): Promise<void> {
@@ -563,6 +566,83 @@ function networkProposalHTML(proposal: NetworkProposal, index: number): string {
   return `<article class="chr-review-proposal" data-review-card="${index}"><div class="chr-review-proposal-head"><label><input type="checkbox" data-review-select ${selected} ${proposal.decision === 'rejected' ? 'disabled' : ''}/> ${proposal.decision === 'accepted' ? 'Aceptada para aplicar' : proposal.decision === 'rejected' ? 'Rechazada' : 'Pendiente de revisión'}</label><span class="chr-confidence chr-confidence--${proposal.confidence}">Confianza ${esc(proposal.confidence)}</span></div><p class="muted">${esc(existing)}${proposal.action === 'correct' ? ' · corrección sugerida' : ''}</p><div class="chr-review-fields">${proposal.action === 'correct' ? `<label class="chr-review-wide">Vínculo a corregir<select data-review-field="targetRelationId">${relationChoices}</select></label>` : ''}<label>Desde<select data-review-field="fromId">${chars}</select></label><label>Hacia<select data-review-field="toId">${charsTo}</select></label><label>Tipo<input data-review-field="type" maxlength="${LIMITS.relationType}" value="${esc(proposal.type)}" /></label><label>Certeza<select data-review-field="certainty">${(['explicit','inferred','unknown'] as Certainty[]).map((v) => `<option value="${v}" ${proposal.certainty === v ? 'selected' : ''}>${CERTAINTY_LABELS[v]}</option>`).join('')}</select></label><label class="chr-review-wide">Descripción<textarea data-review-field="description" maxlength="${LIMITS.relationDescription}" rows="2">${esc(proposal.description)}</textarea></label><label class="chr-review-wide">Evidencia propuesta<textarea data-review-field="evidence" maxlength="${LIMITS.evidenceText}" rows="2">${esc(proposal.evidence)}</textarea></label><label class="chr-review-wide">URL citada<input data-review-field="sourceUrl" type="url" value="${esc(proposal.sourceUrl)}" placeholder="https://…" /></label></div><p><strong>Justificación:</strong> ${esc(proposal.reason)}</p>${proposal.validationError ? `<p class="chr-ai-error" role="alert">${esc(proposal.validationError)}</p>` : ''}<div class="chr-row-actions"><button type="button" class="secondary" data-chr="accept-network-proposal" data-index="${index}" ${proposal.decision === 'rejected' ? 'disabled' : ''}>Aceptar propuesta</button><button type="button" class="secondary" data-chr="reject-network-proposal" data-index="${index}">Rechazar</button>${current ? `<button type="button" class="secondary" data-chr="edit-relation" data-rel="${esc(current.id)}">Abrir vínculo actual</button>` : ''}</div></article>`;
 }
 
+function growthHTML(): string {
+  const { status, error, result } = state.growth;
+  if (status === 'running') return autoRunningHTML('Buscando quiénes rodean a tus personajes…');
+  if (status === 'saving') return '<section class="chr-research" role="status"><h3>Agregando a la red…</h3></section>';
+  if (status === 'idle') return error ? `<p class="chr-ai-error" role="alert">${esc(error)}</p>` : '';
+  const chosen = result!;
+  return `<section class="chr-research chr-growth"><h3>Esto encontró la IA</h3><p class="muted">Pensado hasta la página ${Math.max(0, Number(book?.currentPage) || 0)}, pero la IA puede equivocarse con la página o con los hechos. Destildá lo que no quieras.</p>
+    <div class="chr-growth-list">${chosen.characters.map((c, i) => `<label><input type="checkbox" data-growth-character="${i}" checked/> <span>${esc(c.name)}</span></label>`).join('') || '<p class="muted">Sin personajes nuevos, solo vínculos.</p>'}</div>
+    <details><summary>${chosen.relations.length} vínculo${chosen.relations.length === 1 ? '' : 's'} (puede haber spoilers)</summary><ul>${chosen.relations.map((r) => `<li>${esc(r.from)} ${isDirectedType(r.type) ? '→' : '↔'} ${esc(r.to)} · ${esc(r.type)}</li>`).join('')}</ul></details>
+    ${error ? `<p class="chr-ai-error" role="alert">${esc(error)}</p>` : ''}
+    <div class="chr-row-actions"><button type="button" class="primary" data-chr="apply-growth">Agregar y ver cómo se forma</button><button type="button" class="secondary" data-chr="cancel-growth">Descartar</button></div></section>`;
+}
+
+async function startGrowth() {
+  const page = Math.max(0, Number(book?.currentPage) || 0);
+  const fail = (error: string) => { state.growth = { status: 'idle', error, result: null }; paint(); };
+  if (!api().ai.hasKey()) { fail('Primero guardá tu clave de Gemini en Ajustes de IA.'); return api().ai.openSettings(); }
+  if (!page) return fail('Primero registrá en qué página vas: así la IA no se adelanta.');
+  const notes = [
+    ...data.notes.filter((n) => n.endPage != null && n.endPage <= page).map((n) => `[p. ${n.endPage}] ${String(n.text || '').slice(0, 500)}`),
+    ...data.entries.filter((e) => e.page != null && e.page <= page).map((e) => `[p. ${e.page}] ${String(e.text || '').slice(0, 500)}`),
+    ...data.quotes.filter((q) => q.page != null && q.page <= page).map((q) => `[p. ${q.page}] ${String(q.text || '').slice(0, 500)}`),
+  ].slice(-60);
+  const bookId = state.bookId;
+  const controller = beginAuto();
+  autoNote = `Hasta la página ${page}.`;
+  state.growth = { status: 'running', error: '', result: null };
+  paint();
+  try {
+    const response = await runJSONTask(growthPrompt({ bookContext: promptBookContext(), page, totalPages: Number(book?.totalPages) || 0, characters: data.characters, relations: data.relations, notes }), controller.signal);
+    if (controller.signal.aborted || state.bookId !== bookId) return;
+    const result = readGrowth(parsePastedJSON(response.text), data.characters, data.relations);
+    if (!result.relations.length) return fail('La IA no encontró nada nuevo hasta esta página.');
+    state.growth = { status: 'review', error: '', result };
+    paint();
+  } catch (err: any) {
+    if (!controller.signal.aborted && state.bookId === bookId) fail(String(err?.message || err));
+  } finally {
+    if (autoAbort === controller) autoAbort = null;
+  }
+}
+
+async function applyGrowth() {
+  const result = state.growth.result;
+  if (!result || state.growth.status !== 'review') return;
+  const chosen = result.characters.filter((_c, i) => host?.querySelector<HTMLInputElement>(`[data-growth-character="${i}"]`)?.checked);
+  const bookId = state.bookId;
+  state.growth = { status: 'saving', error: '', result };
+  paint();
+  let failed = '';
+  try {
+    const characters = [...data.characters];
+    const relations = [...data.relations];
+    const now = new Date().toISOString();
+    const find = (name: string) => characters.find((c) => [c.name, ...c.aliases].some((value) => normalizeText(value) === normalizeText(name)));
+    for (const item of chosen) {
+      if (find(item.name)) continue;
+      characters.push(await api().saveCharacter({ id: crypto.randomUUID(), bookId, name: item.name, aliases: item.aliases, age: '', description: '', traits: [], occupation: '', affiliation: '', comments: 'Sugerido por la IA; revisar.', evidence: [], certainty: {}, createdAt: now, updatedAt: now }));
+    }
+    for (const item of result.relations) {
+      const from = find(item.from), to = find(item.to);
+      if (!from || !to) continue;
+      const checked = validateRelation({ fromId: from.id, toId: to.id, type: item.type, description: '', certainty: item.certainty }, { bookId, characters, relations });
+      if (checked.value) relations.push(await api().saveRelation(checked.value.record));
+    }
+  } catch (err: any) {
+    failed = `No se pudo guardar todo: ${String(err?.message || err)}`;
+  }
+  if (state.bookId !== bookId) return;
+  state.growth = { status: 'idle', error: failed, result: null };
+  await reload();
+  state.netFocus = null;
+  state.netReveal = true;
+  paint();
+  if (!failed) openNetworkShare({ bookTitle: book?.title || 'Mi libro', characters: data.characters, relations: data.relations });
+}
+
 function networkHTML(): string {
   if (!data.characters.length) return '<p class="empty-inline">Cargá personajes y vínculos para ver la red de relaciones.</p>';
   if (!characterById(state.netFocus)) state.netFocus = characterById(state.selectedId)?.id ?? mostConnected();
@@ -592,7 +672,7 @@ function networkHTML(): string {
   const allGroups = buildConnectedGroups(data.characters, data.relations);
   const detail = selected ? `<aside class="chr-net-details"><strong>${esc(selected.name)}</strong><span>${relationCount(selected.id)} vínculos · ${isolated && relationCount(selected.id) === 0 ? 'personaje aislado' : `grupo ${allGroups.findIndex((g) => g.includes(selected.id)) + 1}`}</span><div class="chr-row-actions"><button type="button" class="secondary" data-chr="open" data-id="${esc(selected.id)}">Abrir ficha</button><button type="button" class="secondary" data-chr="net-center" data-id="${esc(selected.id)}">Centrar y elegir</button><button type="button" class="secondary" data-chr="add-relation">＋ Agregar vínculo</button></div>${data.relations.filter((r) => r.fromId === selected.id || r.toId === selected.id).map((r) => `<div class="chr-net-rel"><span class="chr-net-dot" style="--edge-color:${relationColor(r.type)}"></span>${esc(characterById(r.fromId)?.name)} ${isDirectedType(r.type) ? '→' : '↔'} ${esc(characterById(r.toId)?.name)} · ${esc(r.type)} <button type="button" class="secondary" data-chr="edit-relation" data-rel="${esc(r.id)}">Editar</button></div>`).join('')}</aside>` : '<p class="muted">Seleccioná cualquier personaje para abrir su ficha o administrar vínculos.</p>';
   const mobilePeople = `<div class="chr-net-mobile-people"><h4>Personajes</h4><div>${data.characters.map((c) => `<button type="button" data-chr="net-select" data-id="${esc(c.id)}" class="${c.id === state.netSelected ? 'active' : ''}"><strong>${esc(c.name)}</strong><span>${relationCount(c.id)} vínculos</span></button>`).join('')}</div></div>`;
-  return `<div class="chr-network chr-network--global"><div class="chr-network-header"><div><h3>Red de personajes</h3><p>${data.characters.length} personajes · ${data.relations.length} vínculos · ${allGroups.length} grupos · ${isolated} aislados</p></div><label for="chrNetFocus">Centrar en<select id="chrNetFocus">${data.characters.map((c) => `<option value="${esc(c.id)}" ${c.id === focusId ? 'selected' : ''}>${esc(c.name)} (${relationCount(c.id)})</option>`).join('')}</select></label><button type="button" class="primary" data-chr="animate-network">✨ Optimizar y animar</button><button type="button" class="secondary" data-chr="analyze-network">✦ Analizar red con IA</button>${groundingToggleHTML()}<button type="button" class="secondary" data-chr="fullscreen-network">⛶ Pantalla completa</button></div><div class="chr-net-stats"><button type="button" data-chr="filter-isolated" aria-pressed="${state.netIsolatedOnly}">${isolated} aislados</button><span>${connected} conectados</span><span>${allGroups.length} grupos independientes</span></div><p class="chr-net-hint">Cada círculo es un personaje. Seleccionalo para ver y editar sus vínculos; las líneas muestran relaciones guardadas en este libro.</p><div class="chr-net-canvas"><svg class="chr-svg chr-svg--global" viewBox="0 0 ${size} ${size}" role="group" aria-label="Mapa global con todos los personajes y vínculos">${edgeSvg}${nodesSvg}</svg></div>${mobilePeople}<div class="chr-net-legend">${types.map((type) => `<span><i style="--edge-color:${relationColor(type)}"></i>${esc(type)}</span>`).join('')}<span><i class="chr-net-certainty"></i>Línea continua: explícita · discontinua: inferida o desconocida</span></div>${detail}${networkReviewHTML()}</div>`;
+  return `<div class="chr-network chr-network--global"><div class="chr-network-header"><div><h3>Red de personajes</h3><p>${data.characters.length} personajes · ${data.relations.length} vínculos · ${allGroups.length} grupos · ${isolated} aislados</p></div><label for="chrNetFocus">Centrar en<select id="chrNetFocus">${data.characters.map((c) => `<option value="${esc(c.id)}" ${c.id === focusId ? 'selected' : ''}>${esc(c.name)} (${relationCount(c.id)})</option>`).join('')}</select></label><button type="button" class="primary" data-chr="grow-network">✦ Hacer crecer con IA</button><button type="button" class="secondary" data-chr="animate-network">✨ Animar mi red</button><button type="button" class="secondary" data-chr="analyze-network">✦ Analizar red con IA</button>${groundingToggleHTML()}<button type="button" class="secondary" data-chr="fullscreen-network">⛶ Pantalla completa</button></div>${growthHTML()}<div class="chr-net-stats"><button type="button" data-chr="filter-isolated" aria-pressed="${state.netIsolatedOnly}">${isolated} aislados</button><span>${connected} conectados</span><span>${allGroups.length} grupos independientes</span></div><p class="chr-net-hint">Cada círculo es un personaje. Seleccionalo para ver y editar sus vínculos; las líneas muestran relaciones guardadas en este libro.</p><div class="chr-net-canvas"><svg class="chr-svg chr-svg--global" viewBox="0 0 ${size} ${size}" role="group" aria-label="Mapa global con todos los personajes y vínculos">${edgeSvg}${nodesSvg}</svg></div>${mobilePeople}<div class="chr-net-legend">${types.map((type) => `<span><i style="--edge-color:${relationColor(type)}"></i>${esc(type)}</span>`).join('')}<span><i class="chr-net-certainty"></i>Línea continua: explícita · discontinua: inferida o desconocida</span></div>${detail}${networkReviewHTML()}</div>`;
 }
 
 function buildConnectedGroups(characters: Character[], relations: CharacterRelation[]): string[][] {
@@ -2310,6 +2390,7 @@ async function handleAction(action: string, el: HTMLElement) {
       autoAbort?.abort();
       autoAbort = null;
       autoNote = '';
+      state.growth = { status: 'idle', error: '', result: null };
       state.characterSearch = { status: 'idle', name: '', candidates: [], sources: [], error: '', suggestion: null, prompt: '', responseText: '' };
       state.networkReview = { status: 'idle', prompt: '', responseText: '', error: '', proposals: [], manualFindings: [] };
       return paint();
@@ -2385,6 +2466,13 @@ async function handleAction(action: string, el: HTMLElement) {
       return;
     case 'ai-key':
       return api().ai.openSettings();
+    case 'grow-network':
+      return state.growth.status === 'idle' ? startGrowth() : undefined;
+    case 'apply-growth':
+      return applyGrowth();
+    case 'cancel-growth':
+      state.growth = { status: 'idle', error: '', result: null };
+      return paint();
     case 'animate-network':
       state.netReveal = true;
       repaintResults();
