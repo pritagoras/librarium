@@ -169,6 +169,15 @@ main{padding:20px clamp(16px,5vw,40px) 64px}
 .synthesis-questions{margin:0;padding-left:20px;font-size:14px;line-height:1.6;color:var(--ink)}
 .synthesis-questions li{margin:4px 0}
 .synthesis-footer{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--line)}
+.search-filters{display:flex;gap:6px;overflow-x:auto;flex:none;padding-bottom:2px}
+.search-filters:empty{display:none}
+.search-chip{flex:none;min-height:40px;padding:7px 13px;border:1px solid var(--line);border-radius:999px;background:var(--white);color:var(--ink);font-size:13px;cursor:pointer;white-space:nowrap}
+.search-chip span{color:var(--muted)}
+.search-chip[aria-pressed="true"]{border-color:var(--green);box-shadow:inset 0 0 0 1px var(--green);font-weight:700}
+#searchResults .ai-conv-row,#searchResults .ai-convs-group>button{flex:none}
+.search-snippet{font-size:13px;line-height:1.45;overflow-wrap:anywhere}
+.search-snippet mark{background:#f2dc8f;color:#292923;border-radius:2px}
+@media(max-width:620px){.search-label{display:none}.backup-actions #searchOpen{flex:0 0 48px}}
 .quote-highlight{outline:2px solid var(--green);outline-offset:3px;transition:outline-color .3s}
 :root[data-theme="dark"] .book-synthesis-card{background:#292b28}
 :root[data-theme="dark"] .connection-card{background:#242622}

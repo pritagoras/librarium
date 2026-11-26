@@ -75,6 +75,7 @@
     </div>
   </div>
   <div class="backup-actions">
+    <button id="searchOpen" class="quiet" type="button" aria-haspopup="dialog" title="Buscar en todo (Ctrl+K)" aria-label="Buscar en toda la biblioteca">🔍<span class="search-label"> Buscar</span></button>
     <button id="accountBtn" class="quiet" type="button">Iniciar sesión</button>
     <button id="settingsOpen" class="quiet settings-trigger" type="button" aria-haspopup="dialog">⚙ Ajustes <span id="settingsOpenBadge" class="admin-pending-badge hidden" aria-hidden="true"></span></button>
   </div>
@@ -687,6 +688,21 @@ Notas finales:
     </div>
     <input id="aiConvsSearch" type="search" placeholder="Buscar por libro, cita o texto de la charla…" aria-label="Buscar en las conversaciones">
     <div id="aiConvsList" class="ai-convs-list"></div>
+  </section>
+</dialog>
+
+<dialog id="searchDialog" class="ai-convs-dialog">
+  <section class="ai-convs-shell">
+    <div class="ai-convs-topbar">
+      <div>
+        <p class="eyebrow">TODA TU BIBLIOTECA</p>
+        <h2>Buscar</h2>
+      </div>
+      <button type="button" class="close" data-close aria-label="Cerrar">×</button>
+    </div>
+    <input id="searchInput" type="search" placeholder="Una palabra, un nombre, una frase…" aria-label="Buscar en toda la biblioteca" autocomplete="off">
+    <div id="searchFilters" class="search-filters" role="group" aria-label="Filtrar resultados"></div>
+    <div id="searchResults" class="ai-convs-list" aria-live="polite"></div>
   </section>
 </dialog>
 

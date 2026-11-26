@@ -7,11 +7,14 @@ import {
 } from './app/data-transfer';
 import { showConfirmDialog } from './app/dialogs';
 import {
+  openCharacterSheet,
   initCharacters,
   isCharactersBusy,
   purgeBookCharacters,
   renderCharactersPanel,
 } from './app/characters';
+import { initSearch } from './app/search';
+import type { SearchDoc } from './app/search-model';
 import {
   archiveAdminSiteVisitsInBackground,
   initAdminFeatures,
@@ -2444,6 +2447,70 @@ async function openAiConversations() {
   if (!dialog.open) dialog.showModal();
 }
 
+/** Todo lo que se puede encontrar con la búsqueda global, lo más reciente primero. */
+async function loadSearchDocs(): Promise<SearchDoc[]> {
+  const [notes, entries, quotes, characters, chats] = await Promise.all([
+    all<Note>('notes'),
+    all<Entry>('entries'),
+    all<Quote>('quotes'),
+    all<Character>('characters'),
+    loadAiConversationRows(),
+  ]);
+  const byId = new Map(books.map((b) => [sanitizeId(b.id), b]));
+  const docs: SearchDoc[] = books.map((b) => ({
+    kind: 'book',
+    id: b.id,
+    bookId: b.id,
+    bookTitle: b.title,
+    title: b.title,
+    fields: [b.author, b.tags?.join(', '), b.review, b.publisher, b.isbn],
+  }));
+  const add = (kind: SearchDoc['kind'], item: { id: string; bookId: string }, title: string, fields: SearchDoc['fields']) => {
+    const book = byId.get(sanitizeId(item.bookId));
+    if (book) docs.push({ kind, id: item.id, bookId: book.id, bookTitle: book.title, title, fields });
+  };
+  const recent = <T extends { updatedAt?: string; createdAt?: string }>(items: T[]) =>
+    items.sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''));
+
+  notes.sort((a, b) => (a.section || 1) - (b.section || 1) || a.number - b.number);
+  for (const n of notes) add('note', n, `Nota ${n.number}`, [n.text, n.comment]);
+  for (const e of recent(entries)) add('entry', e, e.title || `Anotación · pág. ${e.page}`, [e.text, e.comment]);
+  for (const q of recent(quotes)) add('quote', q, q.page != null ? `Cita · pág. ${q.page}` : 'Cita', [q.text, q.analysis, q.chapter]);
+  for (const c of characters) {
+    add('character', c, c.name, [c.aliases?.join(', '), c.description, c.occupation, c.affiliation, c.traits?.join(', '), c.comments]);
+  }
+  for (const row of chats) {
+    // En los turnos propios, la pregunta es la última parte; las anteriores son contexto que arma la app.
+    const turns = row.conv.history.map((t) =>
+      (t.role === 'user' ? t.parts.slice(-1) : t.parts).map((part) => part.text || '').join(' '),
+    );
+    add('chat', { id: row.conv.id, bookId: row.book.id }, row.label, [...turns.map((t) => plainSnippet(t, t.length)), row.target]);
+  }
+  return docs;
+}
+
+async function openSearchResult(doc: SearchDoc) {
+  if (doc.kind === 'chat') {
+    const row = (await loadAiConversationRows()).find((r) => r.conv.id === doc.id);
+    if (row) await openGemini(row.seed);
+    return;
+  }
+  await openDetail(doc.bookId);
+  if (doc.kind === 'book' || !activeBook) return;
+  detailTab = ({ note: 'notes', entry: 'entries', quote: 'quotes', character: 'characters' } as const)[doc.kind];
+  await renderDetail();
+  if (doc.kind === 'character') {
+    openCharacterSheet(doc.id);
+    return;
+  }
+  const attribute = { note: 'data-ai-note', entry: 'data-ai-entry', quote: 'data-quote-id' }[doc.kind];
+  const found = $('#detailPanel')?.querySelector<HTMLElement>(`[${attribute}="${CSS.escape(doc.id)}"]`);
+  if (!found) return;
+  found.scrollIntoView({ block: 'center' });
+  found.classList.add('quote-highlight');
+  setTimeout(() => found.classList.remove('quote-highlight'), 2500);
+}
+
 async function openGemini(
   seed: {
     noteId?: string;
@@ -4245,6 +4312,7 @@ export async function initApp() {
   initEnvironmentNotices();
   render();
   initAISettings();
+  initSearch({ loadDocs: loadSearchDocs, open: openSearchResult });
   initCharacters({
     loadBookData: async (bookId) => {
       const [characters, relations, notes, entries, quotes] = await Promise.all([

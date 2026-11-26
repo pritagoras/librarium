@@ -26,6 +26,7 @@ Instalarla en el iPhone es importante: Safari puede borrar los datos de los siti
 - La IA pasa sola a otro modelo si el elegido falla, se traba o corta la respuesta.
 - **Personajes**: dentro de cada libro, la pestaña *Personajes* permite crear fichas (nombre y alias, edad, descripción y rasgos, ocupación, pertenencia, comentarios, fuentes y certeza de cada dato), relacionarlas entre sí (familiar, amistad, rivalidad, alianza, mentoría u otro tipo editable), recorrerlas en lista, tabla o red de relaciones, y consultar a la IA sobre la ficha, un campo o un vínculo (ver abajo).
 - Ficha del libro y etiquetas sugeridas, síntesis de ideas y borrador de reseña con IA.
+- **Búsqueda global** (botón *🔍 Buscar* o Ctrl+K): encuentra palabras en libros, notas, anotaciones, citas, personajes y charlas con la IA, sin distinguir tildes ni mayúsculas, y lleva al registro. No usa IA ni envía datos.
 - Modo oscuro, copia de seguridad y restauración.
 
 ## Cómo conseguir tu clave de Gemini (gratis)
