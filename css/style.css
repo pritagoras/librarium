@@ -1137,3 +1137,16 @@ dialog[open]:not(.book-detail-dialog):not(.photo-viewer-dialog):not(#geminiDialo
   .chr-form-steps a { font-size: .82rem; padding-inline: .55rem; }
   .chr-relation-step { padding-block: .8rem; }
 }
+
+/* Animación para compartir la red de personajes */
+.chrx{border:1px solid #48534a;border-radius:16px;padding:12px;background:#1c211f;color:#eee9df;width:min(600px,calc(100vw - 16px),calc(100dvh - 200px + 24px));min-width:min(320px,calc(100vw - 16px));max-width:none;max-height:calc(100dvh - 16px);overflow:auto}
+.chrx::backdrop{background:#000c}
+.chrx-body{display:grid;gap:10px}
+.chrx canvas{width:100%;height:auto;aspect-ratio:1;border-radius:10px;display:block}
+.chrx-actions,.chrx-result{display:flex;flex-wrap:wrap;gap:8px}
+.chrx-result[hidden],.chrx-result [hidden]{display:none}
+.chrx button,.chrx-result a{flex:1 1 auto;min-height:44px;padding:10px 14px;border-radius:9px;border:1px solid #647064;background:#303832;color:#eee9df;font:inherit;font-size:14px;text-align:center;text-decoration:none;cursor:pointer}
+.chrx button.chrx-main{background:#cdb783;border-color:#cdb783;color:#1c211f;font-weight:700}
+.chrx button:disabled{opacity:.5;cursor:default}
+.chrx-status,.chrx-note{margin:0;font-size:13px;color:#c4c9bd}
+.chrx-status:empty{display:none}

@@ -40,6 +40,8 @@ import {
   type CharacterInput,
   type SaveTarget,
 } from './characters-model';
+import { computeLayout } from './network-layout';
+import { openNetworkShare, relationColor } from './network-share';
 
 // ---------------------------------------------------------------------------
 // Dependencias (las aporta app.ts)
@@ -448,55 +450,10 @@ function mostConnected(): string | null {
 }
 
 function layoutGlobalGraph() {
-  const nodes = data.characters;
-  const n = nodes.length;
-  const size = Math.max(760, Math.ceil(150 * Math.sqrt(n)));
-  const center = size / 2;
-  const radius = Math.max(150, size * 0.38);
-  const positions = new Map(nodes.map((c, i) => {
-    const angle = (2 * Math.PI * i) / Math.max(n, 1) - Math.PI / 2;
-    return [c.id, { x: center + radius * Math.cos(angle), y: center + radius * Math.sin(angle), vx: 0, vy: 0 }];
-  }));
-  const edgeLength = Math.max(90, Math.min(170, size / Math.sqrt(Math.max(n, 1))));
-  const iterations = Math.max(8, Math.min(100, Math.floor(250000 / Math.max(n * n, 1))));
-  for (let step = 0; step < iterations; step++) {
-    const list = nodes.map((c) => positions.get(c.id)!);
-    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
-      const a = list[i], b = list[j];
-      const dx = a.x - b.x, dy = a.y - b.y;
-      const d2 = Math.max(25, dx * dx + dy * dy), d = Math.sqrt(d2);
-      const force = Math.min(2.5, (size * size) / (d2 * Math.max(n, 1)) * 0.018);
-      a.vx += (dx / d) * force; a.vy += (dy / d) * force;
-      b.vx -= (dx / d) * force; b.vy -= (dy / d) * force;
-    }
-    for (const relation of data.relations) {
-      const a = positions.get(relation.fromId), b = positions.get(relation.toId);
-      if (!a || !b) continue;
-      const dx = b.x - a.x, dy = b.y - a.y, d = Math.max(1, Math.hypot(dx, dy));
-      const force = (d - edgeLength) * 0.002;
-      a.vx += dx / d * force; a.vy += dy / d * force; b.vx -= dx / d * force; b.vy -= dy / d * force;
-    }
-    for (const p of list) {
-      p.vx += (center - p.x) * 0.0007; p.vy += (center - p.y) * 0.0007;
-      p.x += Math.max(-8, Math.min(8, p.vx)); p.y += Math.max(-8, Math.min(8, p.vy));
-      p.vx *= 0.82; p.vy *= 0.82;
-    }
-  }
+  const ids = data.characters.map((c) => c.id);
+  const size = Math.max(760, Math.ceil(170 * Math.sqrt(ids.length)));
+  const positions = computeLayout(ids, data.relations, { width: size, height: size, padding: 60, minDistance: 105 });
   return { positions, size };
-}
-
-function relationColor(type: string): string {
-  const key = type.toLocaleLowerCase();
-  if (/famili|madre|padre|hijo|herman|abuelo|nieto|tio|sobrino|primo/.test(key)) return '#c39a68';
-  if (/amistad/.test(key)) return '#91aa87';
-  if (/alianza/.test(key)) return '#829e9b';
-  if (/rival/.test(key)) return '#b77d75';
-  if (/rom[aá]nt/.test(key)) return '#ad8d9e';
-  if (/mentor/.test(key)) return '#a69a78';
-  if (/labor/.test(key)) return '#829b9a';
-  const palette = ['#91a58b', '#b39b77', '#829b9a', '#ad8d9e', '#a69a78', '#b77d75'];
-  let hash = 0; for (const char of type) hash = (hash * 31 + char.charCodeAt(0)) | 0;
-  return palette[Math.abs(hash) % palette.length];
 }
 
 // ---------------------------------------------------------------------------
@@ -635,7 +592,7 @@ function networkHTML(): string {
   const allGroups = buildConnectedGroups(data.characters, data.relations);
   const detail = selected ? `<aside class="chr-net-details"><strong>${esc(selected.name)}</strong><span>${relationCount(selected.id)} vínculos · ${isolated && relationCount(selected.id) === 0 ? 'personaje aislado' : `grupo ${allGroups.findIndex((g) => g.includes(selected.id)) + 1}`}</span><div class="chr-row-actions"><button type="button" class="secondary" data-chr="open" data-id="${esc(selected.id)}">Abrir ficha</button><button type="button" class="secondary" data-chr="net-center" data-id="${esc(selected.id)}">Centrar y elegir</button><button type="button" class="secondary" data-chr="add-relation">＋ Agregar vínculo</button></div>${data.relations.filter((r) => r.fromId === selected.id || r.toId === selected.id).map((r) => `<div class="chr-net-rel"><span class="chr-net-dot" style="--edge-color:${relationColor(r.type)}"></span>${esc(characterById(r.fromId)?.name)} ${isDirectedType(r.type) ? '→' : '↔'} ${esc(characterById(r.toId)?.name)} · ${esc(r.type)} <button type="button" class="secondary" data-chr="edit-relation" data-rel="${esc(r.id)}">Editar</button></div>`).join('')}</aside>` : '<p class="muted">Seleccioná cualquier personaje para abrir su ficha o administrar vínculos.</p>';
   const mobilePeople = `<div class="chr-net-mobile-people"><h4>Personajes</h4><div>${data.characters.map((c) => `<button type="button" data-chr="net-select" data-id="${esc(c.id)}" class="${c.id === state.netSelected ? 'active' : ''}"><strong>${esc(c.name)}</strong><span>${relationCount(c.id)} vínculos</span></button>`).join('')}</div></div>`;
-  return `<div class="chr-network chr-network--global"><div class="chr-network-header"><div><h3>Red de personajes</h3><p>${data.characters.length} personajes · ${data.relations.length} vínculos · ${allGroups.length} grupos · ${isolated} aislados</p></div><label for="chrNetFocus">Centrar en<select id="chrNetFocus">${data.characters.map((c) => `<option value="${esc(c.id)}" ${c.id === focusId ? 'selected' : ''}>${esc(c.name)} (${relationCount(c.id)})</option>`).join('')}</select></label><button type="button" class="primary" data-chr="analyze-network">✦ Analizar red con IA</button>${groundingToggleHTML()}<button type="button" class="secondary" data-chr="fullscreen-network">⛶ Pantalla completa</button></div><div class="chr-net-stats"><button type="button" data-chr="filter-isolated" aria-pressed="${state.netIsolatedOnly}">${isolated} aislados</button><span>${connected} conectados</span><span>${allGroups.length} grupos independientes</span></div><p class="chr-net-hint">Cada círculo es un personaje. Seleccionalo para ver y editar sus vínculos; las líneas muestran relaciones guardadas en este libro.</p><div class="chr-net-canvas"><svg class="chr-svg chr-svg--global" viewBox="0 0 ${size} ${size}" role="group" aria-label="Mapa global con todos los personajes y vínculos">${edgeSvg}${nodesSvg}</svg></div>${mobilePeople}<div class="chr-net-legend">${types.map((type) => `<span><i style="--edge-color:${relationColor(type)}"></i>${esc(type)}</span>`).join('')}<span><i class="chr-net-certainty"></i>Línea continua: explícita · discontinua: inferida o desconocida</span></div>${detail}${networkReviewHTML()}</div>`;
+  return `<div class="chr-network chr-network--global"><div class="chr-network-header"><div><h3>Red de personajes</h3><p>${data.characters.length} personajes · ${data.relations.length} vínculos · ${allGroups.length} grupos · ${isolated} aislados</p></div><label for="chrNetFocus">Centrar en<select id="chrNetFocus">${data.characters.map((c) => `<option value="${esc(c.id)}" ${c.id === focusId ? 'selected' : ''}>${esc(c.name)} (${relationCount(c.id)})</option>`).join('')}</select></label><button type="button" class="primary" data-chr="animate-network">✨ Optimizar y animar</button><button type="button" class="secondary" data-chr="analyze-network">✦ Analizar red con IA</button>${groundingToggleHTML()}<button type="button" class="secondary" data-chr="fullscreen-network">⛶ Pantalla completa</button></div><div class="chr-net-stats"><button type="button" data-chr="filter-isolated" aria-pressed="${state.netIsolatedOnly}">${isolated} aislados</button><span>${connected} conectados</span><span>${allGroups.length} grupos independientes</span></div><p class="chr-net-hint">Cada círculo es un personaje. Seleccionalo para ver y editar sus vínculos; las líneas muestran relaciones guardadas en este libro.</p><div class="chr-net-canvas"><svg class="chr-svg chr-svg--global" viewBox="0 0 ${size} ${size}" role="group" aria-label="Mapa global con todos los personajes y vínculos">${edgeSvg}${nodesSvg}</svg></div>${mobilePeople}<div class="chr-net-legend">${types.map((type) => `<span><i style="--edge-color:${relationColor(type)}"></i>${esc(type)}</span>`).join('')}<span><i class="chr-net-certainty"></i>Línea continua: explícita · discontinua: inferida o desconocida</span></div>${detail}${networkReviewHTML()}</div>`;
 }
 
 function buildConnectedGroups(characters: Character[], relations: CharacterRelation[]): string[][] {
@@ -2428,6 +2385,10 @@ async function handleAction(action: string, el: HTMLElement) {
       return;
     case 'ai-key':
       return api().ai.openSettings();
+    case 'animate-network':
+      state.netReveal = true;
+      repaintResults();
+      return openNetworkShare({ bookTitle: book?.title || 'Mi libro', characters: data.characters, relations: data.relations });
     case 'analyze-network':
     case 'new-network-analysis':
       return startNetworkAnalysis();
