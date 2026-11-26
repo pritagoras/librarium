@@ -2,7 +2,7 @@
 import type { Certainty, CharacterFieldKey } from '../../types';
 import { FIELD_KEYS, FIELD_LABELS, LIMITS, removeCharacterCascade } from '../characters-model';
 import { openNetworkShare } from '../network-share';
-import { abortAI, paintAI, startAI, submitAISave, submitFullSheet, syncAISaveForm } from './ai-panel';
+import { abortAI, addSheetLinkRow, paintAI, startAI, submitAISave, submitFullSheet, syncAISaveForm } from './ai-panel';
 import { applyWebResearch, copyResearchPrompt, parseCandidateResponse, parseProfileResponse, prepareSelectedProfile, startCharacterSearch } from './character-search';
 import { api, book, characterById, data, host, state, type IndexView } from './context';
 import { applyFamilySuggestions, copyFamilyPrompt, parseFamilySuggestions, startFamilySearch } from './family';
@@ -209,6 +209,8 @@ async function handleAction(action: string, el: HTMLElement) {
       if (scope === 'relation') return startAI({ kind: 'relation', otherId: el.dataset.other || '', relationId: el.dataset.rel });
       return;
     }
+    case 'add-sheet-link':
+      return addSheetLinkRow();
     case 'autofill':
       return startAI({ kind: 'character' }, true);
     case 'search-character':

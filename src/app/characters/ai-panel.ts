@@ -1,6 +1,6 @@
 /** Personajes · Consultas a la IA desde la ficha y guardado de respuestas. */
 import type { Certainty, Character, CharacterFieldKey, CharacterRelation } from '../../types';
-import { CERTAINTIES, CERTAINTY_LABELS, FIELD_LABELS, LIMITS, RELATION_TYPES, applyAnswerToCharacter, applyAnswerToRelation, buildCharacterAIRequest, normalizeText, type AIScope, type SaveTarget, validateRelation } from '../characters-model';
+import { CERTAINTIES, CERTAINTY_LABELS, FIELD_LABELS, LIMITS, RELATION_TYPES, applyAnswerToCharacter, applyAnswerToRelation, buildCharacterAIRequest, normalizeText, sheetLinks, type SheetLink, type AIScope, type SaveTarget, validateRelation } from '../characters-model';
 import { parsePastedJSON } from './character-search';
 import { AI_SPARK, api, book, characterById, data, esc, host, state, type AIState } from './context';
 import { formValue, showFormErrors } from './forms';
@@ -65,13 +65,13 @@ export async function startAI(scope: AIScope, formTarget = false) {
     if (!formTarget && scope.kind === 'character') {
       ai.fullSheet = true;
       ai.plan.prompt += '\n\nRespondé únicamente JSON válido, sin markdown, con esta forma: {"aliases":[],"age":"","description":"","traits":[],"occupation":"","affiliation":"","basis":{"age":"de dónde sale el dato y qué tan seguro estás, en 1 o 2 frases","description":"","occupation":"","affiliation":"","traits":"","aliases":""},"certainty":{"age":"explicit|inferred","description":"explicit|inferred","occupation":"explicit|inferred","affiliation":"explicit|inferred"}}. Comprometete con tu mejor estimación para cada campo usando el material guardado y tu conocimiento de la obra, sin revelar trama posterior a la página de lectura. Dejá vacío solo lo que no tenga base alguna. Usá explicit solo si sale directo del material guardado.';
-      const others = data.characters.filter((c) => c.id !== character.id).slice(0, 60).map((c) => ({ id: c.id, name: c.name, aliases: c.aliases }));
-      if (others.length) ai.plan.prompt += `\n\nAdemás agregá la clave "relations" con los vínculos de «${character.name}» con estos otros personajes registrados (usá los IDs exactos, sin inventar IDs ni personajes): ${JSON.stringify(others)}. Cada elemento: {"otherId":"ID exacto","type":"uno de ${RELATION_TYPES.join(', ')} u otro tipo breve","direction":"out si «${character.name}» es quien cumple el rol hacia el otro (p. ej. Madre de), in si es al revés; en vínculos simétricos usá out","description":"breve","certainty":"explicit|inferred","basis":"de dónde sale y qué tan seguro estás"}. Incluí todos los vínculos que conozcas con esos personajes, sin spoilers posteriores a la página de lectura, y omití los que no existan. No repitas los ya registrados.`;
+      const others = data.characters.filter((c) => c.id !== character.id).slice(0, 60).map((c) => ({ name: c.name, aliases: c.aliases }));
+      ai.plan.prompt += `\n\nAdemás agregá la clave "relations" con los vínculos de «${character.name}» de cualquier tipo (familia, amor, amistad, rivalidad, alianza, mentoría u otros), no solo familiares. Personajes ya registrados (usá exactamente esos nombres): ${JSON.stringify(others)}. También podés proponer personajes que todavía no estén. Cada elemento: {"name":"la otra persona","type":"uno de ${RELATION_TYPES.join(', ')} u otro tipo breve","direction":"out si «${character.name}» es quien cumple el rol hacia el otro (p. ej. Madre de), in si es al revés; en vínculos simétricos usá out","relationDescription":"breve","certainty":"explicit|inferred","basis":"de dónde sale y qué tan seguro estás","age":"","occupation":"","description":"descripción breve de la persona, solo si no está registrada"}. Sin spoilers posteriores a la página de lectura. No repitas los vínculos ya registrados.`;
       ai.plan.systemInstruction += '\n\nEn esta solicitud respondé únicamente con el JSON pedido (ignorá el formato por secciones) y usá tu conocimiento general de la obra cuando el material no alcance, sin spoilers.';
     }
     if (formTarget) {
-      ai.plan.prompt += '\n\nLa persona pidió completar una ficha y quizá agregar familiares. Respondé únicamente JSON válido, sin markdown, con esta forma: {"nameSuggestion":"nombre correcto sugerido o cadena vacía","nameSuggestionBasis":"material|conocimiento_general|vacío","nameSuggestionEvidence":"código de fuente y referencia o vacío","aliases":[],"age":"","description":"","traits":[],"occupation":"","affiliation":"","certainty":{"age":"explicit","description":"inferred","occupation":"explicit","affiliation":"inferred"},"evidence":{"age":"código de fuente y referencia o vacío","description":"código de fuente y referencia o vacío","occupation":"código de fuente y referencia o vacío","affiliation":"código de fuente y referencia o vacío"},"relatives":[{"name":"","type":"Hermano/a de","direction":"out","certainty":"explicit","evidence":"código de fuente y referencia"}]}. Para nameSuggestion podés usar una coincidencia en las fuentes permitidas o tu conocimiento general de la obra para sugerir solo la ortografía/nombre canónico más probable. nameSuggestionBasis debe ser exactamente material, conocimiento_general o vacío. Si usás conocimiento general, marca nameSuggestionBasis como conocimiento_general; no des detalles de trama, relaciones ni eventos al explicar la sugerencia. Si no tenés confianza suficiente, dejá nameSuggestion vacío. Nunca cambies el nombre de la ficha automáticamente. Para los demás datos, priorizá las fuentes permitidas y, si no alcanzan, completá con tu conocimiento de la obra (edad, ocupación, pertenencia, descripción, familiares) cuando lo conozcas; no anticipes eventos posteriores a la página actual. Dejá vacío solo lo que realmente no sepas. En certainty usá solo los valores exactos explicit, inferred o unknown. Para direction usá solo out o in. Usá cadenas vacías y listas vacías si no hay respaldo. Podés proponer familiares respaldados por las fuentes o por tu conocimiento de la obra, siempre sin spoilers; si no es del material, no pongas certainty explicit. La persona revisará las sugerencias antes de aplicarlas.';
-      ai.plan.systemInstruction += '\n\nEn esta solicitud podés usar tu conocimiento general de la obra para completar edad, ocupación, pertenencia, descripción y familiares cuando el material no alcance, siempre sin revelar trama posterior a la página de lectura. Lo que no salga del material nunca debe llevar certainty explicit. Dejá vacío solo lo que realmente no conozcas.';
+      ai.plan.prompt += '\n\nLa persona pidió completar una ficha y quizá agregar vínculos (en la clave relatives; de cualquier tipo: familia, amor, amistad, rivalidad, alianza, mentoría u otro). Respondé únicamente JSON válido, sin markdown, con esta forma: {"nameSuggestion":"nombre correcto sugerido o cadena vacía","nameSuggestionBasis":"material|conocimiento_general|vacío","nameSuggestionEvidence":"código de fuente y referencia o vacío","aliases":[],"age":"","description":"","traits":[],"occupation":"","affiliation":"","certainty":{"age":"explicit","description":"inferred","occupation":"explicit","affiliation":"inferred"},"evidence":{"age":"código de fuente y referencia o vacío","description":"código de fuente y referencia o vacío","occupation":"código de fuente y referencia o vacío","affiliation":"código de fuente y referencia o vacío"},"relatives":[{"name":"","type":"Hermano/a de","direction":"out","certainty":"explicit","evidence":"código de fuente y referencia"}]}. Para nameSuggestion podés usar una coincidencia en las fuentes permitidas o tu conocimiento general de la obra para sugerir solo la ortografía/nombre canónico más probable. nameSuggestionBasis debe ser exactamente material, conocimiento_general o vacío. Si usás conocimiento general, marca nameSuggestionBasis como conocimiento_general; no des detalles de trama, relaciones ni eventos al explicar la sugerencia. Si no tenés confianza suficiente, dejá nameSuggestion vacío. Nunca cambies el nombre de la ficha automáticamente. Para los demás datos, priorizá las fuentes permitidas y, si no alcanzan, completá con tu conocimiento de la obra (edad, ocupación, pertenencia, descripción, vínculos) cuando lo conozcas; no anticipes eventos posteriores a la página actual. Dejá vacío solo lo que realmente no sepas. En certainty usá solo los valores exactos explicit, inferred o unknown. Para direction usá solo out o in. Usá cadenas vacías y listas vacías si no hay respaldo. Podés proponer vínculos respaldados por las fuentes o por tu conocimiento de la obra, siempre sin spoilers; si no es del material, no pongas certainty explicit. La persona revisará las sugerencias antes de aplicarlas.';
+      ai.plan.systemInstruction += '\n\nEn esta solicitud podés usar tu conocimiento general de la obra para completar edad, ocupación, pertenencia, descripción y vínculos cuando el material no alcance, siempre sin revelar trama posterior a la página de lectura. Lo que no salga del material nunca debe llevar certainty explicit. Dejá vacío solo lo que realmente no conozcas.';
     }
   } catch (err: any) {
     ai.status = 'error';
@@ -263,13 +263,13 @@ export function paintAI() {
         <button type="button" class="secondary" data-chr="ai-close">Cerrar</button>
       </div>
     </div>
-    ${!isFieldSuggestion && ai.plan ? `<p class="muted chr-ai-context">${esc(ai.plan.contextSummary)}</p>` : ''}
+    ${!isFieldSuggestion && ai.plan ? `<details class="chr-ai-context"><summary>Qué se envía a la IA</summary><p class="muted">${esc(ai.plan.contextSummary)}</p></details>` : ''}
     <p class="chr-ai-status" role="status" aria-live="polite">${
       ai.status === 'running' ? 'Consultando a la IA…' : ai.status === 'done' ? esc(ai.note) : ''
     }</p>
     ${ai.status === 'error' ? `<div class="chr-ai-error" role="alert">${esc(ai.error)} ${ai.keyError ? '<button type="button" class="ai-key-cta" data-chr="ai-key">Configurar mi API key</button>' : ''}</div>` : ''}
     ${isFieldSuggestion ? fieldSuggestionHTML : sheet ? fullSheetFormHTML(sheetCharacter!, sheet) : ai.fullSheet && ai.status === 'running' ? '' : ai.text || ai.status === 'running' ? answerHTML : ''}
-    ${ai.formTarget && ai.status === 'done' ? `<div class="chr-ai-save">${suggestedNameHTML(ai.text)}<p class="muted">Revisá la respuesta. Marcá los familiares que quieras agregar; se crearán al guardar la ficha.</p><div id="chrSuggestedRelatives">${suggestedRelativesHTML(ai.text)}</div><button type="button" class="primary" data-chr="apply-autofill">Aplicar datos seleccionados</button></div>` : ''}
+    ${ai.formTarget && ai.status === 'done' ? `<div class="chr-ai-save">${suggestedNameHTML(ai.text)}<p class="muted">Revisá la respuesta. Marcá los vínculos que quieras agregar; se crearán al guardar la ficha.</p><div id="chrSuggestedRelatives">${suggestedRelativesHTML(ai.text)}</div><button type="button" class="primary" data-chr="apply-autofill">Aplicar datos seleccionados</button></div>` : ''}
     ${!isFieldSuggestion && ai.status === 'done' && ai.text.trim() && !sheet
         ? `<p class="muted chr-ai-disclaimer">La IA puede equivocarse y no leyó el libro completo: revisá lo explícito y lo inferido antes de guardar.</p>
     ${
@@ -331,30 +331,46 @@ function parseFullSheet(text: string): any | null {
   } catch { return null; }
 }
 
+function sheetLinkRow(i: number, link: Partial<SheetLink>, manual = false): string {
+  const direction = link.direction === 'in' ? 'in' : 'out';
+  const existing = link.name && data.characters.some((c) => [c.name, ...c.aliases].some((n) => normalizeText(n) === normalizeText(link.name!)));
+  return `<fieldset class="chr-fs-row chr-link-row">
+    <label class="chr-fs-check"><input type="checkbox" name="rel_apply_${i}" ${manual ? 'checked' : ''}/> <span>${manual ? '<strong>Nuevo vínculo</strong>' : `<strong>${esc(link.name)}</strong> · ${esc(link.type)} <span class="muted">${existing ? '(ya tiene ficha)' : '(se creará la ficha)'}</span>`}</span></label>
+    <label>Con quién<input name="rel_name_${i}" value="${esc(link.name)}" list="chrLinkNames" maxlength="${LIMITS.name}" autocomplete="off"/></label>
+    <label>Tipo de vínculo<input name="rel_type_${i}" value="${esc(link.type)}" list="chrLinkTypes" maxlength="${LIMITS.relationType}" placeholder="Amistad, amor, rivalidad, familiar…" autocomplete="off"/></label>
+    <label>Sentido<select name="rel_dir_${i}"><option value="out" ${direction === 'out' ? 'selected' : ''}>De este personaje hacia el otro</option><option value="in" ${direction === 'in' ? 'selected' : ''}>Del otro hacia este personaje</option></select></label>
+    <details><summary>Más detalles</summary><div>
+      <label>Descripción del vínculo<textarea name="rel_note_${i}" rows="2">${esc(link.description)}</textarea></label>
+      <label>Edad (si es nuevo)<input name="rel_age_${i}" value="${esc(link.age)}"/></label>
+      <label>Ocupación (si es nuevo)<input name="rel_occupation_${i}" value="${esc(link.occupation)}"/></label>
+      <label>Quién es (si es nuevo)<textarea name="rel_description_${i}" rows="2">${esc(link.profile)}</textarea></label>
+    </div></details>
+    ${manual ? '' : `<small class="muted">${link.basis ? `Respaldo sugerido: ${esc(link.basis)}` : 'La IA no indicó una fuente; verificá antes de incorporarlo.'} · Se guardará como inferido.</small>`}
+    <input type="hidden" name="rel_basis_${i}" value="${esc(link.basis)}"/>
+    <input type="hidden" name="rel_manual_${i}" value="${manual ? '1' : ''}"/>
+  </fieldset>`;
+}
+
 function sheetRelationRows(character: Character, parsed: any): string {
-  const raw = Array.isArray(parsed.relatives) ? parsed.relatives.slice(0, 20) : [];
-  const existingNames = new Set(data.characters.flatMap((c) => [c.name, ...c.aliases]).map(normalizeText));
-  const rows = raw.flatMap((r: any, i: number) => {
-    const name = String(r?.name || '').trim().slice(0, LIMITS.name);
-    const type = String(r?.type || '').trim().slice(0, LIMITS.relationType);
-    if (!name || !type) return [];
-    const existing = existingNames.has(normalizeText(name));
-    const direction = r?.direction === 'in' ? 'in' : 'out';
-    return [`<div class="chr-form-field chr-fs-row chr-fs-relative">
-      <label class="chr-fs-check"><input type="checkbox" name="rel_apply_${i}"/> <strong>${esc(name)}</strong> · ${esc(type)} ${existing ? '<span class="muted">(ya tiene ficha)</span>' : '<span class="muted">(se creará una ficha)</span>'}</label>
-      <input name="rel_name_${i}" value="${esc(name)}" aria-label="Nombre del familiar"/>
-      <input name="rel_type_${i}" value="${esc(type)}" aria-label="Parentesco"/>
-      <select name="rel_dir_${i}" aria-label="Dirección del parentesco"><option value="out" ${direction === 'out' ? 'selected' : ''}>${esc(character.name)} → familiar</option><option value="in" ${direction === 'in' ? 'selected' : ''}>Familiar → ${esc(character.name)}</option></select>
-      <input name="rel_age_${i}" value="${esc(String(r.age || '').slice(0, LIMITS.age))}" placeholder="Edad (opcional)"/>
-      <input name="rel_occupation_${i}" value="${esc(String(r.occupation || '').slice(0, LIMITS.occupation))}" placeholder="Ocupación (opcional)"/>
-      <textarea name="rel_description_${i}" rows="2" placeholder="Descripción breve">${esc(String(r.description || '').slice(0, LIMITS.description))}</textarea>
-      ${r.basis ? `<small class="muted">Respaldo sugerido: ${esc(String(r.basis).slice(0, LIMITS.evidenceText))}</small>` : '<small class="muted">La IA no indicó una fuente para este parentesco; verificá antes de incorporarlo.</small>'}
-      <small class="muted">Certeza propuesta: ${esc(CERTAINTY_LABELS[CERTAINTIES.includes(r.certainty) ? r.certainty : 'inferred'])}. Al incorporarlo, Librarium lo guardará como inferido.</small>
-      <input type="hidden" name="rel_basis_${i}" value="${esc(String(r.basis || '').slice(0, LIMITS.evidenceText))}"/>
-    </div>`];
-  });
-  if (!rows.length) return '';
-  return `<h4>Familiares y parentescos</h4><p class="muted">Marcá los familiares que querés incorporar. Se crearán fichas individuales y se conectarán en la red; los que ya tienen ficha se reutilizarán.</p><input type="hidden" name="rel_count" value="${raw.length}"/>${rows.join('')}`;
+  const links = sheetLinks(parsed, character, data.characters, data.relations);
+  const names = data.characters.filter((c) => c.id !== character.id).map((c) => `<option value="${esc(c.name)}"></option>`).join('');
+  return `<h4>Vínculos</h4><p class="muted">${links.length ? 'Marcá los que querés incorporar.' : 'La IA no propuso vínculos nuevos.'} También podés agregar los tuyos.</p>
+    <datalist id="chrLinkNames">${names}</datalist><datalist id="chrLinkTypes">${RELATION_TYPES.map((t) => `<option value="${esc(t)}"></option>`).join('')}</datalist>
+    <input type="hidden" name="rel_count" value="${links.length}"/>
+    <div id="chrSheetLinks">${links.map((link, i) => sheetLinkRow(i, link)).join('')}</div>
+    <button type="button" class="secondary" data-chr="add-sheet-link">＋ Agregar otro vínculo</button>`;
+}
+
+/** Suma una fila vacía sin repintar, para no perder lo ya marcado o escrito. */
+export function addSheetLinkRow(): void {
+  const form = host?.querySelector<HTMLFormElement>('#chrFullSheet');
+  const list = form?.querySelector('#chrSheetLinks');
+  const count = form?.elements.namedItem('rel_count') as HTMLInputElement | null;
+  if (!list || !count) return;
+  const i = Number(count.value) || 0;
+  list.insertAdjacentHTML('beforeend', sheetLinkRow(i, {}, true));
+  count.value = String(i + 1);
+  list.querySelector<HTMLInputElement>(`[name="rel_name_${i}"]`)?.focus();
 }
 
 function fullSheetFormHTML(character: Character, parsed: any): string {
@@ -362,7 +378,7 @@ function fullSheetFormHTML(character: Character, parsed: any): string {
     const value = aiValue || current;
     const checked = aiValue && !current ? 'checked' : '';
     const hasProposal = Boolean(aiValue);
-    return `<div class="chr-form-field chr-fs-row"><label class="chr-fs-check"><input type="checkbox" name="fs_apply_${key}" ${checked}/> <strong>${esc(label)}</strong>${aiValue ? ' · Aplicar sugerencia IA' : ''}</label>
+    return `<div class="chr-form-field chr-fs-row"><label class="chr-fs-check"><input type="checkbox" name="fs_apply_${key}" ${checked}/> <span><strong>${esc(label)}</strong>${aiValue ? ' · Aplicar sugerencia IA' : ''}</span></label>
       ${aiValue && current ? `<small class="muted">Dato actual: ${esc(String(current).slice(0, 500))}</small>` : ''}
       ${long ? `<textarea name="fs_${key}" rows="4">${esc(value)}</textarea>` : `<input name="fs_${key}" value="${esc(value)}" />`}
       ${hasProposal ? `<small class="muted">${basis ? `Respaldo sugerido: ${esc(String(basis).slice(0, LIMITS.evidenceText))}` : 'La IA no indicó una fuente concreta.'} · Certeza propuesta: ${esc(CERTAINTY_LABELS[certainty || 'inferred'])}. Al aplicarlo, Librarium lo guardará como inferido.</small><input type="hidden" name="fs_basis_${key}" value="${esc(String(basis).slice(0, LIMITS.evidenceText))}" />` : ''}
@@ -414,20 +430,16 @@ export async function submitFullSheet(form: HTMLFormElement) {
     if (!(form.elements.namedItem(`rel_apply_${i}`) as HTMLInputElement | null)?.checked) continue;
     const name = formValue(form, `rel_name_${i}`).trim().slice(0, LIMITS.name);
     const type = formValue(form, `rel_type_${i}`).trim().slice(0, LIMITS.relationType);
-    if (!name || !type) continue;
+    if (!name || !type) return fail('Completá «Con quién» y «Tipo de vínculo» en cada vínculo marcado.');
     selectedRelatives.push({ i, name, type, direction: formValue(form, `rel_dir_${i}`) === 'in' ? 'in' : 'out' });
   }
-  const relationCount = Number(formValue(form, 'fr_count')) || 0;
-  const pending: Array<{ i: number }> = [];
-  for (let i = 0; i < relationCount; i++) if ((form.elements.namedItem(`fr_apply_${i}`) as HTMLInputElement | null)?.checked) pending.push({ i });
   const fieldChanges = changes.length;
-  for (const relative of selectedRelatives) changes.push(`Familiar: ${relative.name} (${relative.type})`);
-  for (const { i } of pending) changes.push(`Vínculo: ${formValue(form, `fr_type_${i}`)} con ${characterById(formValue(form, `fr_other_${i}`))?.name || '?'}`);
+  for (const relative of selectedRelatives) changes.push(`Vínculo: ${relative.name} (${relative.type})`);
   if (!changes.length) return fail('No hay datos marcados para aplicar.');
   try {
 
     if (fieldChanges) await api().saveCharacter(updated);
-    let fresh = (pending.length || selectedRelatives.length) ? await api().loadBookData(state.bookId) : null;
+    let fresh = selectedRelatives.length ? await api().loadBookData(state.bookId) : null;
     let relations = fresh ? fresh.relations.filter((r) => r.bookId === state.bookId) : [];
     const relativeFailures: string[] = [];
     for (const relative of selectedRelatives) {
@@ -439,7 +451,8 @@ export async function submitFullSheet(form: HTMLFormElement) {
           other = await api().saveCharacter({ id: crypto.randomUUID(), bookId: state.bookId, name: relative.name, aliases: [], age: formValue(form, `rel_age_${relative.i}`).trim().slice(0, LIMITS.age), description: formValue(form, `rel_description_${relative.i}`).trim().slice(0, LIMITS.description), traits: [], occupation: formValue(form, `rel_occupation_${relative.i}`).trim().slice(0, LIMITS.occupation), affiliation: '', comments: '', evidence: [], certainty: {}, createdAt: now, updatedAt: now });
           fresh!.characters.push(other);
         }
-        const input = { fromId: relative.direction === 'out' ? character.id : other.id, toId: relative.direction === 'out' ? other.id : character.id, type: relative.type, description: 'Parentesco sugerido por la IA', certainty: 'inferred' as Certainty };
+        const manual = Boolean(formValue(form, `rel_manual_${relative.i}`));
+        const input = { fromId: relative.direction === 'out' ? character.id : other.id, toId: relative.direction === 'out' ? other.id : character.id, type: relative.type, description: formValue(form, `rel_note_${relative.i}`).trim().slice(0, LIMITS.relationDescription), certainty: (manual ? 'unknown' : 'inferred') as Certainty };
         const validation = validateRelation(input, { bookId: state.bookId, characters: fresh!.characters.filter((c) => c.bookId === state.bookId), relations });
         if (!validation.ok || !validation.value) { if (validation.errors.some((e) => !/duplicad|existe/i.test(e))) throw Error(validation.errors.join(' ')); else continue; }
         const basis = formValue(form, `rel_basis_${relative.i}`).trim();
@@ -448,25 +461,10 @@ export async function submitFullSheet(form: HTMLFormElement) {
         relations = [...relations, record];
       } catch (err: any) { relativeFailures.push(`${relative.name}: ${String(err?.message || err)}`); }
     }
-    const failures: string[] = [];
-    for (const { i } of pending) {
-      try {
-        const other = formValue(form, `fr_other_${i}`);
-        const out = formValue(form, `fr_dir_${i}`) !== 'in';
-        const certainty = formValue(form, `fr_cert_${i}`) as Certainty;
-        const checked = validateRelation({ fromId: out ? character.id : other, toId: out ? other : character.id, type: formValue(form, `fr_type_${i}`), description: formValue(form, `fr_desc_${i}`), certainty }, { bookId: state.bookId, characters: fresh!.characters.filter((c) => c.bookId === state.bookId), relations });
-        if (!checked.ok || !checked.value) throw Error(checked.errors.join(' '));
-        const basis = formValue(form, `fr_basis_${i}`).trim();
-        const record: CharacterRelation = { ...checked.value.record, description: formValue(form, `fr_desc_${i}`).trim().slice(0, LIMITS.relationDescription), certainty, evidence: basis ? [{ kind: 'other', ref: 'Consulta a la IA', text: basis.slice(0, LIMITS.evidenceText) }] : [] };
-        await api().saveRelation(record);
-        if (checked.value.replacesId && checked.value.replacesId !== record.id) await api().deleteRelation(checked.value.replacesId).catch(() => {});
-        relations = [...relations.filter((r) => r.id !== record.id), record];
-      } catch (err: any) { failures.push(`${formValue(form, `fr_type_${i}`)}: ${String(err?.message || err)}`); }
-    }
     await reload();
-    if (failures.length || relativeFailures.length) return fail(`Algunos vínculos no se pudieron guardar: ${[...failures, ...relativeFailures].join(' · ')}`);
+    if (relativeFailures.length) return fail(`Algunos vínculos no se pudieron guardar: ${relativeFailures.join(' · ')}`);
     state.ai = null;
-    state.notice = 'Ficha actualizada; familiares creados o reutilizados y conectados en la red.';
+    state.notice = selectedRelatives.length ? 'Ficha actualizada y vínculos agregados.' : 'Ficha actualizada.';
     paint(true);
   } catch (err: any) { fail(String(err?.message || err)); }
 }
@@ -481,9 +479,9 @@ function suggestedRelativesHTML(text: string): string {
   try {
     const raw = text.replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '');
     const relatives = JSON.parse(raw).relatives;
-    if (!Array.isArray(relatives) || !relatives.length) return '<p class="muted">La IA no encontró familiares con respaldo suficiente en el material consultado.</p>';
-    return relatives.filter((r: any) => typeof r.name === 'string' && r.name.trim()).slice(0, 20).map((r: any, i: number) => `<label class="chr-form-field"><span><input type="checkbox" data-relative-index="${i}" /> ${esc(r.name)} · ${esc(r.type || 'Familiar')} (${r.direction === 'in' ? 'el familiar → personaje' : 'personaje → familiar'}) · certeza propuesta: ${esc(CERTAINTY_LABELS[r.certainty === 'explicit' ? 'explicit' : 'inferred'])}</span><small class="muted">${r.evidence ? `Respaldo sugerido: ${esc(String(r.evidence).slice(0, LIMITS.evidenceText))}` : 'La IA no indicó una fuente concreta; verificá este parentesco antes de agregarlo.'}</small></label>`).join('');
-  } catch { return '<p class="muted">No se pudieron interpretar las propuestas de familiares.</p>'; }
+    if (!Array.isArray(relatives) || !relatives.length) return '<p class="muted">La IA no encontró vínculos con respaldo suficiente en el material consultado.</p>';
+    return relatives.filter((r: any) => typeof r.name === 'string' && r.name.trim()).slice(0, 20).map((r: any, i: number) => `<label class="chr-form-field"><span class="chr-check-line"><input type="checkbox" data-relative-index="${i}" /> <span>${esc(r.name)} · ${esc(r.type || 'Familiar')} · certeza propuesta: ${esc(CERTAINTY_LABELS[r.certainty === 'explicit' ? 'explicit' : 'inferred'])}</span></span><small class="muted">${r.evidence ? `Respaldo sugerido: ${esc(String(r.evidence).slice(0, LIMITS.evidenceText))}` : 'La IA no indicó una fuente concreta; verificá este vínculo antes de agregarlo.'}</small></label>`).join('');
+  } catch { return '<p class="muted">No se pudieron interpretar las propuestas de vínculos.</p>'; }
 }
 
 function suggestedNameHTML(text: string): string {

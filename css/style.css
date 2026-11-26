@@ -1219,3 +1219,21 @@ dialog[open]:not(.book-detail-dialog):not(.photo-viewer-dialog):not(#geminiDialo
 /* Casillas de los formularios: en línea con su texto */
 .chr-form label:has(>input[type=checkbox]){display:flex;align-items:center;gap:10px;min-height:44px}
 .chr-form input[type=checkbox]{flex:none;width:20px;height:20px;min-height:0;margin:0}
+
+/* Casillas y opciones: tamaño normal, no el de un campo de texto */
+.chr-root input[type=checkbox],.chr-root input[type=radio]{flex:none;width:20px;height:20px;min-height:0;margin:0;padding:0}
+.chr-form-field label.chr-fs-check,.chr-fs-check,.chr-check-line{display:flex;align-items:center;gap:10px;min-height:44px}
+.chr-fs-check>span,.chr-check-line>span{flex:1;min-width:0;font-weight:400}
+.chr-ai .chr-ai-save{padding:0;width:100%}
+.chr-ai-context summary{min-height:44px;display:flex;align-items:center;cursor:pointer;font-size:13px;color:var(--muted)}
+.chr-fs-row{min-width:0;border-width:1px 0 0;border-style:solid;border-color:var(--line);margin:0;padding:10px 0 0;display:grid;gap:8px}
+#chrSheetLinks{display:grid;gap:14px}
+.chr-link-row label:not(.chr-fs-check),.chr-link-row details>div{display:grid;gap:4px}
+.chr-link-row details>div{gap:8px;padding-top:6px}
+.chr-link-row summary{min-height:40px;display:flex;align-items:center;cursor:pointer;font-size:13px}
+.chr-add-below{margin-top:10px;width:100%;min-height:48px}
+@media(max-width:620px){.chr-ai{padding:12px}}
+.chr-fs-row small,.chr-ai small{letter-spacing:0;font-weight:400;font-size:12px;line-height:1.45}
+.chr-link-row label{font-size:13px;color:var(--brown)}
+/* Una propuesta sin marcar se ve resumida; al marcarla aparecen los campos para editar */
+.chr-link-row:not(:has(.chr-fs-check input:checked))>label:not(.chr-fs-check),.chr-link-row:not(:has(.chr-fs-check input:checked))>details{display:none}

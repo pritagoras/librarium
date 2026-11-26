@@ -864,7 +864,7 @@ export function buildCharacterAIRequest(input: AIContextInput): AIRequestPlan {
     : neighborsOf(input.relations, character.id).length;
   summaryParts.push(`${linkCount} vínculo${linkCount === 1 ? '' : 's'}`);
   summaryParts.push(`${notes.length} nota${notes.length === 1 ? '' : 's'}`);
-  summaryParts.push(`${entries.length} anotación${entries.length === 1 ? '' : 'es'}`);
+  summaryParts.push(`${entries.length} ${entries.length === 1 ? 'anotación' : 'anotaciones'}`);
   summaryParts.push(`${quotes.length} cita${quotes.length === 1 ? '' : 's'}`);
 
   return {
@@ -948,4 +948,58 @@ export function applyAnswerToRelation(relation: CharacterRelation, options: Save
       { kind: 'other', ref: `Consulta a la IA · ${stamp(options.date)}`, text: text.slice(0, LIMITS.evidenceText) },
     ]),
   };
+}
+
+export interface SheetLink {
+  name: string;
+  type: string;
+  direction: 'out' | 'in';
+  certainty: Certainty;
+  description: string;
+  basis: string;
+  age: string;
+  occupation: string;
+  profile: string;
+}
+
+/**
+ * Vínculos que propuso la IA al completar una ficha, con personajes ya registrados (por ID o nombre)
+ * o nuevos. Omite los repetidos y los que la ficha ya tiene.
+ */
+export function sheetLinks(parsed: any, character: Character, characters: Character[], relations: CharacterRelation[]): SheetLink[] {
+  const raw = [parsed?.relations, parsed?.relatives].flatMap((list) => (Array.isArray(list) ? list : []));
+  const text = (value: unknown, max: number) => String(value ?? '').trim().slice(0, max);
+  const seen = new Set<string>();
+  const links: SheetLink[] = [];
+  for (const item of raw) {
+    const byId = characters.find((c) => c.id === item?.otherId);
+    const name = byId?.name ?? text(item?.name, LIMITS.name);
+    const type = text(item?.type, LIMITS.relationType);
+    if (!name || !type) continue;
+    const wanted = normalizeText(name);
+    const other = byId ?? characters.find((c) => [c.name, ...c.aliases].some((n) => normalizeText(n) === wanted));
+    if (other?.id === character.id) continue;
+    const direction = item?.direction === 'in' ? 'in' : 'out';
+    const key = [other?.id ?? wanted, relationTypeKey(type), isDirectedType(type) ? direction : ''].join('|');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (other) {
+      const [from, to] = direction === 'out' ? [character.id, other.id] : [other.id, character.id];
+      const taken = relationKey(character.bookId, type, from, to);
+      if (relations.some((r) => relationKey(character.bookId, r.type, r.fromId, r.toId) === taken)) continue;
+    }
+    links.push({
+      name: other?.name ?? name,
+      type,
+      direction,
+      certainty: CERTAINTIES.includes(item?.certainty) ? item.certainty : 'inferred',
+      description: text(item?.relationDescription ?? (item?.otherId ? item?.description : ''), LIMITS.relationDescription),
+      basis: text(item?.basis, LIMITS.evidenceText),
+      age: text(item?.age, LIMITS.age),
+      occupation: text(item?.occupation, LIMITS.occupation),
+      profile: other ? '' : text(item?.description, LIMITS.description),
+    });
+    if (links.length >= 30) break;
+  }
+  return links;
 }

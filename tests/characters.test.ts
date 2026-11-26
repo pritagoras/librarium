@@ -487,3 +487,19 @@ test('a field query asks for a concise context and a concrete editable value wit
   assert.match(age.systemInstruction, /exclusivamente tu conocimiento general aprendido/);
   assert.match(age.prompt, /No consultes ni cites las notas, anotaciones, citas, fuentes o documentos del usuario/);
 });
+
+test('la ficha completa ofrece vínculos de cualquier tipo, sin repetir los que ya existen', async () => {
+  const { sheetLinks } = await import('../src/app/characters-model');
+  const make = (id: string, name: string) => ({ id, bookId: 'b', name, aliases: [] }) as any;
+  const characters = [make('a', 'Anna'), make('p', 'Pierre'), make('v', 'Vasili')];
+  const links = sheetLinks(
+    {
+      relations: [{ otherId: 'p', type: 'Amistad' }, { name: 'vasili', type: 'Rivalidad' }],
+      relatives: [{ name: 'Borís', type: 'Madre de', description: 'Su hijo' }, { name: 'Vasili', type: 'Rivalidad' }, { name: 'Anna', type: 'Amor' }],
+    },
+    characters[0],
+    characters,
+    [{ id: 'r', bookId: 'b', fromId: 'p', toId: 'a', type: 'Amistad' } as any],
+  );
+  assert.deepEqual(links.map((l) => [l.name, l.type, l.profile]), [['Vasili', 'Rivalidad', ''], ['Borís', 'Madre de', 'Su hijo']]);
+});

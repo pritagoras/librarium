@@ -173,7 +173,7 @@ export function sheetHTML(character: Character): string {
       </div>
       <div id="chrFamilyHost">${familyReviewHTML()}</div>
       ${others.length ? '' : '<p class="muted">Podés crear familiares y vínculos desde «Añadir vínculo» o buscarlos con IA.</p>'}
-      ${links.length ? `<ul class="chr-relations">${links.map((n) => relationRowHTML(character, n.relation)).join('')}</ul>` : others.length ? '<p class="empty-inline">Todavía no registraste vínculos de este personaje.</p>' : ''}
+      ${links.length ? `<ul class="chr-relations">${links.map((n) => relationRowHTML(character, n.relation)).join('')}</ul><button type="button" class="secondary chr-add-below" data-chr="add-relation">＋ Añadir vínculo</button>` : others.length ? '<p class="empty-inline">Todavía no registraste vínculos de este personaje.</p>' : ''}
       ${
         others.length
           ? `<div class="chr-pair">
