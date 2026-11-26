@@ -125,6 +125,7 @@ interface State {
   netFocus: string | null;
   netSelected: string | null;
   netIsolatedOnly: boolean;
+  netZoom: number;
   netReveal: boolean;
   notice: string;
   growth: { status: 'idle' | 'running' | 'review' | 'saving'; error: string; result: GrowthResult | null };
@@ -163,6 +164,7 @@ const emptyState = (bookId = ''): State => ({
   netFocus: null,
   netSelected: null,
   netIsolatedOnly: false,
+  netZoom: 1,
   netReveal: false,
   notice: '',
   growth: { status: 'idle', error: '', result: null },
@@ -346,8 +348,15 @@ function fieldRow(character: Character, key: CharacterFieldKey): string {
         ? `<span class="chr-value">${esc(value)}</span> ${certaintyBadge(character.certainty[key])}`
         : '<span class="chr-unknown">Sin dato (desconocido)</span>'
     }</dd>
-    <button type="button" class="chr-ai-btn" data-chr="ask" data-scope="field" data-field="${key}" aria-label="Preguntar a la IA por ${esc(FIELD_LABELS[key].toLowerCase())} de ${esc(character.name)}">${AI_SPARK}<span class="chr-sr-only"> Preguntar a la IA</span></button>
   </div>`;
+}
+
+function fieldAIOptionsHTML(): string {
+  const options: Array<{ field: CharacterFieldKey | 'name'; label: string }> = [
+    { field: 'name', label: 'Nombre y alias' },
+    ...FIELD_KEYS.map((field) => ({ field, label: FIELD_LABELS[field] })),
+  ];
+  return `<details class="chr-field-ai-menu"><summary>${AI_SPARK} Consultar un dato con IA</summary><div>${options.map(({ field, label }) => `<button type="button" class="secondary" data-chr="ask" data-scope="field" data-field="${field}">${esc(label)}</button>`).join('')}</div></details>`;
 }
 
 function evidenceListHTML(items: EvidenceRef[]): string {
@@ -391,7 +400,7 @@ function sheetHTML(character: Character): string {
         ${character.aliases.length ? `<p class="muted">También llamado: ${esc(character.aliases.join(', '))}</p>` : ''}
       </div>
       <div class="content-heading-actions">
-        <button type="button" class="secondary" data-chr="ask" data-scope="character" aria-label="Preguntar a la IA sobre la ficha completa de ${esc(character.name)}">${AI_SPARK} Interrogar toda la ficha con IA</button>
+        <button type="button" class="secondary" data-chr="ask" data-scope="character" aria-label="Preguntar a la IA sobre la ficha completa de ${esc(character.name)}">${AI_SPARK} Ficha completa con IA</button>
         <button type="button" class="secondary" data-chr="edit">Editar</button>
         <button type="button" class="danger-btn" data-chr="delete">Eliminar</button>
       </div>
@@ -399,12 +408,11 @@ function sheetHTML(character: Character): string {
     ${state.notice ? `<p class="chr-notice" role="status">${esc(state.notice)}</p>` : ''}
     <div id="chrAiHost"></div>
     <section class="chr-section" aria-labelledby="chrFields">
-      <h3 id="chrFields">Datos</h3>
+      <div class="chr-section-head"><h3 id="chrFields">Datos</h3>${fieldAIOptionsHTML()}</div>
       <dl class="chr-fields">
         <div class="chr-field">
           <dt>Nombre</dt>
           <dd><span class="chr-value">${esc(character.name)}</span></dd>
-          <button type="button" class="chr-ai-btn" data-chr="ask" data-scope="field" data-field="name" aria-label="Preguntar a la IA por el nombre y los alias de ${esc(character.name)}">${AI_SPARK}<span class="chr-sr-only"> Preguntar a la IA</span></button>
         </div>
         ${FIELD_KEYS.map((key) => fieldRow(character, key)).join('')}
       </dl>
@@ -456,6 +464,15 @@ function layoutGlobalGraph() {
   const size = Math.max(760, Math.ceil(210 * Math.sqrt(ids.length)));
   const positions = computeLayout(ids, data.relations, { width: size, height: size, padding: 60, minDistance: 150 });
   return { positions, size };
+}
+
+function networkViewBox(size: number, positions: Map<string, { x: number; y: number }>, focusId: string, zoom: number): string {
+  const viewSize = size / Math.max(1, Math.min(3, zoom));
+  if (viewSize >= size) return `0 0 ${size} ${size}`;
+  const focus = positions.get(focusId) ?? { x: size / 2, y: size / 2 };
+  const x = Math.max(0, Math.min(size - viewSize, focus.x - viewSize / 2));
+  const y = Math.max(0, Math.min(size - viewSize, focus.y - viewSize / 2));
+  return `${x.toFixed(1)} ${y.toFixed(1)} ${viewSize.toFixed(1)} ${viewSize.toFixed(1)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -681,6 +698,7 @@ function networkHTML(): string {
   if (!characterById(state.netFocus)) state.netFocus = characterById(state.selectedId)?.id ?? mostConnected();
   const focusId = state.netFocus!;
   const { positions, size } = layoutGlobalGraph();
+  const viewBox = networkViewBox(size, positions, focusId, state.netZoom);
   const selected = characterById(state.netSelected);
   const isolated = data.characters.filter((c) => relationCount(c.id) === 0).length;
   const connected = data.characters.length - isolated;
@@ -696,7 +714,7 @@ function networkHTML(): string {
   const allGroups = buildConnectedGroups(data.characters, data.relations);
   const detail = selected ? `<aside class="chr-net-details" role="region" aria-label="Detalles de ${esc(selected.name)}" tabindex="-1"><strong>${esc(selected.name)}</strong><span>${relationCount(selected.id)} vínculos · ${isolated && relationCount(selected.id) === 0 ? 'personaje aislado' : `grupo ${allGroups.findIndex((g) => g.includes(selected.id)) + 1}`}</span><div class="chr-row-actions"><button type="button" class="secondary" data-chr="open" data-id="${esc(selected.id)}">Abrir ficha</button><button type="button" class="secondary" data-chr="add-relation">＋ Agregar vínculo</button></div>${data.relations.filter((r) => r.fromId === selected.id || r.toId === selected.id).map((r) => `<div class="chr-net-rel"><span class="chr-net-dot" style="--edge-color:${relationColor(r.type)}"></span>${esc(characterById(r.fromId)?.name)} ${isDirectedType(r.type) ? '→' : '↔'} ${esc(characterById(r.toId)?.name)} · ${esc(r.type)} <button type="button" class="secondary" data-chr="edit-relation" data-rel="${esc(r.id)}">Editar</button></div>`).join('')}</aside>` : '<p class="muted">Seleccioná cualquier personaje para abrir su ficha o administrar vínculos.</p>';
   const mobilePeople = `<div class="chr-net-mobile-people"><h4>Personajes</h4><div>${data.characters.map((c) => `<button type="button" data-chr="net-select" data-id="${esc(c.id)}" class="${c.id === state.netSelected ? 'active' : ''}"><strong>${esc(c.name)}</strong><span>${relationCount(c.id)} vínculos</span></button>`).join('')}</div></div>`;
-  return `<div class="chr-network chr-network--global"><div class="chr-network-header"><div><h3>Red de personajes</h3><p>${data.characters.length} personajes · ${data.relations.length} vínculos</p></div><label for="chrNetFocus">Resaltar personaje<select id="chrNetFocus">${data.characters.map((c) => `<option value="${esc(c.id)}" ${c.id === focusId ? 'selected' : ''}>${esc(c.name)} (${relationCount(c.id)})</option>`).join('')}</select></label><button type="button" class="primary" data-chr="analyze-network">✦ Analizar red con IA</button><button type="button" class="secondary" data-chr="fullscreen-network" aria-pressed="false">⛶ Pantalla completa</button><details class="chr-net-more"><summary>Más acciones</summary><div><button type="button" class="secondary" data-chr="grow-network">＋ Sumar personajes y vínculos</button><button type="button" class="secondary" data-chr="animate-network">Animar y compartir la red</button>${groundingToggleHTML()}</div></details></div>${growthHTML()}<div class="chr-net-stats">${isolated ? `<button type="button" data-chr="filter-isolated" aria-label="Mostrar solo personajes aislados" aria-pressed="${state.netIsolatedOnly}">${isolated} aislados</button>` : `<span>0 aislados</span>`}<span>${connected} conectados</span><span>${allGroups.length} grupos independientes</span></div><p class="chr-net-hint">Seleccioná un personaje para ver su ficha y sus vínculos.</p><div class="chr-net-canvas"><svg class="chr-svg chr-svg--global" viewBox="0 0 ${size} ${size}" role="group" aria-label="Mapa global con todos los personajes y vínculos">${edgeSvg}${nodesSvg}</svg></div>${mobilePeople}<div class="chr-net-legend">${types.map((type) => `<span><i style="--edge-color:${relationColor(type)}"></i>${esc(type)}</span>`).join('')}<span><i class="chr-net-certainty"></i>Continua: explícita · discontinua: inferida o desconocida</span></div>${detail}${networkReviewHTML()}</div>`;
+  return `<div class="chr-network chr-network--global"><div class="chr-network-header"><div><h3>Red de personajes</h3><p>${data.characters.length} personajes · ${data.relations.length} vínculos</p></div><label for="chrNetFocus">Enfocar personaje<select id="chrNetFocus">${data.characters.map((c) => `<option value="${esc(c.id)}" ${c.id === focusId ? 'selected' : ''}>${esc(c.name)} (${relationCount(c.id)})</option>`).join('')}</select></label><button type="button" class="primary" data-chr="analyze-network">✦ Analizar red con IA</button><button type="button" class="secondary" data-chr="fullscreen-network" aria-pressed="false">⛶ Pantalla completa</button><details class="chr-net-more"><summary>Más acciones</summary><div><button type="button" class="secondary" data-chr="grow-network">＋ Sumar personajes y vínculos</button><button type="button" class="secondary" data-chr="animate-network">Animar y compartir la red</button>${groundingToggleHTML()}</div></details></div>${growthHTML()}<div class="chr-net-stats">${isolated ? `<button type="button" data-chr="filter-isolated" aria-label="Mostrar solo personajes aislados" aria-pressed="${state.netIsolatedOnly}">${isolated} aislados</button>` : `<span>0 aislados</span>`}<span>${connected} conectados</span><span>${allGroups.length} grupos independientes</span></div><p class="chr-net-hint">Seleccioná un personaje para ver su ficha y sus vínculos.</p><div class="chr-net-canvas"><div class="chr-net-zoom" role="group" aria-label="Zoom del mapa"><button type="button" class="secondary" data-chr="net-zoom-out" aria-label="Alejar" ${state.netZoom <= 1 ? 'disabled' : ''}>−</button><output aria-live="polite">${Math.round(state.netZoom * 100)}%</output><button type="button" class="secondary" data-chr="net-zoom-in" aria-label="Acercar" ${state.netZoom >= 3 ? 'disabled' : ''}>+</button><button type="button" class="secondary" data-chr="net-zoom-reset" aria-label="Ajustar mapa">Ajustar</button></div><svg class="chr-svg chr-svg--global" viewBox="${viewBox}" role="group" aria-label="Mapa global con todos los personajes y vínculos">${edgeSvg}${nodesSvg}</svg></div>${mobilePeople}<div class="chr-net-legend">${types.map((type) => `<span><i style="--edge-color:${relationColor(type)}"></i>${esc(type)}</span>`).join('')}<span><i class="chr-net-certainty"></i>Continua: explícita · discontinua: inferida o desconocida</span></div>${detail}${networkReviewHTML()}</div>`;
 }
 
 function buildConnectedGroups(characters: Character[], relations: CharacterRelation[]): string[][] {
@@ -2296,16 +2314,21 @@ function bindEvents() {
     if (target.id === 'chrNetFocus') {
       state.netFocus = (target as HTMLSelectElement).value;
       state.netSelected = null;
-      const results = host!.querySelector('#chrResults');
-      if (results) results.innerHTML = resultsHTML();
-      host!.querySelector<HTMLElement>('#chrNetFocus')?.focus();
+      repaintResults('#chrNetFocus');
     }
   };
 }
 
 function repaintResults(focusSelector?: string) {
   const results = host?.querySelector('#chrResults');
+  const keepFullscreen = !!results?.querySelector('.chr-network--fullscreen');
   if (results) results.innerHTML = resultsHTML();
+  if (keepFullscreen) {
+    results?.querySelector('.chr-network--global')?.classList.add('chr-network--fullscreen');
+    const button = results?.querySelector<HTMLButtonElement>('[data-chr="fullscreen-network"]');
+    button?.setAttribute('aria-pressed', 'true');
+    if (button) button.textContent = '× Cerrar pantalla completa';
+  }
   if (focusSelector) host?.querySelector<HTMLElement>(focusSelector)?.focus();
 }
 
@@ -2413,6 +2436,7 @@ async function handleAction(action: string, el: HTMLElement) {
     }
     case 'ask': {
       const scope = el.dataset.scope;
+      el.closest('.chr-field-ai-menu')?.removeAttribute('open');
       if (scope === 'character') return startAI({ kind: 'character' });
       if (scope === 'field') return startAI({ kind: 'field', field: el.dataset.field as CharacterFieldKey | 'name' });
       if (scope === 'relation') return startAI({ kind: 'relation', otherId: el.dataset.other || '', relationId: el.dataset.rel });
@@ -2554,6 +2578,15 @@ async function handleAction(action: string, el: HTMLElement) {
         return;
       }
       return repaintResults(`[data-chr="net-select"][data-id="${CSS.escape(id)}"]`);
+    case 'net-zoom-in':
+      state.netZoom = Math.min(3, Math.round((state.netZoom + 0.25) * 100) / 100);
+      return repaintResults('[data-chr="net-zoom-in"]');
+    case 'net-zoom-out':
+      state.netZoom = Math.max(1, Math.round((state.netZoom - 0.25) * 100) / 100);
+      return repaintResults('[data-chr="net-zoom-out"]');
+    case 'net-zoom-reset':
+      state.netZoom = 1;
+      return repaintResults('[data-chr="net-zoom-reset"]');
     case 'fullscreen-network': {
       const network = host?.querySelector<HTMLElement>('.chr-network--global');
       if (!network) return;
