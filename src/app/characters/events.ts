@@ -10,7 +10,7 @@ import { evidenceRowHTML, showFormErrors, submitCharacterForm, submitRelationFor
 import { autoAbort, autoNote, setAutoAbort, setAutoNote, setGrounding } from './gemini';
 import { applyGrowth, startGrowth } from './growth';
 import { applyNetworkProposals, copyNetworkPrompt, createMissingNetworkCharacter, decideNetworkProposal, parseNetworkReview, startNetworkAnalysis } from './network-review';
-import { go, paint, reload } from './render';
+import { confirmDiscard, go, paint, reload } from './render';
 import { relationCount, resultsHTML } from './views';
 
 // ---------------------------------------------------------------------------
@@ -112,6 +112,7 @@ async function handleAction(action: string, el: HTMLElement) {
       return go('sheet', { selectedId: id });
     case 'back':
     case 'cancel':
+      if (!(await confirmDiscard())) return;
       return go(state.mode === 'character-form' && state.editingCharacterId ? 'sheet' : state.mode === 'relation-form' ? 'sheet' : 'index', {
         relationDraft: null,
         editingCharacterId: null,

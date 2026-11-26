@@ -7,7 +7,7 @@
 import type { Book } from '../types';
 import { abortAI } from './characters/ai-panel';
 import { api, book, characterById, emptyState, host, setBook, setHost, setState, state } from './characters/context';
-import { go, paint, reload } from './characters/render';
+import { confirmDiscard, go, hasUnsavedChanges, paint, reload } from './characters/render';
 
 /** Verdadero mientras hay un formulario abierto o una consulta en curso: app.ts no debe repintar encima. */
 export function isCharactersBusy(): boolean {
@@ -38,6 +38,14 @@ export async function renderCharactersPanel(container: HTMLElement, currentBook:
 /** Abre una ficha en el panel que ya se dibujó (se usa desde la búsqueda global). */
 export function openCharacterSheet(id: string): void {
   if (characterById(id)) go('sheet', { selectedId: id });
+}
+
+export { confirmDiscard, hasUnsavedChanges };
+
+/** Cierra el formulario abierto sin guardar (después de confirmar el descarte). */
+export function leaveCharacterForm(): void {
+  if (state.mode === 'character-form') state.mode = state.editingCharacterId ? 'sheet' : 'index';
+  else if (state.mode === 'relation-form') state.mode = 'sheet';
 }
 
 export { initCharacters } from './characters/context';

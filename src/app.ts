@@ -8,6 +8,9 @@ import {
 import { showConfirmDialog } from './app/dialogs';
 import {
   openCharacterSheet,
+  confirmDiscard,
+  hasUnsavedChanges,
+  leaveCharacterForm,
   initCharacters,
   isCharactersBusy,
   purgeBookCharacters,
@@ -888,6 +891,7 @@ async function renderDetail() {
   if (b.rating) metaParts.push(`<strong>${renderStarsText(b.rating)}</strong>`);
   if (b.tags?.length) metaParts.push(b.tags.map((t) => esc(t)).join(' · '));
 
+  $('#detailDialog')?.classList.toggle('chr-focus', detailTab === 'characters');
   const detailContent = $('#detailContent')!;
   detailContent.innerHTML = `<header class="book-page-header">
     <div class="book-page-cover">${coverHTML(b)}</div>
@@ -3460,7 +3464,45 @@ function initEnvironmentNotices() {
   window.addEventListener('offline', syncOfflineBanner);
 }
 
+/** Antes de cerrar el libro o cambiar de pestaña, avisa si hay un formulario de personaje sin guardar. */
+function guardUnsavedCharacterForm() {
+  const dialog = $<HTMLDialogElement>('#detailDialog');
+  if (!dialog) return;
+  const pending = () => dialog.open && detailTab === 'characters' && hasUnsavedChanges();
+  const ifDiscarded = async (then: () => void) => {
+    if (!(await confirmDiscard())) return;
+    leaveCharacterForm();
+    then();
+  };
+  dialog.addEventListener(
+    'click',
+    (event) => {
+      const target = (event.target as HTMLElement).closest<HTMLElement>('[data-close], [data-detail-tab], #openBookCharacters');
+      if (!target || !pending()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void ifDiscarded(() => target.click());
+    },
+    true,
+  );
+  // Escape y el gesto «atrás» de Android.
+  dialog.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !pending()) return;
+    event.preventDefault();
+    void ifDiscarded(() => dialog.close());
+  });
+  dialog.addEventListener('cancel', (event) => {
+    if (!pending()) return;
+    event.preventDefault();
+    void ifDiscarded(() => dialog.close());
+  });
+  window.addEventListener('beforeunload', (event) => {
+    if (pending()) event.preventDefault();
+  });
+}
+
 function wireEvents() {
+  guardUnsavedCharacterForm();
   $$('.tab').forEach((b) => {
     b.onclick = () => switchView(b.dataset.view!);
   });

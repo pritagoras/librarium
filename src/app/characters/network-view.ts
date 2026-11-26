@@ -25,17 +25,30 @@ function mostConnected(): string | null {
 function layoutGlobalGraph() {
   const ids = data.characters.map((c) => c.id);
   const size = Math.max(760, Math.ceil(210 * Math.sqrt(ids.length)));
-  const positions = computeLayout(ids, data.relations, { width: size, height: size, padding: 60, minDistance: 150 });
-  return { positions, size };
+  // En pantallas angostas la red se reparte en vertical, para que entre entera y se lea.
+  const narrow = window.matchMedia('(max-width: 620px)').matches;
+  const width = narrow ? Math.round(size * 0.74) : size;
+  const height = narrow ? Math.round(size * 1.15) : size;
+  const positions = computeLayout(ids, data.relations, { width, height, padding: 60, minDistance: narrow ? 125 : 150 });
+  return { positions };
 }
 
-function networkViewBox(size: number, positions: Map<string, { x: number; y: number }>, focusId: string, zoom: number): string {
-  const viewSize = size / Math.max(1, Math.min(3, zoom));
-  if (viewSize >= size) return `0 0 ${size} ${size}`;
-  const focus = positions.get(focusId) ?? { x: size / 2, y: size / 2 };
-  const x = Math.max(0, Math.min(size - viewSize, focus.x - viewSize / 2));
-  const y = Math.max(0, Math.min(size - viewSize, focus.y - viewSize / 2));
-  return `${x.toFixed(1)} ${y.toFixed(1)} ${viewSize.toFixed(1)} ${viewSize.toFixed(1)}`;
+/** Al 100 % encuadra todos los personajes; con zoom recorta alrededor del enfocado. */
+function networkViewBox(positions: Map<string, { x: number; y: number }>, focusId: string, zoom: number): string {
+  const points = [...positions.values()];
+  const margin = 80;
+  const left = Math.min(...points.map((p) => p.x)) - margin;
+  const top = Math.min(...points.map((p) => p.y)) - margin;
+  const width = Math.max(360, Math.max(...points.map((p) => p.x)) + margin - left);
+  const height = Math.max(360, Math.max(...points.map((p) => p.y)) + margin - top);
+  const scale = Math.max(1, Math.min(3, zoom));
+  const w = width / scale, h = height / scale;
+  const centerX = (Math.min(...points.map((p) => p.x)) + Math.max(...points.map((p) => p.x))) / 2;
+  const centerY = (Math.min(...points.map((p) => p.y)) + Math.max(...points.map((p) => p.y))) / 2;
+  const focus = scale > 1 ? positions.get(focusId) : undefined;
+  const x = focus ? Math.max(left, Math.min(left + width - w, focus.x - w / 2)) : centerX - w / 2;
+  const y = focus ? Math.max(top, Math.min(top + height - h, focus.y - h / 2)) : centerY - h / 2;
+  return `${x.toFixed(1)} ${y.toFixed(1)} ${w.toFixed(1)} ${h.toFixed(1)}`;
 }
 
 /** Líneas con flecha (vínculos con dirección) y su tipo escrito, evitando pisar personajes u otras etiquetas. */
@@ -54,7 +67,7 @@ function globalEdgesSVG(positions: Map<string, { x: number; y: number }>): strin
     const filtered = state.netIsolatedOnly ? ' chr-edge--filtered' : '';
     const color = relationColor(main.type);
     const dashed = group.some((r) => r.certainty === 'explicit') ? '' : ' stroke-dasharray="7 6"';
-    const title = group.map((r) => `${characterById(r.fromId)?.name} → ${characterById(r.toId)?.name} · ${r.type} · ${CERTAINTY_LABELS[r.certainty]}`).join(' / ');
+    const title = group.map((r) => `${characterById(r.fromId)?.name} ${isDirectedType(r.type) ? '→' : '↔'} ${characterById(r.toId)?.name} · ${r.type} · ${CERTAINTY_LABELS[r.certainty]}`).join(' / ');
     lines += `<path class="chr-edge chr-edge--color${filtered}" d="M ${a.x.toFixed(1)} ${a.y.toFixed(1)} L ${b.x.toFixed(1)} ${b.y.toFixed(1)}" style="stroke:${color}"${dashed}><title>${esc(title)}</title></path>`;
     if (state.netIsolatedOnly) continue;
     if (isDirectedType(main.type)) {
@@ -76,8 +89,8 @@ export function networkHTML(): string {
   if (!data.characters.length) return '<p class="empty-inline">Cargá personajes y vínculos para ver la red de relaciones.</p>';
   if (!characterById(state.netFocus)) state.netFocus = characterById(state.selectedId)?.id ?? mostConnected();
   const focusId = state.netFocus!;
-  const { positions, size } = layoutGlobalGraph();
-  const viewBox = networkViewBox(size, positions, focusId, state.netZoom);
+  const { positions } = layoutGlobalGraph();
+  const viewBox = networkViewBox(positions, focusId, state.netZoom);
   const selected = characterById(state.netSelected);
   const isolated = data.characters.filter((c) => relationCount(c.id) === 0).length;
   const connected = data.characters.length - isolated;
@@ -93,7 +106,7 @@ export function networkHTML(): string {
   const allGroups = buildConnectedGroups(data.characters, data.relations);
   const detail = selected ? `<aside class="chr-net-details" role="region" aria-label="Detalles de ${esc(selected.name)}" tabindex="-1"><strong>${esc(selected.name)}</strong><span>${relationCount(selected.id)} vínculos · ${isolated && relationCount(selected.id) === 0 ? 'personaje aislado' : `grupo ${allGroups.findIndex((g) => g.includes(selected.id)) + 1}`}</span><div class="chr-row-actions"><button type="button" class="secondary" data-chr="open" data-id="${esc(selected.id)}">Abrir ficha</button><button type="button" class="secondary" data-chr="add-relation">＋ Agregar vínculo</button></div>${data.relations.filter((r) => r.fromId === selected.id || r.toId === selected.id).map((r) => `<div class="chr-net-rel"><span class="chr-net-dot" style="--edge-color:${relationColor(r.type)}"></span>${esc(characterById(r.fromId)?.name)} ${isDirectedType(r.type) ? '→' : '↔'} ${esc(characterById(r.toId)?.name)} · ${esc(r.type)} <button type="button" class="secondary" data-chr="edit-relation" data-rel="${esc(r.id)}">Editar</button></div>`).join('')}</aside>` : '<p class="muted">Seleccioná cualquier personaje para abrir su ficha o administrar vínculos.</p>';
   const mobilePeople = `<div class="chr-net-mobile-people"><h4>Personajes</h4><div>${data.characters.map((c) => `<button type="button" data-chr="net-select" data-id="${esc(c.id)}" class="${c.id === state.netSelected ? 'active' : ''}"><strong>${esc(c.name)}</strong><span>${relationCount(c.id)} vínculos</span></button>`).join('')}</div></div>`;
-  return `<div class="chr-network chr-network--global"><div class="chr-network-header"><div><h3>Red de personajes</h3><p>${data.characters.length} personajes · ${data.relations.length} vínculos</p></div><label for="chrNetFocus">Enfocar personaje<select id="chrNetFocus">${data.characters.map((c) => `<option value="${esc(c.id)}" ${c.id === focusId ? 'selected' : ''}>${esc(c.name)} (${relationCount(c.id)})</option>`).join('')}</select></label><button type="button" class="primary" data-chr="analyze-network">✦ Analizar red con IA</button><button type="button" class="secondary" data-chr="fullscreen-network" aria-pressed="false">⛶ Pantalla completa</button><details class="chr-net-more"><summary>Más acciones</summary><div><button type="button" class="secondary" data-chr="grow-network">＋ Sumar personajes y vínculos</button><button type="button" class="secondary" data-chr="animate-network">Animar y compartir la red</button>${groundingToggleHTML()}</div></details></div>${growthHTML()}<div class="chr-net-stats">${isolated ? `<button type="button" data-chr="filter-isolated" aria-label="Mostrar solo personajes aislados" aria-pressed="${state.netIsolatedOnly}">${isolated} aislados</button>` : `<span>0 aislados</span>`}<span>${connected} conectados</span><span>${allGroups.length} grupos independientes</span></div><p class="chr-net-hint">Seleccioná un personaje para ver su ficha y sus vínculos.</p><div class="chr-net-canvas"><div class="chr-net-zoom" role="group" aria-label="Zoom del mapa"><button type="button" class="secondary" data-chr="net-zoom-out" aria-label="Alejar" ${state.netZoom <= 1 ? 'disabled' : ''}>−</button><output aria-live="polite">${Math.round(state.netZoom * 100)}%</output><button type="button" class="secondary" data-chr="net-zoom-in" aria-label="Acercar" ${state.netZoom >= 3 ? 'disabled' : ''}>+</button><button type="button" class="secondary" data-chr="net-zoom-reset" aria-label="Ajustar mapa">Ajustar</button></div><svg class="chr-svg chr-svg--global" viewBox="${viewBox}" role="group" aria-label="Mapa global con todos los personajes y vínculos">${edgeSvg}${nodesSvg}</svg></div>${mobilePeople}<div class="chr-net-legend">${types.map((type) => `<span><i style="--edge-color:${relationColor(type)}"></i>${esc(type)}</span>`).join('')}<span><i class="chr-net-certainty"></i>Continua: explícita · discontinua: inferida o desconocida</span></div>${detail}${networkReviewHTML()}</div>`;
+  return `<div class="chr-network chr-network--global"><div class="chr-network-header"><div><h3>Red de personajes</h3><p>${data.characters.length} personajes · ${data.relations.length} vínculos</p></div><label for="chrNetFocus">Enfocar personaje<select id="chrNetFocus">${data.characters.map((c) => `<option value="${esc(c.id)}" ${c.id === focusId ? 'selected' : ''}>${esc(c.name)} (${relationCount(c.id)})</option>`).join('')}</select></label><button type="button" class="primary" data-chr="analyze-network">✦ Analizar red con IA</button><details class="chr-net-more"><summary>Más acciones ▾</summary><div><button type="button" class="secondary" data-chr="fullscreen-network" aria-pressed="false">⛶ Pantalla completa</button><button type="button" class="secondary" data-chr="grow-network">＋ Sumar personajes y vínculos</button><button type="button" class="secondary" data-chr="animate-network">Animar y compartir la red</button>${groundingToggleHTML()}</div></details></div>${growthHTML()}<div class="chr-net-stats">${isolated ? `<button type="button" data-chr="filter-isolated" aria-label="Mostrar solo personajes aislados" aria-pressed="${state.netIsolatedOnly}">${isolated} aislados</button>` : `<span>0 aislados</span>`}<span>${connected} conectados</span><span>${allGroups.length} grupos independientes</span></div><p class="chr-net-hint">Seleccioná un personaje para ver su ficha y sus vínculos.</p><div class="chr-net-canvas"><div class="chr-net-zoom" role="group" aria-label="Zoom del mapa"><button type="button" class="secondary" data-chr="net-zoom-out" aria-label="Alejar" ${state.netZoom <= 1 ? 'disabled' : ''}>−</button><output aria-live="polite">${Math.round(state.netZoom * 100)}%</output><button type="button" class="secondary" data-chr="net-zoom-in" aria-label="Acercar" ${state.netZoom >= 3 ? 'disabled' : ''}>+</button><button type="button" class="secondary" data-chr="net-zoom-reset" aria-label="Ajustar mapa">Ajustar</button></div><svg class="chr-svg chr-svg--global" viewBox="${viewBox}" role="group" aria-label="Mapa global con todos los personajes y vínculos">${edgeSvg}${nodesSvg}</svg></div>${mobilePeople}<div class="chr-net-legend">${types.map((type) => `<span><i style="--edge-color:${relationColor(type)}"></i>${esc(type)}</span>`).join('')}<span><i class="chr-net-certainty"></i>Continua: explícita · discontinua: inferida o desconocida</span></div>${detail}${networkReviewHTML()}</div>`;
 }
 
 function buildConnectedGroups(characters: Character[], relations: CharacterRelation[]): string[][] {

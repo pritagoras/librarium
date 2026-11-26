@@ -1,6 +1,6 @@
 /** Personajes · Índice (lista, tabla), ficha y sus partes. */
 import type { Certainty, Character, CharacterFieldKey, CharacterRelation, EvidenceRef } from '../../types';
-import { CERTAINTY_LABELS, EVIDENCE_LABELS, FIELD_KEYS, FIELD_LABELS, neighborsOf, searchCharacters } from '../characters-model';
+import { CERTAINTY_LABELS, EVIDENCE_LABELS, FIELD_KEYS, FIELD_LABELS, isDirectedType, neighborsOf, searchCharacters } from '../characters-model';
 import { AI_SPARK, characterById, data, esc, state, type IndexView } from './context';
 import { familyReviewHTML } from './family';
 import { networkHTML } from './network-view';
@@ -58,10 +58,10 @@ export function resultsHTML(): string {
         .map(
           (c) => `<tr>
         <th scope="row"><button type="button" class="chr-link" data-chr="open" data-id="${esc(c.id)}">${esc(c.name)}</button></th>
-        <td>${esc(c.age) || '<span class="chr-unknown">—</span>'}</td>
-        <td>${esc(c.occupation) || '<span class="chr-unknown">—</span>'}</td>
-        <td>${esc(c.affiliation) || '<span class="chr-unknown">—</span>'}</td>
-        <td>${relationCount(c.id)}</td></tr>`,
+        <td data-label="Edad">${esc(c.age) || '<span class="chr-unknown">—</span>'}</td>
+        <td data-label="Ocupación">${esc(c.occupation) || '<span class="chr-unknown">—</span>'}</td>
+        <td data-label="Pertenencia">${esc(c.affiliation) || '<span class="chr-unknown">—</span>'}</td>
+        <td data-label="Vínculos">${relationCount(c.id)}</td></tr>`,
         )
         .join('')}</tbody></table></div>`;
   }
@@ -116,16 +116,18 @@ function relationRowHTML(character: Character, relation: CharacterRelation): str
   return `<li class="chr-relation">
     <div class="chr-relation-head">
       <span class="chr-type">${esc(relation.type)}</span>
-      <button type="button" class="chr-link" data-chr="open" data-id="${esc(other.id)}" aria-label="Abrir la ficha de ${esc(other.name)}">${esc(outgoing ? `${character.name} → ${other.name}` : `${other.name} → ${character.name}`)}</button>
+      <button type="button" class="chr-link" data-chr="open" data-id="${esc(other.id)}" aria-label="Abrir la ficha de ${esc(other.name)}">${esc(!isDirectedType(relation.type) ? other.name : outgoing ? `${character.name} → ${other.name}` : `${other.name} → ${character.name}`)}</button>
       ${certaintyBadge(relation.certainty)}
+      <div class="chr-relation-tools">
+        <button type="button" data-chr="ask" data-scope="relation" data-other="${esc(other.id)}" data-rel="${esc(relation.id)}" aria-label="Preguntar a la IA por el vínculo con ${esc(other.name)}">${AI_SPARK} IA</button>
+        <details class="chr-relation-menu"><summary aria-label="Editar o quitar el vínculo con ${esc(other.name)}">⋯</summary><div>
+          <button type="button" class="secondary" data-chr="edit-relation" data-rel="${esc(relation.id)}">Editar</button>
+          <button type="button" class="secondary" data-chr="remove-relation" data-rel="${esc(relation.id)}">Quitar</button>
+        </div></details>
+      </div>
     </div>
     ${relation.description ? `<p class="chr-relation-text">${esc(relation.description)}</p>` : ''}
     ${evidenceListHTML(relation.evidence)}
-    <div class="chr-row-actions">
-      <button type="button" class="secondary" data-chr="ask" data-scope="relation" data-other="${esc(other.id)}" data-rel="${esc(relation.id)}" aria-label="Preguntar a la IA por el vínculo con ${esc(other.name)}">${AI_SPARK} IA</button>
-      <button type="button" class="secondary" data-chr="edit-relation" data-rel="${esc(relation.id)}">Editar</button>
-      <button type="button" class="secondary" data-chr="remove-relation" data-rel="${esc(relation.id)}" aria-label="Quitar el vínculo con ${esc(other.name)}">Quitar</button>
-    </div>
   </li>`;
 }
 

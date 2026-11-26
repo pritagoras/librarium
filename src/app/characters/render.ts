@@ -27,6 +27,45 @@ export function go(mode: Mode, patch: Partial<State> = {}) {
   setState({ ...state, ai: null, notice: '', ...patch, mode });
   if (patch.view === 'network') state.netReveal = true;
   paint(true);
+  rememberForm();
+}
+
+const FORMS = '#chrCharacterForm, #chrRelationForm';
+let formSnapshot: string | null = null;
+
+function formValues(): string | null {
+  const form = host?.querySelector<HTMLFormElement>(FORMS);
+  if (!form) return null;
+  return JSON.stringify(
+    [...form.querySelectorAll<HTMLInputElement>('input, textarea, select')]
+      .filter((field) => field.type !== 'search' && field.name !== 'chrCandidate' && !field.hasAttribute('data-chr-grounding'))
+      .map((field) => (field.type === 'checkbox' || field.type === 'radio' ? field.checked : field.value))
+      .filter((value) => value !== '' && value !== false),
+  );
+}
+
+function rememberForm() {
+  formSnapshot = formValues();
+}
+
+/** Hay un formulario abierto con cambios sin guardar. */
+export function hasUnsavedChanges(): boolean {
+  const now = formValues();
+  return now !== null && formSnapshot !== null && now !== formSnapshot;
+}
+
+/** Pregunta antes de descartar. Devuelve true si se puede salir del formulario. */
+export async function confirmDiscard(): Promise<boolean> {
+  if (!hasUnsavedChanges()) return true;
+  const ok = await api().confirm({
+    eyebrow: 'CAMBIOS SIN GUARDAR',
+    title: '¿Descartar los cambios?',
+    message: 'Lo que escribiste en este formulario todavía no se guardó.',
+    confirmLabel: 'Descartar',
+    danger: true,
+  });
+  if (ok) formSnapshot = null;
+  return ok;
 }
 
 export function paint(focusHeading = false) {
