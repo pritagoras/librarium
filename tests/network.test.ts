@@ -45,9 +45,11 @@ test('el crecimiento de la red no repite personajes ni vínculos y descarta los 
   const characters = [{ ...base, id: 'p', name: 'Pierre', aliases: ['Piotr'] }, { ...base, id: 'a', name: 'Andrei' }];
   const relations = [{ id: 'r', bookId: 'b', fromId: 'p', toId: 'a', type: 'Amistad', description: '', certainty: 'explicit' as const, evidence: [] }];
   const result = readGrowth({
-    characters: [{ name: 'Piotr' }, { name: 'María' }, { name: 'Suelto' }, { name: 'maria' }],
+    characters: [{ name: 'Piotr' }, { name: 'María', occupation: ' Noble ', age: 20 }, { name: 'Suelto' }, { name: 'maria' }],
     relations: [{ from: 'Andrei', to: 'Pierre', type: 'amistad' }, { from: 'maria', to: 'Andrei', type: 'Hermano/a de' }, { from: 'María', to: 'Nadie', type: 'Amistad' }],
   }, characters, relations);
   assert.deepEqual(result.characters.map((c) => c.name), ['María']);
+  assert.equal(result.characters[0].occupation, 'Noble');
+  assert.equal(result.characters[0].age, '');
   assert.deepEqual(result.relations, [{ from: 'María', to: 'Andrei', type: 'Hermano/a de', certainty: 'inferred' }]);
 });

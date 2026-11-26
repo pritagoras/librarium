@@ -1038,6 +1038,7 @@ dialog[open]:not(.book-detail-dialog):not(.photo-viewer-dialog):not(#geminiDialo
 .chr-node--global.chr-node--isolated circle{fill:#414744;stroke:#858d83}
 .chr-node:hover circle,.chr-node:focus-visible circle{stroke:#d9c58f}
 .chr-edge--color{opacity:.82;filter:drop-shadow(0 1px 2px #00000055)}
+.chr-edge-type{font-size:12px;font-weight:700;paint-order:stroke;stroke:#222924;stroke-width:5px;stroke-linejoin:round;pointer-events:none}
 .chr-net-legend{color:#d8d9ce}
 .chr-net-details{background:#303832;border-color:#59645a;color:#f1eee5}
 .chr-net-details>span{color:#c4c9bd}

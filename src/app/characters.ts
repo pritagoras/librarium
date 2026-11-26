@@ -454,8 +454,8 @@ function mostConnected(): string | null {
 
 function layoutGlobalGraph() {
   const ids = data.characters.map((c) => c.id);
-  const size = Math.max(760, Math.ceil(170 * Math.sqrt(ids.length)));
-  const positions = computeLayout(ids, data.relations, { width: size, height: size, padding: 60, minDistance: 105 });
+  const size = Math.max(760, Math.ceil(210 * Math.sqrt(ids.length)));
+  const positions = computeLayout(ids, data.relations, { width: size, height: size, padding: 60, minDistance: 150 });
   return { positions, size };
 }
 
@@ -623,7 +623,7 @@ async function applyGrowth() {
     const find = (name: string) => characters.find((c) => [c.name, ...c.aliases].some((value) => normalizeText(value) === normalizeText(name)));
     for (const item of chosen) {
       if (find(item.name)) continue;
-      characters.push(await api().saveCharacter({ id: crypto.randomUUID(), bookId, name: item.name, aliases: item.aliases, age: '', description: '', traits: [], occupation: '', affiliation: '', comments: 'Sugerido por la IA; revisar.', evidence: [], certainty: {}, createdAt: now, updatedAt: now }));
+      characters.push(await api().saveCharacter({ id: crypto.randomUUID(), bookId, name: item.name, aliases: item.aliases, age: item.age, description: item.description, traits: [], occupation: item.occupation, affiliation: '', comments: 'Sugerido por la IA; revisar.', evidence: [], certainty: Object.fromEntries((['age', 'description', 'occupation'] as const).filter((key) => item[key]).map((key) => [key, 'inferred'])), createdAt: now, updatedAt: now }));
     }
     for (const item of result.relations) {
       const from = find(item.from), to = find(item.to);
@@ -643,6 +643,40 @@ async function applyGrowth() {
   if (!failed) openNetworkShare({ bookTitle: book?.title || 'Mi libro', characters: data.characters, relations: data.relations });
 }
 
+/** Líneas con flecha (vínculos con dirección) y su tipo escrito, evitando pisar personajes u otras etiquetas. */
+function globalEdgesSVG(positions: Map<string, { x: number; y: number }>): string {
+  const pairs = new Map<string, CharacterRelation[]>();
+  for (const r of data.relations) {
+    const key = [r.fromId, r.toId].sort().join('|');
+    pairs.set(key, [...(pairs.get(key) || []), r]);
+  }
+  const taken = [...positions.values()].map((p) => ({ x: p.x, y: p.y, w: 72, h: 72 }));
+  let lines = '', labels = '';
+  for (const group of pairs.values()) {
+    const main = group.find((r) => isDirectedType(r.type)) ?? group[0];
+    const a = positions.get(main.fromId), b = positions.get(main.toId);
+    if (!a || !b) continue;
+    const filtered = state.netIsolatedOnly ? ' chr-edge--filtered' : '';
+    const color = relationColor(main.type);
+    const dashed = group.some((r) => r.certainty === 'explicit') ? '' : ' stroke-dasharray="7 6"';
+    const title = group.map((r) => `${characterById(r.fromId)?.name} → ${characterById(r.toId)?.name} · ${r.type} · ${CERTAINTY_LABELS[r.certainty]}`).join(' / ');
+    lines += `<path class="chr-edge chr-edge--color${filtered}" d="M ${a.x.toFixed(1)} ${a.y.toFixed(1)} L ${b.x.toFixed(1)} ${b.y.toFixed(1)}" style="stroke:${color}"${dashed}><title>${esc(title)}</title></path>`;
+    if (state.netIsolatedOnly) continue;
+    if (isDirectedType(main.type)) {
+      const angle = Math.atan2(b.y - a.y, b.x - a.x);
+      lines += `<path class="chr-edge-arrow" d="M 0 0 L -12 -7 L -12 7 Z" fill="${color}" transform="translate(${(b.x - Math.cos(angle) * 38).toFixed(1)} ${(b.y - Math.sin(angle) * 38).toFixed(1)}) rotate(${((angle * 180) / Math.PI).toFixed(1)})"></path>`;
+    }
+    const text = [...new Set(group.map((r) => r.type))].join(' · ');
+    const label = text.length > 28 ? `${text.slice(0, 27)}…` : text;
+    const width = label.length * 6.4 + 10;
+    const at = (t: number) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, w: width, h: 18 });
+    const box = [0.5, 0.42, 0.58, 0.34, 0.66, 0.26, 0.74].map(at).find((c) => !taken.some((o) => Math.abs(o.x - c.x) * 2 < o.w + c.w && Math.abs(o.y - c.y) * 2 < o.h + c.h)) ?? at(0.5);
+    taken.push(box);
+    labels += `<text class="chr-edge-type" x="${box.x.toFixed(1)}" y="${(box.y + 4).toFixed(1)}" text-anchor="middle" fill="${color}">${esc(label)}</text>`;
+  }
+  return lines + labels;
+}
+
 function networkHTML(): string {
   if (!data.characters.length) return '<p class="empty-inline">Cargá personajes y vínculos para ver la red de relaciones.</p>';
   if (!characterById(state.netFocus)) state.netFocus = characterById(state.selectedId)?.id ?? mostConnected();
@@ -651,15 +685,7 @@ function networkHTML(): string {
   const selected = characterById(state.netSelected);
   const isolated = data.characters.filter((c) => relationCount(c.id) === 0).length;
   const connected = data.characters.length - isolated;
-  const edgeSvg = data.relations.map((r) => {
-    const a = positions.get(r.fromId), b = positions.get(r.toId);
-    if (!a || !b) return '';
-    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-    const bend = ((r.id.charCodeAt(4) || 7) % 2 ? 1 : -1) * 18;
-    const cx = mx + bend, cy = my - bend;
-    const dashed = r.certainty === 'explicit' ? '' : ' stroke-dasharray="7 6"';
-    return `<path class="chr-edge chr-edge--color${state.netIsolatedOnly ? ' chr-edge--filtered' : ''}" d="M ${a.x.toFixed(1)} ${a.y.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${b.x.toFixed(1)} ${b.y.toFixed(1)}" stroke="${relationColor(r.type)}"${dashed}><title>${esc(characterById(r.fromId)?.name)} → ${esc(characterById(r.toId)?.name)} · ${esc(r.type)} · ${esc(CERTAINTY_LABELS[r.certainty])}</title></path>`;
-  }).join('');
+  const edgeSvg = globalEdgesSVG(positions);
   const nodesSvg = data.characters.map((c, i) => {
     const p = positions.get(c.id)!;
     const focus = c.id === focusId;
