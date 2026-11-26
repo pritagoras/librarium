@@ -281,7 +281,7 @@ function indexHTML(): string {
   return `<div class="content-heading">
       <div>
         <h2 id="chrHeading" tabindex="-1">Personajes</h2>
-        <p class="muted">Fichas de los personajes de este libro y cómo se relacionan. Todo lo que cargues es tuyo: nada se completa solo, y la IA solo responde cuando se lo pedís.</p>
+        <p class="muted">Fichas y vínculos entre los personajes de este libro.</p>
       </div>
       <div class="content-heading-actions">
         <button type="button" class="primary" data-chr="new">＋ Nuevo personaje</button>
@@ -289,10 +289,10 @@ function indexHTML(): string {
     </div>
     ${state.notice ? `<p class="chr-notice" role="status">${esc(state.notice)}</p>` : ''}
     <div class="chr-toolbar">
-      <label class="chr-search">
+      ${state.view === 'network' ? '' : `<label class="chr-search">
         <span class="chr-sr-only">Buscar personajes</span>
         <input type="search" id="chrSearch" placeholder="Buscar por nombre, alias, rasgo u ocupación" value="${esc(state.query)}" autocomplete="off" />
-      </label>
+      </label>`}
       <div class="chr-view-toggle" role="group" aria-label="Vista de personajes">
         ${views.map(([key, label]) => `<button type="button" data-chr="view" data-view="${key}" aria-pressed="${state.view === key}" class="${state.view === key ? 'active' : ''}">${label}</button>`).join('')}
       </div>
@@ -373,7 +373,6 @@ function relationRowHTML(character: Character, relation: CharacterRelation): str
     ${relation.description ? `<p class="chr-relation-text">${esc(relation.description)}</p>` : ''}
     ${evidenceListHTML(relation.evidence)}
     <div class="chr-row-actions">
-      <button type="button" class="secondary" data-chr="open" data-id="${esc(other.id)}">Abrir ficha</button>
       <button type="button" class="secondary" data-chr="ask" data-scope="relation" data-other="${esc(other.id)}" data-rel="${esc(relation.id)}" aria-label="Preguntar a la IA por el vínculo con ${esc(other.name)}">${AI_SPARK} IA</button>
       <button type="button" class="secondary" data-chr="edit-relation" data-rel="${esc(relation.id)}">Editar</button>
       <button type="button" class="secondary" data-chr="remove-relation" data-rel="${esc(relation.id)}" aria-label="Quitar el vínculo con ${esc(other.name)}">Quitar</button>
@@ -477,7 +476,7 @@ function setGrounding(on: boolean) {
 
 function groundingToggleHTML(): string {
   if (!api().ai.hasKey()) return '';
-  return `<label class="chr-grounding"><input type="checkbox" data-chr-grounding ${groundingEnabled() ? 'checked' : ''}/> <span>Usar búsqueda de Google para mejorar los datos. Puede tener costo según tu plan; si tu clave no la permite, se analiza sin ella.</span></label>`;
+  return `<details class="chr-grounding-options"><summary>Opciones de búsqueda</summary><label class="chr-grounding"><input type="checkbox" data-chr-grounding ${groundingEnabled() ? 'checked' : ''}/> <span>Buscar en Google para desambiguar y consultar fuentes. Puede tener costo según tu plan.</span></label></details>`;
 }
 
 interface JSONTaskResult { text: string; sources: Array<{ title: string; url: string }>; groundingUsed: boolean; groundingError: string }
@@ -552,8 +551,9 @@ function networkReviewHTML(): string {
   if (review.status === 'idle') return '';
   if (review.status === 'prompt') return `<section class="chr-research chr-network-review"><h3>Analizar y mejorar mi red</h3><p>El prompt incluye nombres, vínculos y hasta 40 notas, anotaciones y citas paginadas por tipo, solo hasta la página ${Math.max(0, Number(book?.currentPage) || 0)}. Las fichas, descripciones y fuentes sin página se omiten. Se lo enviarás manualmente a Gemini; Librarium no consulta la API ni guarda cambios durante el análisis.</p><label for="chrNetworkPrompt">Prompt para Gemini</label><textarea id="chrNetworkPrompt" readonly rows="16">${esc(review.prompt)}</textarea><div class="chr-row-actions"><button type="button" class="secondary" data-chr="copy-network-prompt">Copiar prompt</button><a class="secondary" href="https://gemini.google.com/app" target="_blank" rel="noopener noreferrer">Abrir Gemini</a><button type="button" class="secondary" data-chr="cancel-network-review">Cancelar</button></div><p class="muted chr-review-copy-status" role="status"></p><label for="chrNetworkResponse">Pegá la respuesta JSON de Gemini</label><textarea id="chrNetworkResponse" rows="10" placeholder="Pegá aquí el análisis completo…">${esc(review.responseText)}</textarea>${review.error ? `<p class="chr-ai-error" role="alert">${esc(review.error)}</p>` : ''}<button type="button" class="primary" data-chr="parse-network-review">Revisar propuestas</button><p class="muted">La IA puede sugerir desde el conocimiento general aunque no haya citas; esas propuestas se marcan como inferencias. Las que se basan en tu cuaderno deben citar una referencia válida. Ningún cambio se guarda automáticamente.</p></section>`;
   const cards = review.proposals.map((proposal, index) => networkProposalHTML(proposal, index)).join('');
+  const acceptedCount = review.proposals.filter((proposal) => proposal.decision === 'accepted' && !proposal.validationError).length;
   const findings = review.manualFindings.map((finding, index) => `<article class="chr-review-finding"><strong>${esc(finding.category)}</strong>${finding.name ? `<h4>${esc(finding.name)}</h4>` : ''}<span>${finding.characterIds.map((id) => characterById(id)?.name || `ID no encontrado: ${id}`).map(esc).join(', ')}</span><p>${esc(finding.reason)}</p>${finding.evidence ? `<blockquote>${esc(finding.evidence)}</blockquote>` : ''}${/^https?:\/\//i.test(finding.sourceUrl) ? `<a href="${esc(finding.sourceUrl)}" target="_blank" rel="noopener noreferrer">Abrir fuente citada</a>` : ''}${finding.category === 'missing_character' && finding.name ? canCreateMissingCharacter(finding) ? `<div class="chr-row-actions"><button type="button" class="primary" data-chr="create-missing-character" data-index="${index}">＋ Crear ficha y ubicar en la red</button></div>` : '<p class="muted">No se puede crear automáticamente: la propuesta dice basarse en tu cuaderno, pero no cita una referencia paginada válida.</p>' : ''}</article>`).join('');
-  return `<section class="chr-research chr-network-review"><div class="chr-review-heading"><div><h3>Revisión de propuestas</h3><p>${review.proposals.length} cambios propuestos · ${review.manualFindings.length} casos para revisar manualmente</p>${autoNote ? `<p class="muted">${esc(autoNote)}</p>` : ''}</div><button type="button" class="secondary" data-chr="new-network-analysis">Nuevo análisis</button></div>${review.error ? `<p class="chr-ai-error" role="alert">${esc(review.error)}</p>` : ''}${review.proposals.length ? `<h4>Relaciones nuevas y correcciones</h4><div class="chr-review-cards">${cards}</div><div class="chr-form-actions"><button type="button" class="primary" data-chr="apply-network-selected">Aplicar aceptadas seleccionadas</button><button type="button" class="secondary" data-chr="apply-network-accepted">Aplicar todas las aceptadas</button><button type="button" class="secondary" data-chr="discard-network-selected">Descartar seleccionadas</button></div>` : '<p class="muted">No hay cambios de relación propuestos.</p>'}${findings ? `<h4>Casos para revisión manual</h4><div class="chr-review-cards">${findings}</div>` : ''}<p class="muted">Aceptar una propuesta solo la marca para revisión. El guardado requiere una acción aparte y una confirmación final.</p></section>`;
+  return `<section class="chr-research chr-network-review"><div class="chr-review-heading"><div><h3>Revisión de propuestas</h3><p>${review.proposals.length} cambios propuestos · ${review.manualFindings.length} casos para revisar manualmente</p>${autoNote ? `<p class="muted">${esc(autoNote)}</p>` : ''}</div><button type="button" class="secondary" data-chr="new-network-analysis">Nuevo análisis</button></div>${review.error ? `<p class="chr-ai-error" role="alert">${esc(review.error)}</p>` : ''}${review.proposals.length ? `<h4>Relaciones nuevas y correcciones</h4><div class="chr-review-cards">${cards}</div><div class="chr-form-actions"><button type="button" class="primary" data-chr="apply-network-accepted" ${acceptedCount ? '' : 'disabled'}>Aplicar propuestas aceptadas (${acceptedCount})</button></div>` : '<p class="muted">No hay cambios de relación propuestos.</p>'}${findings ? `<h4>Casos para revisión manual</h4><div class="chr-review-cards">${findings}</div>` : ''}<p class="muted">Las propuestas aceptadas se revisan y confirman antes de guardarse.</p></section>`;
 }
 
 function networkProposalHTML(proposal: NetworkProposal, index: number): string {
@@ -561,9 +561,8 @@ function networkProposalHTML(proposal: NetworkProposal, index: number): string {
   const charsTo = data.characters.map((c) => `<option value="${esc(c.id)}" ${c.id === proposal.toId ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
   const current = proposal.targetRelationId ? data.relations.find((r) => r.id === proposal.targetRelationId) : undefined;
   const existing = `${proposal.basisType === 'reader_material' ? 'Basada en tu cuaderno' : 'Inferencia del conocimiento general de la IA'} · ${current ? `Actual: ${characterById(current.fromId)?.name} → ${current.type} → ${characterById(current.toId)?.name} · ${CERTAINTY_LABELS[current.certainty]}` : 'Nueva relación'}`;
-  const selected = proposal.decision === 'accepted' ? 'checked' : '';
   const relationChoices = data.relations.map((r) => `<option value="${esc(r.id)}" ${r.id === proposal.targetRelationId ? 'selected' : ''}>${esc(characterById(r.fromId)?.name)} · ${esc(r.type)} · ${esc(characterById(r.toId)?.name)}</option>`).join('');
-  return `<article class="chr-review-proposal" data-review-card="${index}"><div class="chr-review-proposal-head"><label><input type="checkbox" data-review-select ${selected} ${proposal.decision === 'rejected' ? 'disabled' : ''}/> ${proposal.decision === 'accepted' ? 'Aceptada para aplicar' : proposal.decision === 'rejected' ? 'Rechazada' : 'Pendiente de revisión'}</label><span class="chr-confidence chr-confidence--${proposal.confidence}">Confianza ${esc(proposal.confidence)}</span></div><p class="muted">${esc(existing)}${proposal.action === 'correct' ? ' · corrección sugerida' : ''}</p><div class="chr-review-fields">${proposal.action === 'correct' ? `<label class="chr-review-wide">Vínculo a corregir<select data-review-field="targetRelationId">${relationChoices}</select></label>` : ''}<label>Desde<select data-review-field="fromId">${chars}</select></label><label>Hacia<select data-review-field="toId">${charsTo}</select></label><label>Tipo<input data-review-field="type" maxlength="${LIMITS.relationType}" value="${esc(proposal.type)}" /></label><label>Certeza<select data-review-field="certainty">${(['explicit','inferred','unknown'] as Certainty[]).map((v) => `<option value="${v}" ${proposal.certainty === v ? 'selected' : ''}>${CERTAINTY_LABELS[v]}</option>`).join('')}</select></label><label class="chr-review-wide">Descripción<textarea data-review-field="description" maxlength="${LIMITS.relationDescription}" rows="2">${esc(proposal.description)}</textarea></label><label class="chr-review-wide">Evidencia propuesta<textarea data-review-field="evidence" maxlength="${LIMITS.evidenceText}" rows="2">${esc(proposal.evidence)}</textarea></label><label class="chr-review-wide">URL citada<input data-review-field="sourceUrl" type="url" value="${esc(proposal.sourceUrl)}" placeholder="https://…" /></label></div><p><strong>Justificación:</strong> ${esc(proposal.reason)}</p>${proposal.validationError ? `<p class="chr-ai-error" role="alert">${esc(proposal.validationError)}</p>` : ''}<div class="chr-row-actions"><button type="button" class="secondary" data-chr="accept-network-proposal" data-index="${index}" ${proposal.decision === 'rejected' ? 'disabled' : ''}>Aceptar propuesta</button><button type="button" class="secondary" data-chr="reject-network-proposal" data-index="${index}">Rechazar</button>${current ? `<button type="button" class="secondary" data-chr="edit-relation" data-rel="${esc(current.id)}">Abrir vínculo actual</button>` : ''}</div></article>`;
+  return `<article class="chr-review-proposal" data-review-card="${index}"><div class="chr-review-proposal-head"><span class="chr-review-state">${proposal.decision === 'accepted' ? 'Aceptada' : proposal.decision === 'rejected' ? 'Descartada' : 'Pendiente'}</span><span class="chr-confidence chr-confidence--${proposal.confidence}">Confianza ${esc(proposal.confidence)}</span></div><p class="muted">${esc(existing)}${proposal.action === 'correct' ? ' · corrección sugerida' : ''}</p><div class="chr-review-fields">${proposal.action === 'correct' ? `<label class="chr-review-wide">Vínculo a corregir<select data-review-field="targetRelationId">${relationChoices}</select></label>` : ''}<label>Desde<select data-review-field="fromId">${chars}</select></label><label>Hacia<select data-review-field="toId">${charsTo}</select></label><label>Tipo<input data-review-field="type" maxlength="${LIMITS.relationType}" value="${esc(proposal.type)}" /></label><label>Certeza<select data-review-field="certainty">${(['explicit','inferred','unknown'] as Certainty[]).map((v) => `<option value="${v}" ${proposal.certainty === v ? 'selected' : ''}>${CERTAINTY_LABELS[v]}</option>`).join('')}</select></label><label class="chr-review-wide">Descripción<textarea data-review-field="description" maxlength="${LIMITS.relationDescription}" rows="2">${esc(proposal.description)}</textarea></label><label class="chr-review-wide">Evidencia propuesta<textarea data-review-field="evidence" maxlength="${LIMITS.evidenceText}" rows="2">${esc(proposal.evidence)}</textarea></label><label class="chr-review-wide">URL citada<input data-review-field="sourceUrl" type="url" value="${esc(proposal.sourceUrl)}" placeholder="https://…" /></label></div><p><strong>Justificación:</strong> ${esc(proposal.reason)}</p>${proposal.validationError ? `<p class="chr-ai-error" role="alert">${esc(proposal.validationError)}</p>` : ''}<div class="chr-row-actions"><button type="button" class="secondary" data-chr="accept-network-proposal" data-index="${index}" ${proposal.decision === 'accepted' ? 'disabled' : ''}>${proposal.decision === 'rejected' ? 'Reactivar' : 'Aceptar'}</button><button type="button" class="secondary" data-chr="reject-network-proposal" data-index="${index}" ${proposal.decision === 'rejected' ? 'disabled' : ''}>${proposal.decision === 'accepted' ? 'Deshacer aceptación' : 'Descartar'}</button>${current ? `<button type="button" class="secondary" data-chr="edit-relation" data-rel="${esc(current.id)}">Abrir vínculo actual</button>` : ''}</div></article>`;
 }
 
 function growthHTML(): string {
@@ -691,14 +690,13 @@ function networkHTML(): string {
     const focus = c.id === focusId;
     const isolatedClass = relationCount(c.id) === 0 ? ' chr-node--isolated' : '';
     const label = c.name.length > 18 ? `${c.name.slice(0, 17)}…` : c.name;
-    const hue = (i * 47 + 195) % 360;
-    return `<g class="chr-node chr-node--global${focus ? ' chr-node--focus' : ''}${c.id === state.netSelected ? ' chr-node--selected' : ''}${isolatedClass}${state.netIsolatedOnly && relationCount(c.id) ? ' chr-node--filtered' : ''}" data-chr="net-select" data-id="${esc(c.id)}" tabindex="0" role="button" aria-label="${esc(c.name)}, ${relationCount(c.id)} vínculos" style="--node-delay:${Math.min(i * 55, 900)}ms"><circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${focus ? 36 : 29}" style="--node-hue:${hue}"></circle><text x="${p.x.toFixed(1)}" y="${(p.y + 4).toFixed(1)}" text-anchor="middle">${esc(label)}</text></g>`;
+    return `<g class="chr-node chr-node--global${focus ? ' chr-node--focus' : ''}${c.id === state.netSelected ? ' chr-node--selected' : ''}${isolatedClass}${state.netIsolatedOnly && relationCount(c.id) ? ' chr-node--filtered' : ''}" data-chr="net-select" data-id="${esc(c.id)}" tabindex="0" role="button" aria-label="${esc(c.name)}, ${relationCount(c.id)} vínculos" style="--node-delay:${Math.min(i * 55, 900)}ms"><circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${focus ? 36 : 29}"></circle><text x="${p.x.toFixed(1)}" y="${(p.y + 4).toFixed(1)}" text-anchor="middle">${esc(label)}</text></g>`;
   }).join('');
   const types = [...new Set(data.relations.map((r) => r.type))];
   const allGroups = buildConnectedGroups(data.characters, data.relations);
-  const detail = selected ? `<aside class="chr-net-details"><strong>${esc(selected.name)}</strong><span>${relationCount(selected.id)} vínculos · ${isolated && relationCount(selected.id) === 0 ? 'personaje aislado' : `grupo ${allGroups.findIndex((g) => g.includes(selected.id)) + 1}`}</span><div class="chr-row-actions"><button type="button" class="secondary" data-chr="open" data-id="${esc(selected.id)}">Abrir ficha</button><button type="button" class="secondary" data-chr="net-center" data-id="${esc(selected.id)}">Centrar y elegir</button><button type="button" class="secondary" data-chr="add-relation">＋ Agregar vínculo</button></div>${data.relations.filter((r) => r.fromId === selected.id || r.toId === selected.id).map((r) => `<div class="chr-net-rel"><span class="chr-net-dot" style="--edge-color:${relationColor(r.type)}"></span>${esc(characterById(r.fromId)?.name)} ${isDirectedType(r.type) ? '→' : '↔'} ${esc(characterById(r.toId)?.name)} · ${esc(r.type)} <button type="button" class="secondary" data-chr="edit-relation" data-rel="${esc(r.id)}">Editar</button></div>`).join('')}</aside>` : '<p class="muted">Seleccioná cualquier personaje para abrir su ficha o administrar vínculos.</p>';
+  const detail = selected ? `<aside class="chr-net-details" role="region" aria-label="Detalles de ${esc(selected.name)}" tabindex="-1"><strong>${esc(selected.name)}</strong><span>${relationCount(selected.id)} vínculos · ${isolated && relationCount(selected.id) === 0 ? 'personaje aislado' : `grupo ${allGroups.findIndex((g) => g.includes(selected.id)) + 1}`}</span><div class="chr-row-actions"><button type="button" class="secondary" data-chr="open" data-id="${esc(selected.id)}">Abrir ficha</button><button type="button" class="secondary" data-chr="add-relation">＋ Agregar vínculo</button></div>${data.relations.filter((r) => r.fromId === selected.id || r.toId === selected.id).map((r) => `<div class="chr-net-rel"><span class="chr-net-dot" style="--edge-color:${relationColor(r.type)}"></span>${esc(characterById(r.fromId)?.name)} ${isDirectedType(r.type) ? '→' : '↔'} ${esc(characterById(r.toId)?.name)} · ${esc(r.type)} <button type="button" class="secondary" data-chr="edit-relation" data-rel="${esc(r.id)}">Editar</button></div>`).join('')}</aside>` : '<p class="muted">Seleccioná cualquier personaje para abrir su ficha o administrar vínculos.</p>';
   const mobilePeople = `<div class="chr-net-mobile-people"><h4>Personajes</h4><div>${data.characters.map((c) => `<button type="button" data-chr="net-select" data-id="${esc(c.id)}" class="${c.id === state.netSelected ? 'active' : ''}"><strong>${esc(c.name)}</strong><span>${relationCount(c.id)} vínculos</span></button>`).join('')}</div></div>`;
-  return `<div class="chr-network chr-network--global"><div class="chr-network-header"><div><h3>Red de personajes</h3><p>${data.characters.length} personajes · ${data.relations.length} vínculos · ${allGroups.length} grupos · ${isolated} aislados</p></div><label for="chrNetFocus">Centrar en<select id="chrNetFocus">${data.characters.map((c) => `<option value="${esc(c.id)}" ${c.id === focusId ? 'selected' : ''}>${esc(c.name)} (${relationCount(c.id)})</option>`).join('')}</select></label><button type="button" class="primary" data-chr="grow-network">✦ Hacer crecer con IA</button><button type="button" class="secondary" data-chr="animate-network">✨ Animar mi red</button><button type="button" class="secondary" data-chr="analyze-network">✦ Analizar red con IA</button>${groundingToggleHTML()}<button type="button" class="secondary" data-chr="fullscreen-network">⛶ Pantalla completa</button></div>${growthHTML()}<div class="chr-net-stats"><button type="button" data-chr="filter-isolated" aria-pressed="${state.netIsolatedOnly}">${isolated} aislados</button><span>${connected} conectados</span><span>${allGroups.length} grupos independientes</span></div><p class="chr-net-hint">Cada círculo es un personaje. Seleccionalo para ver y editar sus vínculos; las líneas muestran relaciones guardadas en este libro.</p><div class="chr-net-canvas"><svg class="chr-svg chr-svg--global" viewBox="0 0 ${size} ${size}" role="group" aria-label="Mapa global con todos los personajes y vínculos">${edgeSvg}${nodesSvg}</svg></div>${mobilePeople}<div class="chr-net-legend">${types.map((type) => `<span><i style="--edge-color:${relationColor(type)}"></i>${esc(type)}</span>`).join('')}<span><i class="chr-net-certainty"></i>Línea continua: explícita · discontinua: inferida o desconocida</span></div>${detail}${networkReviewHTML()}</div>`;
+  return `<div class="chr-network chr-network--global"><div class="chr-network-header"><div><h3>Red de personajes</h3><p>${data.characters.length} personajes · ${data.relations.length} vínculos</p></div><label for="chrNetFocus">Resaltar personaje<select id="chrNetFocus">${data.characters.map((c) => `<option value="${esc(c.id)}" ${c.id === focusId ? 'selected' : ''}>${esc(c.name)} (${relationCount(c.id)})</option>`).join('')}</select></label><button type="button" class="primary" data-chr="analyze-network">✦ Analizar red con IA</button><button type="button" class="secondary" data-chr="fullscreen-network" aria-pressed="false">⛶ Pantalla completa</button><details class="chr-net-more"><summary>Más acciones</summary><div><button type="button" class="secondary" data-chr="grow-network">＋ Sumar personajes y vínculos</button><button type="button" class="secondary" data-chr="animate-network">Animar y compartir la red</button>${groundingToggleHTML()}</div></details></div>${growthHTML()}<div class="chr-net-stats">${isolated ? `<button type="button" data-chr="filter-isolated" aria-label="Mostrar solo personajes aislados" aria-pressed="${state.netIsolatedOnly}">${isolated} aislados</button>` : `<span>0 aislados</span>`}<span>${connected} conectados</span><span>${allGroups.length} grupos independientes</span></div><p class="chr-net-hint">Seleccioná un personaje para ver su ficha y sus vínculos.</p><div class="chr-net-canvas"><svg class="chr-svg chr-svg--global" viewBox="0 0 ${size} ${size}" role="group" aria-label="Mapa global con todos los personajes y vínculos">${edgeSvg}${nodesSvg}</svg></div>${mobilePeople}<div class="chr-net-legend">${types.map((type) => `<span><i style="--edge-color:${relationColor(type)}"></i>${esc(type)}</span>`).join('')}<span><i class="chr-net-certainty"></i>Continua: explícita · discontinua: inferida o desconocida</span></div>${detail}${networkReviewHTML()}</div>`;
 }
 
 function buildConnectedGroups(characters: Character[], relations: CharacterRelation[]): string[][] {
@@ -918,9 +916,9 @@ function decideNetworkProposal(index: number, decision: 'accepted' | 'rejected')
   paint();
 }
 
-async function applyNetworkProposals(applyAllAccepted: boolean) {
+async function applyNetworkProposals() {
   const proposals = state.networkReview.proposals.map((proposal, index) => proposalFromCard(index) || proposal);
-  const selected = proposals.filter((proposal, index) => proposal.decision === 'accepted' && !proposal.validationError && (applyAllAccepted || host?.querySelector<HTMLInputElement>(`[data-review-card="${index}"] [data-review-select]`)?.checked));
+  const selected = proposals.filter((proposal) => proposal.decision === 'accepted' && !proposal.validationError);
   if (!selected.length) {
     state.networkReview.error = 'Aceptá y seleccioná al menos una propuesta válida antes de aplicar.';
     return paint();
@@ -1026,7 +1024,7 @@ function characterFormHTML(): string {
       <div class="chr-form-field">
         <label for="chr_name">Nombre</label>
         <input id="chr_name" name="name" type="text" maxlength="${LIMITS.name}" required value="${esc(c?.name ?? suggestedName)}" />
-        <div class="chr-research-actions"><button type="button" class="secondary" data-chr="search-character">${AI_SPARK} ${api().ai.hasKey() ? 'Completar con IA' : 'Preparar búsqueda en Gemini'}</button><span class="muted">${api().ai.hasKey() ? 'Consulta a Gemini con tu API key guardada, sin copiar ni pegar.' : 'Copiás el prompt, buscás con Gemini Plus y pegás aquí la respuesta.'} Tiene en cuenta tu avance (p. ${Math.max(0, Number(book?.currentPage) || 0)}).</span>${groundingToggleHTML()}</div>
+        <div class="chr-research-actions"><button type="button" class="secondary" data-chr="search-character">${AI_SPARK} ${api().ai.hasKey() ? 'Completar con IA' : 'Preparar búsqueda en Gemini'}</button><span class="muted">${api().ai.hasKey() ? 'Gemini' : 'Prompt manual'} · hasta p. ${Math.max(0, Number(book?.currentPage) || 0)}</span>${groundingToggleHTML()}</div>
       </div>
       ${characterSearchHTML()}
       <div id="chrAiHost"></div>
@@ -1325,8 +1323,6 @@ function relationFormHTML(): string {
       ${editing ? '' : `<div class="chr-form-field"><label><input type="checkbox" id="chrMultiRelation" /> Crear este vínculo con varios personajes</label><fieldset id="chrMultiTargets" class="chr-fieldset hidden"><legend>Seleccioná los personajes</legend>${others.map((c) => `<label><input type="checkbox" name="multiOther" value="${esc(c.id)}" /> ${esc(c.name)}</label>`).join('')}</fieldset></div>`}
       ${!editing ? `<div class="chr-form-field hidden" id="chrNewRelativeWrap"><label for="chr_new_relative">Nombre del nuevo personaje</label><input id="chr_new_relative" name="newRelative" type="text" maxlength="${LIMITS.name}" placeholder="Nombre tal como aparece en el libro" /></div>` : ''}
       </section>
-      ${editing ? '' : `<div class="chr-form-field"><label><input type="checkbox" id="chrMultiRelation" /> Crear este vínculo con varios personajes</label><fieldset id="chrMultiTargets" class="chr-fieldset hidden"><legend>Seleccioná los personajes</legend>${others.map((c) => `<label><input type="checkbox" name="multiOther" value="${esc(c.id)}" /> ${esc(c.name)}</label>`).join('')}</fieldset></div>`}
-      ${!editing ? `<div class="chr-form-field hidden" id="chrNewRelativeWrap"><label for="chr_new_relative">Nombre del familiar</label><input id="chr_new_relative" name="newRelative" type="text" maxlength="${LIMITS.name}" /></div>` : ''}
       <section class="chr-relation-step" id="chrRelationKind"><h3>2. ¿Qué vínculo tienen?</h3>
       <div class="chr-form-field">
         <label for="chr_direction">Sentido del vínculo</label>
@@ -2245,6 +2241,17 @@ function bindEvents() {
     void handleAction(el.dataset.chr!, el);
   };
   host.onkeydown = (event) => {
+    if (event.key === 'Escape') {
+      const network = host?.querySelector<HTMLElement>('.chr-network--fullscreen');
+      if (network) {
+        network.classList.remove('chr-network--fullscreen');
+        const button = host?.querySelector<HTMLButtonElement>('[data-chr="fullscreen-network"]');
+        button?.setAttribute('aria-pressed', 'false');
+        if (button) button.textContent = '⛶ Pantalla completa';
+        button?.focus();
+      }
+      return;
+    }
     if (event.key !== 'Enter' && event.key !== ' ') return;
     const el = (event.target as HTMLElement).closest<SVGElement>('g[data-chr="net-select"]');
     if (!el) return;
@@ -2534,27 +2541,27 @@ async function handleAction(action: string, el: HTMLElement) {
       return decideNetworkProposal(Number(el.dataset.index), 'accepted');
     case 'reject-network-proposal':
       return decideNetworkProposal(Number(el.dataset.index), 'rejected');
-    case 'apply-network-selected':
-      return applyNetworkProposals(false);
     case 'apply-network-accepted':
-      return applyNetworkProposals(true);
-    case 'discard-network-selected': {
-      const selected = new Set(state.networkReview.proposals.flatMap((_proposal, index) => host?.querySelector<HTMLInputElement>(`[data-review-card="${index}"] [data-review-select]`)?.checked ? [index] : []));
-      if (!selected.size) { state.networkReview.error = 'Marcá las propuestas que quieras descartar.'; return paint(); }
-      state.networkReview.proposals = state.networkReview.proposals.filter((_proposal, index) => !selected.has(index));
-      state.networkReview.error = '';
-      return paint();
-    }
+      return applyNetworkProposals();
     case 'net-select':
       state.netSelected = id;
-      return repaintResults(`[data-chr="net-select"][data-id="${CSS.escape(id)}"]`);
-    case 'net-center':
       state.netFocus = id;
-      state.netSelected = id;
+      if (el.tagName === 'BUTTON') {
+        repaintResults();
+        const details = host?.querySelector<HTMLElement>('.chr-net-details');
+        details?.focus({ preventScroll: true });
+        details?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        return;
+      }
       return repaintResults(`[data-chr="net-select"][data-id="${CSS.escape(id)}"]`);
-    case 'fullscreen-network':
-      host?.querySelector('.chr-network--global')?.classList.toggle('chr-network--fullscreen');
+    case 'fullscreen-network': {
+      const network = host?.querySelector<HTMLElement>('.chr-network--global');
+      if (!network) return;
+      const fullscreen = network.classList.toggle('chr-network--fullscreen');
+      el.setAttribute('aria-pressed', String(fullscreen));
+      el.textContent = fullscreen ? '× Cerrar pantalla completa' : '⛶ Pantalla completa';
       return;
+    }
     case 'filter-isolated':
       state.netIsolatedOnly = !state.netIsolatedOnly;
       return repaintResults('[data-chr="filter-isolated"]');
