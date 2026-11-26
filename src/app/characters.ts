@@ -1008,6 +1008,7 @@ function evidenceEditorHTML(items: EvidenceRef[]): string {
 function characterFormHTML(): string {
   const editing = characterById(state.editingCharacterId);
   const c: Character | undefined = editing;
+  const suggestedName = state.characterSearch.suggestion?.name || state.characterSearch.name;
   const fieldBlock = (key: CharacterFieldKey, multiline: boolean) => `<div class="chr-form-field">
       <label for="chr_${key}">${FIELD_LABELS[key]}</label>
       ${
@@ -1024,7 +1025,7 @@ function characterFormHTML(): string {
       <div class="chr-errors" id="chrFormErrors" role="alert" aria-live="assertive"></div>
       <div class="chr-form-field">
         <label for="chr_name">Nombre</label>
-        <input id="chr_name" name="name" type="text" maxlength="${LIMITS.name}" required value="${esc(c?.name ?? '')}" />
+        <input id="chr_name" name="name" type="text" maxlength="${LIMITS.name}" required value="${esc(c?.name ?? suggestedName)}" />
         <div class="chr-research-actions"><button type="button" class="secondary" data-chr="search-character">${AI_SPARK} ${api().ai.hasKey() ? 'Completar con IA' : 'Preparar búsqueda en Gemini'}</button><span class="muted">${api().ai.hasKey() ? 'Consulta a Gemini con tu API key guardada, sin copiar ni pegar.' : 'Copiás el prompt, buscás con Gemini Plus y pegás aquí la respuesta.'} Tiene en cuenta tu avance (p. ${Math.max(0, Number(book?.currentPage) || 0)}).</span>${groundingToggleHTML()}</div>
       </div>
       ${characterSearchHTML()}
@@ -1061,7 +1062,7 @@ function characterSearchHTML(): string {
   if (search.status === 'candidate-prompt') return promptPanel('Paso 1 de 2 · Buscar candidatos en Gemini', `Investigá «${esc(search.name)}» en «${esc(book?.title || '')}». El avance registrado es la página ${Math.max(0, Number(book?.currentPage) || 0)}; el prompt pide una identificación introductoria sin spoilers.`, 'Respuesta de Gemini con candidatos', 'chrCandidateResponse', 'parse-candidates', 'Mostrar coincidencias');
   if (search.status === 'profile-prompt') return `${search.candidates.length ? `<section class="chr-research"><h3>Elegiste «${esc(search.name)}»</h3><p class="muted">Fuentes compartidas por Gemini en la búsqueda:</p>${characterSourcesHTML(search.sources)}</section>` : ''}${promptPanel('Paso 2 de 2 · Preparar la ficha', `Pedile a Gemini datos del personaje en «${esc(book?.title || '')}». El prompt limita la respuesta a la página ${Math.max(0, Number(book?.currentPage) || 0)} y solicita omitir cualquier dato externo que pueda revelar la trama.`, 'Respuesta de Gemini con los datos sugeridos', 'chrProfileResponse', 'parse-profile', 'Revisar sugerencias')}`;
   if (search.status === 'candidates') return `<section class="chr-research" id="chrResearchPanel"><h3>${search.candidates.length ? 'Encontré posibles coincidencias' : 'No encontré coincidencias confiables'}</h3><p class="muted">Revisá las opciones para «${esc(search.name)}» en ${esc(book?.title || '')}. Avance registrado: página ${Math.max(0, Number(book?.currentPage) || 0)}. ${esc(autoNote || 'La búsqueda fue realizada en Gemini; Librarium no puede verificar independientemente sus resultados.')}</p>${search.candidates.length && !search.sources.length ? '<p class="chr-ambiguity" role="status">Gemini no incluyó enlaces de fuentes. Considerá repetir la búsqueda y pedirle URLs verificables.</p>' : ''}${search.candidates.length ? `${search.candidates.length > 1 ? '<p class="chr-ambiguity" role="status">Hay varias coincidencias posibles. Elegí una; no se seleccionó ninguna automáticamente.</p>' : ''}<fieldset class="chr-candidates"><legend>Elegí explícitamente el personaje</legend>${search.candidates.map((c, i) => `<label class="chr-candidate"><input type="radio" name="chrCandidate" value="${i}"/><span><strong>${esc(c.name)}</strong><span>También: ${esc(c.aliases.join(', ') || 'sin variantes informadas')}</span><span>${esc(c.description || 'Sin descripción introductoria.')}</span><small>Coincidencia ${esc(c.confidence === 'high' ? 'alta' : c.confidence === 'medium' ? 'media' : 'baja')}</small></span></label>`).join('')}</fieldset><button type="button" class="primary" data-chr="investigate-character" disabled>Completar con este</button>` : '<p class="muted">Podés volver a buscar o conservar el nombre y completar la ficha manualmente.</p>'}<button type="button" class="secondary" data-chr="none-candidate">Ninguno de estos</button>${characterSourcesHTML(search.sources)}</section>`;
-  if (search.status === 'ready') return `<section class="chr-research" id="chrResearchPanel"><h3>Sugerencias para «${esc(search.name)}»</h3><p class="muted">Revisá cada dato. Solo se aplicarán campos vacíos; los que ya escribiste permanecerán intactos. Los datos se generaron con conocimiento general y se marcarán como inferidos. Los enlaces de abajo respaldan la identificación, no los datos de esta ficha.</p>${autoNote ? `<p class="muted">${esc(autoNote)}</p>` : ''}${characterSourcesHTML(search.sources)}<button type="button" class="primary" data-chr="apply-research">Aplicar sugerencias a campos vacíos</button><button type="button" class="secondary" data-chr="none-candidate">Descartar sugerencias</button></section>`;
+  if (search.status === 'ready') return `<section class="chr-research" id="chrResearchPanel"><h3>Sugerencias para «${esc(search.name)}»</h3><p class="muted">Revisá cada dato. Solo se aplicarán campos vacíos; los que ya escribiste permanecerán intactos. Los datos se generaron con conocimiento general y se marcarán como inferidos. Los enlaces de abajo respaldan la identificación, no los datos de esta ficha.</p>${autoNote ? `<p class="muted">${esc(autoNote)}</p>` : ''}${characterSourcesHTML(search.sources)}<div class="chr-row-actions"><button type="button" class="primary" data-chr="apply-research-and-save">Aplicar y ${state.editingCharacterId ? 'guardar cambios' : 'crear ficha'}</button><button type="button" class="secondary" data-chr="apply-research">Solo aplicar sugerencias</button><button type="button" class="secondary" data-chr="none-candidate">Descartar sugerencias</button></div></section>`;
   return '<div id="chrResearchPanel"></div>';
 }
 
@@ -1265,6 +1266,10 @@ async function copyResearchPrompt() {
 function applyWebResearch() {
   const suggestion = state.characterSearch.suggestion;
   if (!suggestion) return;
+  if (!state.editingCharacterId && suggestion.name) {
+    const nameInput = host?.querySelector<HTMLInputElement>('[name="name"]');
+    if (nameInput) nameInput.value = suggestion.name;
+  }
   const filledFields = new Set<string>();
   const setEmpty = (name: string, value: unknown, transform = (x: any) => String(x ?? '')) => {
     const field = host?.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[name="${name}"]`);
@@ -2302,7 +2307,11 @@ async function handleAction(action: string, el: HTMLElement) {
   const current = characterById(state.selectedId) ?? characterById(state.netSelected);
   switch (action) {
     case 'new':
-      return go('character-form', { editingCharacterId: null, pendingRelatives: [] });
+      return go('character-form', {
+        editingCharacterId: null,
+        pendingRelatives: [],
+        characterSearch: { status: 'idle', name: '', candidates: [], sources: [], error: '', suggestion: null, prompt: '', responseText: '' },
+      });
     case 'open':
       return go('sheet', { selectedId: id });
     case 'back':
@@ -2425,8 +2434,14 @@ async function handleAction(action: string, el: HTMLElement) {
     case 'apply-research':
       applyWebResearch();
       return;
+    case 'apply-research-and-save': {
+      applyWebResearch();
+      const form = host?.querySelector<HTMLFormElement>('#chrCharacterForm');
+      if (form) return submitCharacterForm(form);
+      return;
+    }
     case 'none-candidate':
-      state.characterSearch = { status: 'idle', name: '', candidates: [], sources: [], error: '', suggestion: null, prompt: '', responseText: '' };
+      state.characterSearch = { status: 'idle', name: host?.querySelector<HTMLInputElement>('[name="name"]')?.value || state.characterSearch.name, candidates: [], sources: [], error: '', suggestion: null, prompt: '', responseText: '' };
       paint();
       showFormErrors([], ['No se modificó la ficha. Conservá el nombre y completala manualmente o iniciá otra búsqueda.']);
       return;
