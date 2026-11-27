@@ -341,7 +341,7 @@ export function paintAI() {
 function splitSuggestion(text: string): { body: string; value: string; certainty: Certainty } {
   const value = /^[ \t]*VALOR_SUGERIDO:[ \t]*(.*)$/im.exec(text)?.[1]?.trim().replace(/^[«"“]+|[»"”]+$/g, '') || '';
   const raw = /^[ \t]*CERTEZA_SUGERIDA:[ \t]*(\w+)/im.exec(text)?.[1]?.toLowerCase() || '';
-  const body = text.replace(/^[ \t]*(?:VALOR_SUGERIDO|CERTEZA_SUGERIDA):.*$/gim, '')
+  const body = text.replace(/^[ \t]*(?:VALOR_SUGERIDO|CERTEZA_SUGERIDA|TIPO_SUGERIDO|DESCRIPCION_SUGERIDA):.*$/gim, '')
     .replace(/^[ \t]*CONTEXTO_BREVE:[ \t]*/im, '')
     .replace(/\n{3,}/g, '\n\n').trim();
   return { body, value, certainty: raw === 'explicit' ? 'explicit' : 'inferred' };
