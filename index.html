@@ -166,7 +166,7 @@
   </section>
 </main>
 
-<footer>LIBRARIUM <span>·</span> Tu biblioteca, tu historia de lectura. <span aria-hidden="true">·</span> <button type="button" id="footerFeedbackBtn" class="footer-link">Reportar o sugerir</button></footer>
+<footer>LIBRARIUM <span>·</span> Tu biblioteca, tu historia de lectura. <span aria-hidden="true">·</span> <button type="button" id="footerUpdatesBtn" class="footer-link">Novedades</button> <span aria-hidden="true">·</span> <button type="button" id="footerFeedbackBtn" class="footer-link">Reportar o sugerir</button></footer>
 
 <aside id="updateNotice" class="update-notice hidden" role="status" aria-live="polite">
   <span>Hay una actualización disponible.</span>
@@ -349,13 +349,13 @@ Notas finales:
       <button type="button" class="close" data-close>×</button>
     </div>
     <input type="hidden" id="annotationBook"><input type="hidden" id="annotationId">
-    <label>Página<input id="annotationPage" type="number" min="0" required></label>
-    <label>Título<input id="annotationHeading" placeholder="Un título breve" maxlength="300"></label>
-    <label for="annotationText">Comentario / observación</label>
+    <label id="annotationPageField">Página<input id="annotationPage" type="number" min="0" required></label>
+    <label id="annotationHeadingField">Título<input id="annotationHeading" placeholder="Un título breve" maxlength="300"></label>
+    <label id="annotationTextLabel" for="annotationText">Comentario / observación</label>
     <textarea id="annotationText" rows="5" placeholder="¿Qué querés conservar de esta página?"></textarea>
-    <label for="annotationPersonalComment">Mi comentario sobre esta anotación o foto</label>
+    <label id="annotationPersonalCommentLabel" for="annotationPersonalComment">Mi comentario sobre esta anotación o foto</label>
     <textarea id="annotationPersonalComment" rows="3" placeholder="Una idea propia, duda, desacuerdo o reflexión…"></textarea>
-    <div class="photo-field">
+    <div class="photo-field" id="annotationPhotoField">
       <span class="field-label">Fotografía (opcional)</span>
       <div class="photo-input-actions">
         <button type="button" id="annotationCameraBtn" class="secondary photo-source-btn">📷 Sacar foto</button>
@@ -672,6 +672,11 @@ Notas finales:
           <button id="geminiSend" class="gemini-send" type="submit" aria-label="Enviar" title="Enviar">↑</button>
         </div>
       </form>
+      <label class="gemini-spoiler-toggle" for="geminiAntiSpoiler">
+        <input id="geminiAntiSpoiler" type="checkbox" checked>
+        <span class="gemini-spoiler-check" aria-hidden="true"></span>
+        <span><strong>Evitar spoilers</strong><small>Tomar como referencia mi página actual de lectura</small></span>
+      </label>
       <p class="gemini-footnote">Revisá las respuestas de la IA: pueden contener errores.</p>
     </div>
   </section>
@@ -721,6 +726,20 @@ Notas finales:
       <button type="button" class="primary" id="confirmOkBtn">Confirmar</button>
     </div>
   </div>
+</dialog>
+
+<dialog id="updatesDialog" class="updates-dialog">
+  <section class="updates-shell">
+    <div class="dialog-head">
+      <div>
+        <p class="eyebrow">LIBRARIUM</p>
+        <h2>Novedades</h2>
+      </div>
+      <button type="button" class="close" data-close aria-label="Cerrar">×</button>
+    </div>
+    <p class="muted">Cambios y mejoras, contados de forma simple.</p>
+    <div id="updatesList" class="updates-list"></div>
+  </section>
 </dialog>
 
 <dialog id="feedbackDialog" class="feedback-dialog">

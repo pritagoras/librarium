@@ -61,6 +61,7 @@ import {
   sanitizeId,
 } from './sync';
 import { isFeedbackAdmin } from './feedback';
+import changelogMarkdown from '../CHANGELOG.md?raw';
 import type {
   AISettings,
   Book,
@@ -95,6 +96,7 @@ type DetailTab = 'notes' | 'entries' | 'photos' | 'quotes' | 'characters' | 'rev
 let books: Book[] = [];
 let activeBook: Book | null = null;
 let detailTab: DetailTab = 'notes';
+let annotationAsComment = false;
 let pendingImport: { obj: any; notes: any[] } | null = null;
 let coverData: string | null = null;
 let photoData: string | null = null;
@@ -918,7 +920,7 @@ async function renderDetail() {
     ${(
       [
         ['notes', 'Notas finales'],
-        ['entries', 'Anotaciones'],
+        ['entries', 'Comentarios'],
         ['photos', 'Fotografías'],
         ['quotes', 'Citas'],
         ['review', 'Reseña'],
@@ -1249,19 +1251,19 @@ async function renderDetail() {
     const filtered = entries.filter((x) => detailTab === 'entries' || x.photo);
     p.innerHTML = `<div class="content-heading">
         <div>
-          <h2>${detailTab === 'entries' ? 'Anotaciones' : 'Fotografías'}</h2>
+          <h2>${detailTab === 'entries' ? 'Comentarios' : 'Fotografías'}</h2>
           <p class="muted">${filtered.length} ${
-            detailTab === 'entries' ? 'registros' : 'fotografías'
-          } · Mantené apretada una para preguntarle a la IA (o clic derecho).</p>
+            detailTab === 'entries' ? (filtered.length === 1 ? 'comentario' : 'comentarios') : 'fotografías'
+          }${detailTab === 'entries' ? ' · Tus ideas quedan como contexto para conversar con la IA.' : ' · Mantené apretada una para preguntarle a la IA (o clic derecho).'}</p>
         </div>
-        <button class="primary" id="addAnnotation">＋ Nueva anotación</button>
+        <button class="primary" id="addAnnotation">＋ Nuevo comentario</button>
       </div>
       ${
         filtered
           .map(
             (x) => `<article class="journal-item" data-ai-entry="${esc(x.id)}">
               <small>PÁGINA ${x.page} · ${new Date(x.createdAt).toLocaleDateString('es-AR')}</small>
-              <h3>${esc(x.title || 'Sin título')}</h3>
+              ${x.title ? `<h3>${esc(x.title)}</h3>` : ''}
               <p>${esc(x.text || '')}</p>
               ${x.comment ? `<p class="entry-personal-comment"><strong>Mi comentario:</strong> ${esc(x.comment)}</p>` : ''}
               ${
@@ -1270,15 +1272,15 @@ async function renderDetail() {
                   : ''
               }
               <div class="annotation-actions">
-                <button class="mini" data-edit-entry="${esc(x.id)}">Editar anotación</button>
-                ${aiIconButton('data-ask-entry', x.id, x.comment ? 'Debatir mi comentario con la IA' : 'Preguntar a la IA')}
+                <button class="mini" data-edit-entry="${esc(x.id)}">Editar comentario</button>
+                ${aiIconButton('data-ask-entry', x.id, 'Conversar sobre este comentario con la IA')}
                 <button class="mini" data-delete-entry="${esc(x.id)}">Eliminar</button>
               </div>
             </article>`,
           )
           .join('') ||
         `<p class="empty-inline">Todavía no hay ${
-          detailTab === 'entries' ? 'anotaciones' : 'fotografías'
+          detailTab === 'entries' ? 'comentarios' : 'fotografías'
         }.</p>`
       }`;
   }
@@ -1412,7 +1414,9 @@ async function renderDetail() {
       if (!entry) return;
       void openGemini({
         entryId: entry.id,
-        extraText: entry.comment ? commentDiscussionPrompt('mi comentario sobre esta anotación o fotografía') : '',
+        extraText: detailTab === 'entries'
+          ? `Tomá mi comentario sobre «${activeBook?.title || 'este libro'}» como referencia para esta charla. Quiero poder hacerte cualquier pregunta sobre mi interpretación y recibir una respuesta crítica y razonada.`
+          : entry.comment ? commentDiscussionPrompt('mi comentario sobre esta anotación o fotografía') : '',
       });
     };
   });
@@ -1420,9 +1424,11 @@ async function renderDetail() {
   $$('[data-delete-entry]').forEach((x) => {
     x.onclick = async () => {
       const ok = await showConfirmDialog({
-        eyebrow: 'ANOTACIÓN',
-        title: '¿Eliminar este registro?',
-        message: 'Se eliminará la anotación junto con su foto si tuviera una.',
+        eyebrow: detailTab === 'entries' ? 'COMENTARIO' : 'ANOTACIÓN',
+        title: detailTab === 'entries' ? '¿Eliminar este comentario?' : '¿Eliminar este registro?',
+        message: detailTab === 'entries'
+          ? 'Se eliminará este comentario y su conversación con la IA.'
+          : 'Se eliminará la anotación junto con su foto si tuviera una.',
         confirmLabel: 'Eliminar',
         danger: true,
       });
@@ -1915,14 +1921,35 @@ function previewNoteJSON(raw: string) {
 }
 
 function openAnnotation(bookId: string, entry: Entry | null = null) {
+  annotationAsComment = Boolean(
+    $<HTMLDialogElement>('#detailDialog')?.open && detailTab === 'entries' && activeBook?.id === bookId,
+  );
   $<HTMLFormElement>('#annotationForm')?.reset();
   ($<HTMLInputElement>('#annotationBook')!).value = bookId;
   ($<HTMLInputElement>('#annotationId')!).value = entry?.id || '';
-  $('#annotationTitle')!.textContent = entry ? 'Editar anotación' : 'Nueva anotación';
-  ($<HTMLInputElement>('#annotationPage')!).value = entry?.page != null ? String(entry.page) : '';
+  $('#annotationTitle')!.textContent = annotationAsComment
+    ? entry ? 'Editar comentario' : 'Nuevo comentario'
+    : entry ? 'Editar anotación' : 'Nueva anotación';
+  ($<HTMLInputElement>('#annotationPage')!).value = entry?.page != null
+    ? String(entry.page)
+    : annotationAsComment ? String(activeBook?.currentPage || 0) : '';
   ($<HTMLInputElement>('#annotationHeading')!).value = entry?.title || '';
   ($<HTMLTextAreaElement>('#annotationText')!).value = entry?.text || '';
   ($<HTMLTextAreaElement>('#annotationPersonalComment')!).value = entry?.comment || '';
+  $('#annotationPageField')?.classList.toggle('hidden', annotationAsComment);
+  $<HTMLInputElement>('#annotationPage')!.required = !annotationAsComment;
+  $('#annotationHeadingField')?.classList.toggle('hidden', annotationAsComment);
+  $('#annotationPersonalCommentLabel')?.classList.toggle('hidden', annotationAsComment);
+  $<HTMLTextAreaElement>('#annotationPersonalComment')!.classList.toggle('hidden', annotationAsComment);
+  $('#annotationPhotoField')?.classList.toggle('hidden', annotationAsComment);
+  $('#annotationTextLabel')!.textContent = annotationAsComment ? 'Tu comentario' : 'Comentario / observación';
+  $<HTMLTextAreaElement>('#annotationText')!.placeholder = annotationAsComment
+    ? 'Este personaje me parece… ¿Qué idea, duda o interpretación querés conversar?'
+    : '¿Qué querés conservar de esta página?';
+  $('#askAnnotationGemini')!.textContent = annotationAsComment ? 'Guardar y preguntarle a la IA' : 'Guardar y debatir con IA';
+  $('#annotationForm')!.querySelector<HTMLButtonElement>('.dialog-actions .primary')!.textContent = annotationAsComment
+    ? 'Guardar comentario'
+    : 'Guardar anotación';
   photoData = entry?.photo || null;
   updateAnnotationPhotoPreview(
     entry?.photo ? 'Ya hay una fotografía. Podés sacar o elegir otra para reemplazarla.' : '',
@@ -2760,6 +2787,18 @@ function renderGeminiMarkdown(text: string): string {
   return html.join('');
 }
 
+function renderUpdatesList() {
+  const container = $('#updatesList');
+  if (!container) return;
+  const releases = changelogMarkdown.split(/^## /m).slice(1);
+  container.innerHTML = releases.map((release) => {
+    const newline = release.indexOf('\n');
+    const heading = newline < 0 ? release.trim() : release.slice(0, newline).trim();
+    const body = newline < 0 ? '' : release.slice(newline + 1).trim();
+    return `<article class="updates-release"><h3>${esc(heading)}</h3><div class="updates-release-body">${renderGeminiMarkdown(body)}</div></article>`;
+  }).join('');
+}
+
 function attachGeminiMessageActions(wrapper: HTMLElement, answer: string) {
   wrapper.querySelector('.gemini-msg-actions')?.remove();
   const bar = document.createElement('div');
@@ -3032,6 +3071,7 @@ async function sendGeminiQuestion(e: Event) {
   const qInput = $<HTMLTextAreaElement>('#geminiQuestion')!;
   const question = qInput.value.trim();
   if (!question) return;
+  const antiSpoilerEnabled = $<HTMLInputElement>('#geminiAntiSpoiler')?.checked ?? true;
   const button = $<HTMLButtonElement>('#geminiSend')!;
   const stopBtn = $<HTMLButtonElement>('#geminiStopBtn');
   const actionsWrap = $('.gemini-compose-actions');
@@ -3062,6 +3102,15 @@ async function sendGeminiQuestion(e: Event) {
   let usedModel: string = aiSettings.model;
 
   try {
+    let systemInstruction = aiStyleInstruction(aiSettings);
+    if (antiSpoilerEnabled && geminiItem?.book) {
+      // Read the latest saved progress so the boundary stays current if it changed
+      // while this chat window was open.
+      const currentBook = await get<Book>('books', geminiItem.book.id);
+      if (currentBook) geminiItem.book = currentBook;
+      const page = Math.max(0, Number(geminiItem.book.currentPage) || 0);
+      systemInstruction += `\n\nMODO EVITAR SPOILERS: la persona está aproximadamente en la página ${page} de «${geminiItem.book.title}». Usá esa página como referencia aproximada de su avance y evitá revelar o anticipar hechos posteriores, giros o destinos. Si la ubicación de un dato no es clara, respondé sin revelar detalles de trama que puedan adelantarse. Esta preferencia no exige hablar de spoilers ni impide responder preguntas generales de forma segura.`;
+    }
     const parts: any[] = [];
     if (!geminiHistory.length) {
       const { book, note, entry, quote, analysis } = geminiItem || {};
@@ -3231,7 +3280,7 @@ async function sendGeminiQuestion(e: Event) {
           : baseContents;
         const response = await requestGeminiFeature('chat-stream', {
           contents: attemptContents,
-          systemInstruction: aiStyleInstruction(aiSettings),
+          systemInstruction,
           model,
           thinking: aiSettings.thinking,
           singleModel: true,
@@ -4191,9 +4240,11 @@ function wireEvents() {
       bookId,
       entryId: entry.id,
       image: entry.photo || null,
-      extraText: entry.comment
-        ? commentDiscussionPrompt('mi comentario sobre esta anotación o fotografía')
-        : 'Ayudame a pensar críticamente esta anotación y su fotografía.',
+      extraText: annotationAsComment
+        ? `Tomá como referencia principal el comentario que escribí sobre «${activeBook?.title || 'este libro'}». Quiero dialogar sobre mi interpretación y después haré una pregunta concreta en el chat. No supongas que quiero spoilers; respondé según lo que pregunte.`
+        : entry.comment
+          ? commentDiscussionPrompt('mi comentario sobre esta anotación o fotografía')
+          : 'Ayudame a pensar críticamente esta anotación y su fotografía.',
     });
   };
 
@@ -4342,6 +4393,11 @@ function wireEvents() {
   });
 
   initAdminFeatures();
+
+  $('#footerUpdatesBtn')?.addEventListener('click', () => {
+    renderUpdatesList();
+    $<HTMLDialogElement>('#updatesDialog')?.showModal();
+  });
 
   initAskGesture();
 }
