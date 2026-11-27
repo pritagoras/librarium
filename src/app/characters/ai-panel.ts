@@ -242,6 +242,31 @@ export function paintAI() {
       : `<div class="chr-ai-answer" id="chrAiAnswer" tabindex="0">${esc(suggestion.body)}</div>`;
   const fieldKey = ai.scope.kind === 'field' && ai.scope.field !== 'name' ? ai.scope.field : null;
   const isFieldSuggestion = fieldKey !== null;
+  const isRelationSuggestion = ai.scope.kind === 'relation';
+  const relationContext = /^[ \\t]*CONTEXTO_BREVE:[ \\t]*(.*)$/im.exec(ai.text)?.[1]?.trim() || '';
+  const relationType = /^[ \\t]*TIPO_SUGERIDO:[ \\t]*(.*)$/im.exec(ai.text)?.[1]?.trim() || '';
+  const relationDescription = /^[ \\t]*DESCRIPCION_SUGERIDA:[ \\t]*(.*)$/im.exec(ai.text)?.[1]?.trim() || '';
+  const relationCertainty = /^[ \\t]*CERTEZA_SUGERIDA:[ \\t]*(\\w+)/im.exec(ai.text)?.[1]?.toLowerCase() === 'explicit' ? 'explicit' : 'inferred';
+  const relation = relations.find((r) => r.id === ai.scope.relationId) || relations[0];
+  const otherCharacter = characterById(ai.scope.otherId);
+  const relationSuggestionHTML = isRelationSuggestion && ai.status === 'done' && relation
+    ? `<div class="chr-ai-quick-context">
+        <span class="chr-ai-eyebrow">RELACIÓN ENTRE ${esc(characterById(state.selectedId)?.name || 'PERSONAJE')} Y ${esc(otherCharacter?.name || 'PERSONAJE')}</span>
+        <p>${esc(relationContext || 'La IA revisó el vínculo y propone esta actualización.')}</p>
+        <p class="muted">Actual: ${esc(relation.type)}${relation.description ? ` · ${esc(relation.description)}` : ''}</p>
+      </div>
+      <form id="chrAiSave" class="chr-ai-quick-form" novalidate>
+        <input type="hidden" name="target" value="field" />
+        <input type="hidden" name="relation" value="${esc(relation.id)}" />
+        <label for="chrAiRelationType">Tipo de vínculo</label>
+        <input id="chrAiRelationType" name="relationType" type="text" maxlength="${LIMITS.relationType}" value="${esc(relationType || relation.type)}" autocomplete="off" />
+        <label for="chrAiSaveText">Descripción</label>
+        <textarea id="chrAiSaveText" name="text" rows="3" maxlength="${LIMITS.relationDescription}">${esc(relationDescription || relation.description)}</textarea>
+        <input type="hidden" name="certainty" value="${relationCertainty}" />
+        <div class="chr-ai-save-error" id="chrAiSaveError" role="alert"></div>
+        <button type="submit" class="primary">Aplicar actualización</button>
+      </form>`
+    : '';
   const fieldSuggestionHTML = isFieldSuggestion && ai.status === 'done'
     ? `<div class="chr-ai-quick-context"><span class="chr-ai-eyebrow">CONTEXTO</span><p>${esc(suggestion.body)}</p><p class="muted">Sugerencia basada en el conocimiento general del modelo, sin notas ni búsqueda web. Se guardará como inferida.</p></div>
       <form id="chrAiSave" class="chr-ai-quick-form" novalidate>
@@ -268,7 +293,7 @@ export function paintAI() {
       ai.status === 'running' ? 'Consultando a la IA…' : ai.status === 'done' ? esc(ai.note) : ''
     }</p>
     ${ai.status === 'error' ? `<div class="chr-ai-error" role="alert">${esc(ai.error)} ${ai.keyError ? '<button type="button" class="ai-key-cta" data-chr="ai-key">Configurar mi API key</button>' : ''}</div>` : ''}
-    ${isFieldSuggestion ? fieldSuggestionHTML : sheet ? fullSheetFormHTML(sheetCharacter!, sheet) : ai.fullSheet && ai.status === 'running' ? '' : ai.text || ai.status === 'running' ? answerHTML : ''}
+    ${isFieldSuggestion ? fieldSuggestionHTML : isRelationSuggestion ? relationSuggestionHTML || (ai.status === 'running' ? '' : answerHTML) : sheet ? fullSheetFormHTML(sheetCharacter!, sheet) : ai.fullSheet && ai.status === 'running' ? '' : ai.text || ai.status === 'running' ? answerHTML : ''}
     ${ai.formTarget && ai.status === 'done' ? `<div class="chr-ai-save">${suggestedNameHTML(ai.text)}<p class="muted">Revisá la respuesta. Marcá los vínculos que quieras agregar; se crearán al guardar la ficha.</p><div id="chrSuggestedRelatives">${suggestedRelativesHTML(ai.text)}</div><button type="button" class="primary" data-chr="apply-autofill">Aplicar datos seleccionados</button></div>` : ''}
     ${!isFieldSuggestion && ai.status === 'done' && ai.text.trim() && !sheet
         ? `<p class="muted chr-ai-disclaimer">La IA puede equivocarse y no leyó el libro completo: revisá lo explícito y lo inferido antes de guardar.</p>
@@ -519,11 +544,25 @@ export async function submitAISave(form: HTMLFormElement) {
     let commit: () => Promise<void>;
     if (ai.scope.kind === 'relation') {
       const relations = pairRelations(ai);
-      const chosen = relations.find((r) => r.id === formValue(form, 'relation')) ?? relations[0];
-      if (!chosen) return fail('No hay un vínculo donde guardar la respuesta.');
-      const updated = applyAnswerToRelation(chosen, options);
-      preview = `Se modificará el vínculo «${chosen.type}»:\n\n${options.text.trim().slice(0, 600)}`;
-      commit = async () => void (await api().saveRelation(updated));
+      const chosen = relations.find((r) => r.id === formValue(form, 'relation')) || relations[0];
+      if (!chosen) return fail('No se encontró el vínculo que querés actualizar.');
+      const validation = validateRelation({
+        fromId: chosen.fromId,
+        toId: chosen.toId,
+        type: formValue(form, 'relationType'),
+        description: options.text,
+        certainty: options.certainty,
+        evidence: chosen.evidence,
+      }, { bookId: character.bookId, characters: data.characters, relations: data.relations, editing: chosen });
+      if (!validation.ok || !validation.value) return fail(validation.errors.join(' '));
+      const updated = validation.value;
+      await api().saveRelation(updated.record);
+      if (updated.replacesId) await api().deleteRelation(updated.replacesId);
+      await reload();
+      state.ai = null;
+      state.notice = 'Vínculo actualizado.';
+      paint(true);
+      return;
     } else {
       const updated = applyAnswerToCharacter(character, options);
       preview = `Se modificará la ficha de ${character.name}:\n\n${options.text.trim().slice(0, 600)}`;
