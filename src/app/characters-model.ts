@@ -853,7 +853,22 @@ export function buildCharacterAIRequest(input: AIContextInput): AIRequestPlan {
   } else if (scope.kind === 'field') {
     question = `Consulta puntual sobre «${character.name}»: ${FIELD_QUESTIONS[scope.field]}. Si el material no lo establece, respondé con lo que sepas de la obra, rotulado como conocimiento general y con tu nivel de seguridad, sin adelantar hechos posteriores a la página de lectura. Decí que no lo sabés solo si realmente no lo conocés.\n\nFormato de la respuesta: primero explicá brevemente de dónde sale el dato (fuentes del material y/o tu conocimiento de la obra) y qué tan seguro estás. Al final, en dos líneas exactas y sin Markdown:\nVALOR_SUGERIDO: <el valor concreto y corto, listo para guardar en la ficha; comprometete con tu mejor estimación y dejalo vacío solo si no hay base alguna>\nCERTEZA_SUGERIDA: <explicit solo si sale directo del material guardado; inferred en cualquier otro caso>`;
   } else {
-    question = `Consulta sobre la relación entre «${character.name}» y «${other!.name}»: ¿qué tipo de vínculo hay y qué lo respalda? Distinguí lo explícito de lo inferido y no inventes escenas. Si el material no alcanza, usá tu conocimiento de la obra (sin spoilers), rotulado y con tu nivel de seguridad.`;
+    const currentRelations = input.relations.filter(
+      (r) => (r.fromId === character.id && r.toId === other!.id) || (r.fromId === other!.id && r.toId === character.id),
+    );
+    question = [
+      `Revisá específicamente el vínculo entre «${character.name}» y «${other!.name}».`,
+      currentRelations.length
+        ? `VÍNCULO ACTUAL: ${currentRelations.map((r) => `${r.type}${r.description ? ` — ${r.description}` : ''}`).join('; ')}.`
+        : 'No hay un vínculo registrado entre ambos.',
+      'Elegí el tipo de relación más correcto y redactá una descripción breve, concreta y sin repetir explicaciones.',
+      'No agregues relaciones nuevas ni describas fuentes, inferencias, metodología o limitaciones. Usá el material paginado y tu conocimiento general de la obra, sin spoilers posteriores al avance.',
+      'Devolvé exactamente estas cuatro líneas, sin Markdown ni texto adicional:',
+      'CONTEXTO_BREVE: una frase que explique cómo se relacionan.',
+      'TIPO_SUGERIDO: el tipo de vínculo más preciso, breve.',
+      'DESCRIPCION_SUGERIDA: una o dos frases listas para guardar.',
+      'CERTEZA_SUGERIDA: explicit solo si surge directamente de una fuente del lector; inferred en cualquier otro caso.',
+    ].join('\\n');
   }
   sections.push(`CONSULTA:\n${question}`);
 
@@ -868,7 +883,16 @@ export function buildCharacterAIRequest(input: AIContextInput): AIRequestPlan {
   summaryParts.push(`${quotes.length} cita${quotes.length === 1 ? '' : 's'}`);
 
   return {
-    systemInstruction: input.styleInstruction ? `${AI_SYSTEM_RULES}\n\nPreferencias de estilo de la persona (no anulan ninguna regla anterior): ${input.styleInstruction}` : AI_SYSTEM_RULES,
+    systemInstruction: scope.kind === 'relation'
+      ? [
+          'Sos un asistente de lectura que ayuda a corregir un único vínculo entre dos personajes.',
+          'Sé concreto: elegí el tipo de relación más preciso y una descripción breve que se pueda guardar directamente.',
+          'No incluyas análisis largo, encabezados, advertencias, fuentes inventadas ni explicaciones sobre inferencias.',
+          'No presentes conocimiento general como evidencia textual. Usá explicit solo ante respaldo directo; de lo contrario inferred.',
+          'Respetá el límite antispoilers. Respondé exclusivamente con las cuatro líneas solicitadas.',
+          ...(input.styleInstruction ? [`Preferencias de estilo: ${input.styleInstruction}`] : []),
+        ].join('\\n')
+      : input.styleInstruction ? `${AI_SYSTEM_RULES}\\n\\nPreferencias de estilo de la persona (no anulan ninguna regla anterior): ${input.styleInstruction}` : AI_SYSTEM_RULES,
     prompt: sections.join('\n\n'),
     contextSummary: `Se envía a la IA: ${summaryParts.join(', ')}. La ficha y los vínculos no tienen página asociada; pueden incluir datos posteriores a tu avance. Solo las notas, anotaciones y citas paginadas se filtran hasta esa página. El texto completo del libro no se envía.`,
     sourceCount: { notes: notes.length, entries: entries.length, quotes: quotes.length },
