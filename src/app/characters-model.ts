@@ -868,7 +868,7 @@ export function buildCharacterAIRequest(input: AIContextInput): AIRequestPlan {
       'TIPO_SUGERIDO: el tipo de vínculo más preciso, breve.',
       'DESCRIPCION_SUGERIDA: una o dos frases listas para guardar.',
       'CERTEZA_SUGERIDA: explicit solo si surge directamente de una fuente del lector; inferred en cualquier otro caso.',
-    ].join('\\n');
+    ].join('\n');
   }
   sections.push(`CONSULTA:\n${question}`);
 
@@ -891,7 +891,7 @@ export function buildCharacterAIRequest(input: AIContextInput): AIRequestPlan {
           'No presentes conocimiento general como evidencia textual. Usá explicit solo ante respaldo directo; de lo contrario inferred.',
           'Respetá el límite antispoilers. Respondé exclusivamente con las cuatro líneas solicitadas.',
           ...(input.styleInstruction ? [`Preferencias de estilo: ${input.styleInstruction}`] : []),
-        ].join('\\n')
+        ].join('\n')
       : input.styleInstruction ? `${AI_SYSTEM_RULES}\\n\\nPreferencias de estilo de la persona (no anulan ninguna regla anterior): ${input.styleInstruction}` : AI_SYSTEM_RULES,
     prompt: sections.join('\n\n'),
     contextSummary: `Se envía a la IA: ${summaryParts.join(', ')}. La ficha y los vínculos no tienen página asociada; pueden incluir datos posteriores a tu avance. Solo las notas, anotaciones y citas paginadas se filtran hasta esa página. El texto completo del libro no se envía.`,
