@@ -247,8 +247,10 @@ export function paintAI() {
   const relationType = /^[ \\t]*TIPO_SUGERIDO:[ \\t]*(.*)$/im.exec(ai.text)?.[1]?.trim() || '';
   const relationDescription = /^[ \\t]*DESCRIPCION_SUGERIDA:[ \\t]*(.*)$/im.exec(ai.text)?.[1]?.trim() || '';
   const relationCertainty = /^[ \\t]*CERTEZA_SUGERIDA:[ \\t]*(\\w+)/im.exec(ai.text)?.[1]?.toLowerCase() === 'explicit' ? 'explicit' : 'inferred';
-  const relation = relations.find((r) => r.id === ai.scope.relationId) || relations[0];
-  const otherCharacter = characterById(ai.scope.otherId);
+  const relationId = ai.scope.kind === 'relation' ? ai.scope.relationId : undefined;
+  const otherId = ai.scope.kind === 'relation' ? ai.scope.otherId : '';
+  const relation = relations.find((r) => r.id === relationId) || relations[0];
+  const otherCharacter = characterById(otherId);
   const relationSuggestionHTML = isRelationSuggestion && ai.status === 'done' && relation
     ? `<div class="chr-ai-quick-context">
         <span class="chr-ai-eyebrow">RELACIÓN ENTRE ${esc(characterById(state.selectedId)?.name || 'PERSONAJE')} Y ${esc(otherCharacter?.name || 'PERSONAJE')}</span>
@@ -288,14 +290,14 @@ export function paintAI() {
         <button type="button" class="secondary" data-chr="ai-close">Cerrar</button>
       </div>
     </div>
-    ${!isFieldSuggestion && ai.plan ? `<details class="chr-ai-context"><summary>Qué se envía a la IA</summary><p class="muted">${esc(ai.plan.contextSummary)}</p></details>` : ''}
+    ${!isFieldSuggestion && !isRelationSuggestion && ai.plan ? `<details class="chr-ai-context"><summary>Qué se envía a la IA</summary><p class="muted">${esc(ai.plan.contextSummary)}</p></details>` : ''}
     <p class="chr-ai-status" role="status" aria-live="polite">${
       ai.status === 'running' ? 'Consultando a la IA…' : ai.status === 'done' ? esc(ai.note) : ''
     }</p>
     ${ai.status === 'error' ? `<div class="chr-ai-error" role="alert">${esc(ai.error)} ${ai.keyError ? '<button type="button" class="ai-key-cta" data-chr="ai-key">Configurar mi API key</button>' : ''}</div>` : ''}
     ${isFieldSuggestion ? fieldSuggestionHTML : isRelationSuggestion ? relationSuggestionHTML || (ai.status === 'running' ? '' : answerHTML) : sheet ? fullSheetFormHTML(sheetCharacter!, sheet) : ai.fullSheet && ai.status === 'running' ? '' : ai.text || ai.status === 'running' ? answerHTML : ''}
     ${ai.formTarget && ai.status === 'done' ? `<div class="chr-ai-save">${suggestedNameHTML(ai.text)}<p class="muted">Revisá la respuesta. Marcá los vínculos que quieras agregar; se crearán al guardar la ficha.</p><div id="chrSuggestedRelatives">${suggestedRelativesHTML(ai.text)}</div><button type="button" class="primary" data-chr="apply-autofill">Aplicar datos seleccionados</button></div>` : ''}
-    ${!isFieldSuggestion && ai.status === 'done' && ai.text.trim() && !sheet
+    ${!isFieldSuggestion && !isRelationSuggestion && ai.status === 'done' && ai.text.trim() && !sheet
         ? `<p class="muted chr-ai-disclaimer">La IA puede equivocarse y no leyó el libro completo: revisá lo explícito y lo inferido antes de guardar.</p>
     ${
       targets.length
