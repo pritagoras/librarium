@@ -225,6 +225,12 @@ main{padding:20px clamp(16px,5vw,40px) 64px}
 .gemini-msg-action{padding:6px 10px;min-height:36px;border:1px solid var(--line);border-radius:7px;background:var(--white);color:var(--brown);font-size:12px;font-weight:500;white-space:nowrap;transition:background .15s,border-color .15s}
 .gemini-msg-action:hover{background:var(--paper2);border-color:var(--green)}
 .gemini-msg-action.saved{border-color:var(--green);color:var(--green);font-weight:600}
+.gemini-key-phrase{margin:.8em 0 0;padding:.65em .8em;border-left:3px solid var(--green);background:var(--paper2);border-radius:0 8px 8px 0}
+.subannotations{display:grid;gap:6px;margin:.5em 0;font-size:13px}
+.subannotation{display:grid;grid-template-columns:1fr auto;gap:2px 8px;padding:8px 10px;border-left:2px solid var(--green);background:var(--paper2);border-radius:0 6px 6px 0}
+.subannotation strong{grid-column:1/-1}.subannotation small{font-size:11px;color:var(--muted)}
+.subannotation button{grid-column:2;grid-row:2;border:0;background:none;color:var(--muted);font-size:11px;text-decoration:underline}
+.subannotations details summary{cursor:pointer;color:var(--muted);font-size:12px}
 :root[data-theme="dark"] .gemini-msg-action{background:#292b28;color:var(--ink)}
 :root[data-theme="dark"] .gemini-msg-action:hover{background:#343731}
 

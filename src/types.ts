@@ -44,6 +44,14 @@ export interface Note {
   read: boolean;
   createdAt?: string;
   updatedAt?: string;
+  subannotations?: Subannotation[];
+}
+
+export interface Subannotation {
+  id: string;
+  phrase: string;
+  question: string;
+  createdAt: string;
 }
 
 export interface Entry {
@@ -58,6 +66,7 @@ export interface Entry {
   photoMediaId?: string | null;
   createdAt: string;
   updatedAt?: string;
+  subannotations?: Subannotation[];
 }
 
 export interface Quote {
@@ -72,6 +81,7 @@ export interface Quote {
   photoMediaIds?: string[];
   createdAt: string;
   updatedAt: string;
+  subannotations?: Subannotation[];
 }
 
 export interface BookConnection {

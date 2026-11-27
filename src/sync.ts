@@ -756,6 +756,7 @@ export async function pushNoteToCloud(note: Note): Promise<Note> {
       text: normalized.text,
       comment: normalized.comment || '',
       read: normalized.read,
+      subannotations: normalized.subannotations || [],
       updatedAt: serverTimestamp(),
     };
     inFlightCloudWrites.notes.add(id);
@@ -827,6 +828,7 @@ export async function pushEntryToCloud(entry: Entry): Promise<Entry> {
       text: normalized.text || '',
       comment: normalized.comment || '',
       photoMediaId: normalized.photoMediaId || null,
+      subannotations: normalized.subannotations || [],
       updatedAt: serverTimestamp(),
     };
     inFlightCloudWrites.entries.add(id);
@@ -904,6 +906,7 @@ export async function pushQuoteToCloud(quote: Quote): Promise<Quote> {
       page: normalized.page,
       analysis: normalized.analysis || '',
       photoMediaIds: normalized.photoMediaIds,
+      subannotations: normalized.subannotations || [],
       updatedAt: serverTimestamp(),
     };
     inFlightCloudWrites.quotes.add(id);
@@ -1425,6 +1428,7 @@ function subscribeUserCollections(uid: string) {
             text: data.text || '',
             comment: data.comment || '',
             read: Boolean(data.read),
+            subannotations: Array.isArray(data.subannotations) ? data.subannotations : [],
             createdAt: toIso(data.createdAt),
             updatedAt: toIso(data.updatedAt),
           });
@@ -1459,6 +1463,7 @@ function subscribeUserCollections(uid: string) {
             text: data.text || '',
             comment: data.comment || '',
             photoMediaId: data.photoMediaId || null,
+            subannotations: Array.isArray(data.subannotations) ? data.subannotations : [],
             photo: null,
             createdAt: toIso(data.createdAt),
             updatedAt: toIso(data.updatedAt),
@@ -1494,6 +1499,7 @@ function subscribeUserCollections(uid: string) {
             chapter: data.chapter || '',
             page: data.page ?? null,
             analysis: data.analysis || '',
+            subannotations: Array.isArray(data.subannotations) ? data.subannotations : [],
             photoMediaIds: Array.isArray(data.photoMediaIds) ? data.photoMediaIds : [],
             photos: [],
             createdAt: toIso(data.createdAt),

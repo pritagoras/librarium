@@ -1,4 +1,5 @@
 import type { SyncedStoreName } from './types';
+import { mergeSubannotations } from './app/gemini-key-phrase';
 
 export type MergeDecision<T extends object> =
   | { kind: 'accept-remote'; record: T }
@@ -40,6 +41,11 @@ export function reconcileRecords<T extends object>(
   local: T | undefined,
   remote: T,
 ): MergeDecision<T> {
+  if (local && ('subannotations' in (local as any) || 'subannotations' in (remote as any))) {
+    const merged = mergeSubannotations((local as any).subannotations, (remote as any).subannotations);
+    local = { ...local, subannotations: merged } as T;
+    remote = { ...remote, subannotations: merged } as T;
+  }
   if (!local || recordsHaveSameContent(local as Record<string, any>, remote as Record<string, any>)) {
     return { kind: 'accept-remote', record: remote };
   }

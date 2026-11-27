@@ -48,6 +48,17 @@ test('parses current and older backups, defaulting collections absent from older
   assert.deepEqual(backup.conversations, []);
 });
 
+test('preserves subannotations through backup parsing and restoration', async () => {
+  const phrase = { id: 'sub-1', phrase: 'La idea central queda clara.', question: '¿Qué sostiene?', createdAt: '2026-11-27T10:00:00Z' };
+  const backup = parseBackupJSON(JSON.stringify({ books: [], notes: [], entries: [{ id: 'entry-1', bookId: 'b', subannotations: [phrase] }] }));
+  let restored: any;
+  await restoreBackupData(backup, {
+    book: async () => {}, note: async () => {}, entry: async (entry) => { restored = entry; },
+    quote: async () => {}, analysis: async () => {}, character: async () => {}, characterRelation: async () => {}, conversation: async () => {},
+  });
+  assert.deepEqual(restored.subannotations, [phrase]);
+});
+
 test('rejects malformed backup collections before restoring any records', () => {
   assert.throws(() => parseBackupJSON('{'), SyntaxError);
   assert.throws(() => parseBackupJSON(JSON.stringify({ books: [], notes: [], entries: 'bad' })), /entries/);

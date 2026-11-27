@@ -17,6 +17,7 @@ import {
   renderCharactersPanel,
 } from './app/characters';
 import { initSearch } from './app/search';
+import { extractKeyPhrase, KEY_PHRASE_MARKER, mergeSubannotations, visibleStreamingAnswer } from './app/gemini-key-phrase';
 import type { SearchDoc } from './app/search-model';
 import {
   archiveAdminSiteVisitsInBackground,
@@ -75,6 +76,7 @@ import type {
   Note,
   Quote,
   SortOption,
+  Subannotation,
   SyncConflict,
   SyncStatus,
 } from './types';
@@ -83,6 +85,14 @@ const $ = <T extends HTMLElement = HTMLElement>(s: string): T | null =>
   document.querySelector(s) as T | null;
 const $$ = <T extends HTMLElement = HTMLElement>(s: string): T[] =>
   Array.from(document.querySelectorAll(s)) as T[];
+
+function renderSubannotations(items: Subannotation[] = []): string {
+  if (!items.length) return '';
+  const visible = items.length > 2 ? items.slice(0, 2) : items;
+  const rows = visible.map((item) => `<div class="subannotation" data-subannotation-id="${esc(item.id)}"><strong>${esc(item.phrase)}</strong><small>${esc(item.question)}</small><button type="button" data-delete-subannotation="${esc(item.id)}" aria-label="Borrar frase clave">Borrar</button></div>`).join('');
+  const rest = items.length > 2 ? `<details><summary>Ver ${items.length - 2} frases clave más</summary>${items.slice(2).map((item) => `<div class="subannotation" data-subannotation-id="${esc(item.id)}"><strong>${esc(item.phrase)}</strong><small>${esc(item.question)}</small><button type="button" data-delete-subannotation="${esc(item.id)}">Borrar</button></div>`).join('')}</details>` : '';
+  return `<div class="subannotations">${rows}${rest}</div>`;
+}
 
 const statusNames: Record<BookStatus, string> = {
   pending: 'Pendiente',
@@ -129,6 +139,7 @@ let geminiAttachedImage: string | null = null;
 let geminiExtraContext = '';
 let geminiConversationId: string | null = null;
 let geminiConversationHadImages = false;
+let geminiLastQuestion = '';
 let geminiStreamController: AbortController | null = null;
 
 const uid = () =>
@@ -1221,6 +1232,7 @@ async function renderDetail() {
               }</small>
               <span class="note-text">${esc(n.text)}</span>
               ${n.comment ? `<span class="note-comment"><strong>Mi comentario:</strong> ${esc(n.comment)}</span>` : ''}
+              ${renderSubannotations(n.subannotations)}
             </span>
           </button>
           <div class="note-actions">
@@ -1266,6 +1278,7 @@ async function renderDetail() {
               ${x.title ? `<h3>${esc(x.title)}</h3>` : ''}
               <p>${esc(x.text || '')}</p>
               ${x.comment ? `<p class="entry-personal-comment"><strong>Mi comentario:</strong> ${esc(x.comment)}</p>` : ''}
+              ${renderSubannotations(x.subannotations)}
               ${
                 x.photo
                   ? `<img class="annotation-photo-thumb" data-open-photo="${esc(x.id)}" src="${esc(x.photo)}" alt="Abrir fotografía">`
@@ -1654,6 +1667,7 @@ function quoteCardHTML(
       quote.page != null ? ` · pág. ${esc(quote.page)}` : ''
     }</p>
     ${quote.analysis ? `<p class="quote-analysis"><strong>Mi comentario:</strong> ${esc(quote.analysis)}</p>` : ''}
+    ${renderSubannotations(quote.subannotations)}
     ${photos ? `<div class="quote-photos">${photos}</div>` : ''}
     <div class="annotation-actions">
       <button type="button" class="mini" data-edit-quote="${esc(quote.id)}">Editar cita</button>
@@ -1997,6 +2011,7 @@ async function renderJournal() {
           <h3>${esc(x.title || 'Sin título')}</h3>
           <p>${esc(x.text || '')}</p>
           ${x.comment ? `<p class="entry-personal-comment"><strong>Mi comentario:</strong> ${esc(x.comment)}</p>` : ''}
+          ${renderSubannotations(x.subannotations)}
           ${
             x.photo
               ? `<img class="annotation-photo-thumb" data-open-photo="${esc(x.id)}" src="${esc(x.photo)}" alt="Abrir fotografía">`
@@ -2504,9 +2519,9 @@ async function loadSearchDocs(): Promise<SearchDoc[]> {
     items.sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''));
 
   notes.sort((a, b) => (a.section || 1) - (b.section || 1) || a.number - b.number);
-  for (const n of notes) add('note', n, `Nota ${n.number}`, [n.text, n.comment]);
-  for (const e of recent(entries)) add('entry', e, e.title || `Anotación · pág. ${e.page}`, [e.text, e.comment]);
-  for (const q of recent(quotes)) add('quote', q, q.page != null ? `Cita · pág. ${q.page}` : 'Cita', [q.text, q.analysis, q.chapter]);
+  for (const n of notes) add('note', n, `Nota ${n.number}`, [n.text, n.comment, ...(n.subannotations || []).flatMap((s) => [s.phrase, s.question])]);
+  for (const e of recent(entries)) add('entry', e, e.title || `Anotación · pág. ${e.page}`, [e.text, e.comment, ...(e.subannotations || []).flatMap((s) => [s.phrase, s.question])]);
+  for (const q of recent(quotes)) add('quote', q, q.page != null ? `Cita · pág. ${q.page}` : 'Cita', [q.text, q.analysis, q.chapter, ...(q.subannotations || []).flatMap((s) => [s.phrase, s.question])]);
   for (const c of characters) {
     add('character', c, c.name, [c.aliases?.join(', '), c.description, c.occupation, c.affiliation, c.traits?.join(', '), c.comments]);
   }
@@ -2799,11 +2814,12 @@ function renderUpdatesList() {
   }).join('');
 }
 
-function attachGeminiMessageActions(wrapper: HTMLElement, answer: string) {
+function attachGeminiMessageActions(wrapper: HTMLElement, answer: string, sourceQuestion = geminiLastQuestion) {
   wrapper.querySelector('.gemini-msg-actions')?.remove();
   const bar = document.createElement('div');
   bar.className = 'gemini-msg-actions';
-  const answerPlainText = markdownToPlainText(answer);
+  const extracted = extractKeyPhrase(answer);
+  const answerPlainText = markdownToPlainText(extracted.answer);
 
   const makeBtn = (label: string, onClick: (btn: HTMLButtonElement) => void | Promise<void>) => {
     const btn = document.createElement('button');
@@ -2833,6 +2849,33 @@ function attachGeminiMessageActions(wrapper: HTMLElement, answer: string) {
   });
 
   const ctx = geminiItem;
+  if (extracted.phrase) {
+    const key = document.createElement('p');
+    key.className = 'gemini-key-phrase';
+    key.innerHTML = `<strong>${esc(extracted.phrase)}</strong>`;
+    wrapper.querySelector('.gemini-message.model')?.append(key);
+    const source = ctx?.note || ctx?.entry || ctx?.quote;
+    if (source) {
+      const savedList = 'subannotations' in source ? (source.subannotations || []) : [];
+      const duplicate = savedList.some((item: Subannotation) => item.phrase === extracted.phrase);
+      const saveButton = makeBtn(duplicate ? 'Guardada ✓' : 'Guardar en mi comentario', async (btn) => {
+        if (btn.disabled || !ctx || !source) return;
+        const fresh = ctx.note ? await get<Note>('notes', source.id) : ctx.entry ? await get<Entry>('entries', source.id) : await get<Quote>('quotes', source.id);
+        if (!fresh) return;
+        const list = (fresh as any).subannotations || [];
+        if (list.some((item: Subannotation) => item.phrase === extracted.phrase)) { btn.textContent = 'Guardada ✓'; btn.disabled = true; return; }
+        const sub: Subannotation = { id: uid(), phrase: extracted.phrase!, question: sourceQuestion, createdAt: new Date().toISOString() };
+        (fresh as any).subannotations = mergeSubannotations(list, [sub]);
+        const saved = ctx.note ? await pushNoteToCloud(fresh as Note) : ctx.entry ? await pushEntryToCloud(fresh as Entry) : await pushQuoteToCloud(fresh as Quote);
+        if (ctx.note) ctx.note = saved as Note; else if (ctx.entry) ctx.entry = saved as Entry; else if (ctx.quote) ctx.quote = saved as Quote;
+        btn.textContent = 'Guardada ✓'; btn.disabled = true;
+        if ($<HTMLDialogElement>('#detailDialog')?.open) await renderDetail();
+        if ($('#quotesView')?.classList.contains('active')) await renderQuoteCollection();
+        if ($('#notebookView')?.classList.contains('active')) await renderJournal();
+      });
+      if (duplicate) saveButton.disabled = true;
+    }
+  }
   if (ctx?.note) {
     const targetNote = ctx.note;
     makeBtn('Guardar en comentario', async (btn) => {
@@ -2943,6 +2986,23 @@ function attachGeminiMessageActions(wrapper: HTMLElement, answer: string) {
   wrapper.append(bar);
 }
 
+document.addEventListener('click', async (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-delete-subannotation]');
+  if (!button) return;
+  const row = button.closest<HTMLElement>('[data-ai-note],[data-ai-entry],[data-quote-id]');
+  if (!row) return;
+  const id = button.dataset.deleteSubannotation!;
+  const noteId = row.dataset.aiNote;
+  const entryId = row.dataset.aiEntry;
+  const quoteId = row.dataset.quoteId;
+  if (noteId) { const record = await get<Note>('notes', noteId); if (record) { record.subannotations = (record.subannotations || []).filter((item) => item.id !== id); await pushNoteToCloud(record); } }
+  else if (entryId) { const record = await get<Entry>('entries', entryId); if (record) { record.subannotations = (record.subannotations || []).filter((item) => item.id !== id); await pushEntryToCloud(record); } }
+  else if (quoteId) { const record = await get<Quote>('quotes', quoteId); if (record) { record.subannotations = (record.subannotations || []).filter((item) => item.id !== id); await pushQuoteToCloud(record); } }
+  if ($<HTMLDialogElement>('#detailDialog')?.open) await renderDetail();
+  if ($('#quotesView')?.classList.contains('active')) await renderQuoteCollection();
+  if ($('#notebookView')?.classList.contains('active')) await renderJournal();
+});
+
 const GEMINI_FINISH_LABELS: Record<string, string> = {
   MAX_TOKENS: 'llegó al límite de longitud',
   SAFETY: 'Gemini la frenó por sus filtros de seguridad',
@@ -2979,7 +3039,7 @@ function createGeminiModelTurn(initialText = ''): { wrapper: HTMLElement; bubble
   wrapper.className = 'gemini-model-turn';
   const bubble = document.createElement('div');
   bubble.className = 'gemini-message model';
-  if (initialText) bubble.innerHTML = renderGeminiMarkdown(initialText);
+  if (initialText) bubble.innerHTML = renderGeminiMarkdown(extractKeyPhrase(initialText).answer);
   else bubble.innerHTML = '<span class="gemini-thinking" aria-label="Pensando">Pensando<span>.</span><span>.</span><span>.</span></span>';
   wrapper.append(bubble);
   $('#geminiMessages')!.append(wrapper);
@@ -3001,11 +3061,16 @@ function addGeminiMessage(role: 'user' | 'model' | 'system' | 'error', text: str
 }
 
 function restoreGeminiTranscript(history: ConversationTurn[]) {
+  let lastQuestion = '';
   for (const item of history) {
     if (item.role !== 'user' && item.role !== 'model') continue;
     const texts = (item.parts || []).map((part) => part.text).filter(Boolean);
     if (!texts.length) continue;
-    addGeminiMessage(item.role, item.role === 'user' ? texts[texts.length - 1] : texts.join('\n'));
+    if (item.role === 'user') lastQuestion = texts[texts.length - 1];
+    if (item.role === 'model') {
+      const { wrapper } = createGeminiModelTurn(texts.join('\n'));
+      attachGeminiMessageActions(wrapper, texts.join('\n'), lastQuestion);
+    } else addGeminiMessage(item.role, texts[texts.length - 1]);
   }
 }
 
@@ -3070,6 +3135,7 @@ async function sendGeminiQuestion(e: Event) {
   if (geminiStreamController) return;
   const qInput = $<HTMLTextAreaElement>('#geminiQuestion')!;
   const question = qInput.value.trim();
+  geminiLastQuestion = question;
   if (!question) return;
   const antiSpoilerEnabled = $<HTMLInputElement>('#geminiAntiSpoiler')?.checked ?? true;
   const button = $<HTMLButtonElement>('#geminiSend')!;
@@ -3111,6 +3177,7 @@ async function sendGeminiQuestion(e: Event) {
       const page = Math.max(0, Number(geminiItem.book.currentPage) || 0);
       systemInstruction += `\n\nMODO EVITAR SPOILERS: la persona está aproximadamente en la página ${page} de «${geminiItem.book.title}». Usá esa página como referencia aproximada de su avance y evitá revelar o anticipar hechos posteriores, giros o destinos. Si la ubicación de un dato no es clara, respondé sin revelar detalles de trama que puedan adelantarse. Esta preferencia no exige hablar de spoilers ni impide responder preguntas generales de forma segura.`;
     }
+    systemInstruction += `\n\nAl final de cada respuesta agregá una línea separada exactamente con este marcador y una sola oración de hasta 25 palabras que responda la pregunta concreta: ${KEY_PHRASE_MARKER} Tu frase clave. Debe ser autosuficiente, clara y segura; si no hay respuesta segura, decilo. Respetá siempre el modo Evitar spoilers también en esa frase. No escribas el marcador en ningún otro lugar.`;
     const parts: any[] = [];
     if (!geminiHistory.length) {
       const { book, note, entry, quote, analysis } = geminiItem || {};
@@ -3241,7 +3308,7 @@ async function sendGeminiQuestion(e: Event) {
           usedModel = payload.model;
         } else if (eventName === 'chunk' && payload.text) {
           answer += payload.text;
-          turn.bubble.innerHTML = renderGeminiMarkdown(answer);
+          turn.bubble.innerHTML = renderGeminiMarkdown(visibleStreamingAnswer(answer));
           messagesBox.scrollTop = messagesBox.scrollHeight;
         } else if (eventName === 'message' && Array.isArray(payload.candidates)) {
           const reason = payload.candidates.map((candidate: any) => candidate.finishReason).find(Boolean);
@@ -3253,7 +3320,7 @@ async function sendGeminiQuestion(e: Event) {
             .join('');
           if (piece) {
             answer += piece;
-            turn.bubble.innerHTML = renderGeminiMarkdown(answer);
+            turn.bubble.innerHTML = renderGeminiMarkdown(visibleStreamingAnswer(answer));
             messagesBox.scrollTop = messagesBox.scrollHeight;
           }
         } else if (eventName === 'message' && payload.promptFeedback?.blockReason && !answer.trim()) {
@@ -3333,8 +3400,9 @@ async function sendGeminiQuestion(e: Event) {
     const finalAnswer = answer.trim();
     if (!finalAnswer) throw lastError || Error('Gemini no devolvió texto.');
     retryNote.remove();
-    turn.bubble.innerHTML = renderGeminiMarkdown(finalAnswer);
-    attachGeminiMessageActions(turn.wrapper, finalAnswer);
+    const complete = finishReason === 'STOP' ? extractKeyPhrase(finalAnswer) : { answer: finalAnswer, phrase: null };
+    turn.bubble.innerHTML = renderGeminiMarkdown(complete.answer);
+    attachGeminiMessageActions(turn.wrapper, finalAnswer, question);
     if (finishReason !== 'STOP') markGeminiIncomplete(turn.wrapper, finishReason || 'STALLED');
     geminiHistory = [...baseContents, { role: 'model', parts: [{ text: finalAnswer }] }];
     geminiExtraContext = '';
@@ -3349,7 +3417,7 @@ async function sendGeminiQuestion(e: Event) {
     if (err?.name === 'AbortError') {
       const partial = answer.trim();
       if (partial && modelTurn) {
-        modelTurn.bubble.innerHTML = renderGeminiMarkdown(partial);
+        modelTurn.bubble.innerHTML = renderGeminiMarkdown(visibleStreamingAnswer(partial));
         attachGeminiMessageActions(modelTurn.wrapper, partial);
         addGeminiMessage('system', 'Respuesta detenida.');
       } else {

@@ -139,7 +139,7 @@ service cloud.firestore {
       return data.keys().hasAll(['id', 'userId', 'bookId', 'number', 'section', 'text', 'read', 'createdAt', 'updatedAt'])
         && data.keys().hasOnly([
           'id', 'userId', 'bookId', 'number', 'section', 'referencePage', 'endPage',
-          'text', 'comment', 'read', 'createdAt', 'updatedAt'
+          'text', 'comment', 'read', 'subannotations', 'createdAt', 'updatedAt'
         ])
         && data.id == noteId
         && data.userId == userId
@@ -151,6 +151,7 @@ service cloud.firestore {
         && isOptionalNonNegInt(data, 'endPage')
         && data.text is string && data.text.size() >= 1 && data.text.size() <= 20000
         && isOptionalString(data, 'comment', 10000)
+        && (!('subannotations' in data) || data.subannotations is list && data.subannotations.size() <= 500)
         && data.read is bool
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
@@ -159,7 +160,7 @@ service cloud.firestore {
     function isValidEntry(data, userId, entryId) {
       return data.keys().hasAll(['id', 'userId', 'bookId', 'page', 'createdAt', 'updatedAt'])
         && data.keys().hasOnly([
-          'id', 'userId', 'bookId', 'page', 'title', 'text', 'comment', 'photoMediaId', 'createdAt', 'updatedAt'
+          'id', 'userId', 'bookId', 'page', 'title', 'text', 'comment', 'photoMediaId', 'subannotations', 'createdAt', 'updatedAt'
         ])
         && data.id == entryId
         && data.userId == userId
@@ -170,6 +171,7 @@ service cloud.firestore {
         && isOptionalString(data, 'text', 20000)
         && isOptionalString(data, 'comment', 10000)
         && isOptionalString(data, 'photoMediaId', 128)
+        && (!('subannotations' in data) || data.subannotations is list && data.subannotations.size() <= 500)
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -177,7 +179,7 @@ service cloud.firestore {
     function isValidQuote(data, userId, quoteId) {
       return data.keys().hasAll(['id', 'userId', 'bookId', 'text', 'photoMediaIds', 'createdAt', 'updatedAt'])
         && data.keys().hasOnly([
-          'id', 'userId', 'bookId', 'text', 'chapter', 'page', 'analysis', 'photoMediaIds', 'createdAt', 'updatedAt'
+          'id', 'userId', 'bookId', 'text', 'chapter', 'page', 'analysis', 'photoMediaIds', 'subannotations', 'createdAt', 'updatedAt'
         ])
         && data.id == quoteId
         && data.userId == userId
@@ -188,6 +190,7 @@ service cloud.firestore {
         && isOptionalNonNegInt(data, 'page')
         && isOptionalString(data, 'analysis', 10000)
         && data.photoMediaIds is list && data.photoMediaIds.size() <= 5
+        && (!('subannotations' in data) || data.subannotations is list && data.subannotations.size() <= 500)
         && (data.photoMediaIds.size() == 0 || (data.photoMediaIds[0] is string && data.photoMediaIds[0].size() <= 128))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
@@ -420,7 +423,7 @@ service cloud.firestore {
           && incoming().createdAt == existing().createdAt
           && incoming().updatedAt == request.time
           && incoming().diff(existing()).affectedKeys().hasOnly([
-            'number', 'section', 'referencePage', 'endPage', 'text', 'comment', 'read', 'updatedAt'
+            'number', 'section', 'referencePage', 'endPage', 'text', 'comment', 'read', 'subannotations', 'updatedAt'
           ]);
         allow delete: if isVerifiedOwner(userId) && isValidId(noteId);
       }
@@ -443,7 +446,7 @@ service cloud.firestore {
           && incoming().createdAt == existing().createdAt
           && incoming().updatedAt == request.time
           && incoming().diff(existing()).affectedKeys().hasOnly([
-            'page', 'title', 'text', 'comment', 'photoMediaId', 'updatedAt'
+            'page', 'title', 'text', 'comment', 'photoMediaId', 'subannotations', 'updatedAt'
           ]);
         allow delete: if isVerifiedOwner(userId) && isValidId(entryId);
       }
@@ -466,7 +469,7 @@ service cloud.firestore {
           && incoming().createdAt == existing().createdAt
           && incoming().updatedAt == request.time
           && incoming().diff(existing()).affectedKeys().hasOnly([
-            'text', 'chapter', 'page', 'analysis', 'photoMediaIds', 'updatedAt'
+            'text', 'chapter', 'page', 'analysis', 'photoMediaIds', 'subannotations', 'updatedAt'
           ]);
         allow delete: if isVerifiedOwner(userId) && isValidId(quoteId);
       }

@@ -9,7 +9,7 @@
     "start": "NODE_ENV=production tsx server.ts",
     "build": "vite build && node scripts/copy-build-assets.mjs",
     "lint": "tsc --noEmit && eslint firestore.rules",
-    "test": "tsx --test tests/notes-and-backup.test.ts tests/sync-merge.test.ts tests/characters.test.ts tests/gemini-direct.test.ts tests/network.test.ts tests/search.test.ts"
+    "test": "tsx --test tests/notes-and-backup.test.ts tests/sync-merge.test.ts tests/characters.test.ts tests/gemini-direct.test.ts tests/gemini-key-phrase.test.ts tests/network.test.ts tests/search.test.ts"
   },
   "dependencies": {
     "@firebase/eslint-plugin-security-rules": "^0.0.2",

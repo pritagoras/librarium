@@ -7,6 +7,15 @@ test('accepts a remote record when no local copy exists', () => {
   assert.deepEqual(reconcileRecords(undefined, remote), { kind: 'accept-remote', record: remote });
 });
 
+test('keeps subannotations added independently on two devices', () => {
+  const decision = reconcileRecords(
+    { id: 'entry', subannotations: [{ id: 'local', phrase: 'Local' }], updatedAt: '2026-11-26' },
+    { id: 'entry', subannotations: [{ id: 'remote', phrase: 'Remota' }], updatedAt: '2026-11-27' },
+  );
+  assert.equal(decision.kind, 'accept-remote');
+  if (decision.kind === 'accept-remote') assert.deepEqual((decision.record as any).subannotations.map((item: any) => item.id), ['local', 'remote']);
+});
+
 test('treats timestamp-only differences as the same content', () => {
   assert.equal(recordsHaveSameContent(
     { id: 'book-1', title: 'Libro', userId: 'u1', createdAt: 'a', updatedAt: 'b' },
