@@ -854,7 +854,9 @@ export function buildCharacterAIRequest(input: AIContextInput): AIRequestPlan {
     question = `Consulta puntual sobre «${character.name}»: ${FIELD_QUESTIONS[scope.field]}. Si el material no lo establece, respondé con lo que sepas de la obra, rotulado como conocimiento general y con tu nivel de seguridad, sin adelantar hechos posteriores a la página de lectura. Decí que no lo sabés solo si realmente no lo conocés.\n\nFormato de la respuesta: primero explicá brevemente de dónde sale el dato (fuentes del material y/o tu conocimiento de la obra) y qué tan seguro estás. Al final, en dos líneas exactas y sin Markdown:\nVALOR_SUGERIDO: <el valor concreto y corto, listo para guardar en la ficha; comprometete con tu mejor estimación y dejalo vacío solo si no hay base alguna>\nCERTEZA_SUGERIDA: <explicit solo si sale directo del material guardado; inferred en cualquier otro caso>`;
   } else {
     const currentRelations = input.relations.filter(
-      (r) => (r.fromId === character.id && r.toId === other!.id) || (r.fromId === other!.id && r.toId === character.id),
+      (r) =>
+        (!scope.relationId || r.id === scope.relationId) &&
+        ((r.fromId === character.id && r.toId === other!.id) || (r.fromId === other!.id && r.toId === character.id)),
     );
     question = [
       `Revisá específicamente el vínculo entre «${character.name}» y «${other!.name}».`,
