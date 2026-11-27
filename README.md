@@ -83,6 +83,7 @@ Requiere Node.js 22 o superior.
 npm install
 npm run dev      # servidor de desarrollo en http://127.0.0.1:8765
 npm run build    # genera dist/
+npm run analyze  # muestra qué módulos ocupan más espacio en cada paquete
 npm run lint     # chequeo de tipos y reglas de Firestore
 npm run test     # pruebas de importación, restauración, conflictos de sincronización y personajes (fichas, vínculos, respaldo y contexto para la IA)
 ```

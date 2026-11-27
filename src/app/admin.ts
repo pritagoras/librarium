@@ -6,11 +6,11 @@ import {
   fetchAdminUserDirectory,
   fetchAllFeedbackReports,
   fetchMyFeedbackReports,
-  isFeedbackAdmin,
   submitFeedbackReport,
   syncAndFetchPersistentSiteStats,
   updateFeedbackReport,
 } from '../feedback';
+import { isFeedbackAdmin } from '../feedback-access';
 import { getSyncState } from '../sync';
 import { signInWithGoogle } from '../firebase';
 import type {

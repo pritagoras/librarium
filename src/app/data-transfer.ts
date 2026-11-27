@@ -1,4 +1,3 @@
-import { prepareCharacterBackup, safeId } from './characters-model';
 
 export function slug(s: string) {
   return (s || 'librarium')
@@ -149,6 +148,7 @@ export async function restoreBackupData(
   writers: BackupRestoreWriters,
   options: RestoreOptions = {},
 ): Promise<number> {
+  const { prepareCharacterBackup, safeId } = await import('./characters-model');
   let restored = 0;
   for (const book of backup.books) {
     await writers.book({

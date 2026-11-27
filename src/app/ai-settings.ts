@@ -1,4 +1,3 @@
-import { directGeminiRequest } from '../gemini-direct';
 import type { AISettings } from '../types';
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string): T | null =>
@@ -80,7 +79,7 @@ export function renderInlineKeyCTA(statusEl: HTMLElement | null, message: string
 
 export function requestGeminiFeature(route: string, payload: Record<string, any>, signal?: AbortSignal): Promise<Response> {
   const apiKey = getPrivateGeminiKey();
-  if (apiKey) return directGeminiRequest(route, payload, apiKey, signal);
+  if (apiKey) return import('../gemini-direct').then(({ directGeminiRequest }) => directGeminiRequest(route, payload, apiKey, signal));
   return Promise.resolve(new Response(JSON.stringify({
     error: 'Para usar la IA, guardá tu API key personal de Gemini en Ajustes → Ajustes de IA.',
   }), { status: 401, headers: { 'Content-Type': 'application/json' } }));

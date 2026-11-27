@@ -23,7 +23,6 @@ import {
 } from './firebase';
 import { all, clearAllStores, del, get, put, type StoreName } from './db';
 import { makeConflictId, reconcileRecords } from './sync-merge';
-import { normalizeCharacter, normalizeRelation } from './app/characters-model';
 import { visitsApiEnabled } from './site-config';
 import type {
   Book,
@@ -942,6 +941,7 @@ export async function pushQuoteToCloud(quote: Quote): Promise<Quote> {
 }
 
 export async function pushCharacterToCloud(character: Character): Promise<Character> {
+  const { normalizeCharacter } = await import('./app/characters-model');
   const id = sanitizeId(character.id);
   const base = normalizeCharacter({ ...character, id, bookId: sanitizeId(character.bookId) });
   if (!base) throw Error('El personaje necesita un nombre y un libro.');
@@ -1007,6 +1007,7 @@ async function ensureCharacterInCloud(characterId: string): Promise<void> {
 }
 
 export async function pushCharacterRelationToCloud(relation: CharacterRelation): Promise<CharacterRelation> {
+  const { normalizeRelation } = await import('./app/characters-model');
   const base = normalizeRelation({
     ...relation,
     bookId: sanitizeId(relation.bookId),
@@ -1597,6 +1598,7 @@ function subscribeUserCollections(uid: string) {
     onSnapshot(
       query(collection(db, 'users', uid, 'characters'), where('userId', '==', uid)),
       async (snapshot) => {
+        const { normalizeCharacter } = await import('./app/characters-model');
         const nextIds = new Set<string>();
         for (const d of snapshot.docs) {
           nextIds.add(d.id);
@@ -1627,6 +1629,7 @@ function subscribeUserCollections(uid: string) {
     onSnapshot(
       query(collection(db, 'users', uid, 'characterRelations'), where('userId', '==', uid)),
       async (snapshot) => {
+        const { normalizeRelation } = await import('./app/characters-model');
         const nextIds = new Set<string>();
         for (const d of snapshot.docs) {
           nextIds.add(d.id);

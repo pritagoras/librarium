@@ -6,29 +6,11 @@ import {
   validateNotesJSON,
 } from './app/data-transfer';
 import { showConfirmDialog } from './app/dialogs';
-import {
-  openCharacterSheet,
-  confirmDiscard,
-  hasUnsavedChanges,
-  leaveCharacterForm,
-  initCharacters,
-  isCharactersBusy,
-  purgeBookCharacters,
-  renderCharactersPanel,
-} from './app/characters';
 import { initSearch } from './app/search';
 import { extractKeyPhrase, KEY_PHRASE_MARKER, mergeSubannotations, visibleStreamingAnswer } from './app/gemini-key-phrase';
 import type { SearchDoc } from './app/search-model';
-import {
-  archiveAdminSiteVisitsInBackground,
-  initAdminFeatures,
-  refreshAdminFeedbackSummary,
-  renderMyFeedbackList,
-  updateAdminPendingBadges,
-} from './app/admin';
 import { all, get, openDB } from './db';
 import { signInWithGoogle, signOutUser } from './firebase';
-import { FALLBACK_MODELS as GEMINI_FALLBACK_MODELS } from './gemini-direct';
 import { initInstall, initTheme, setupServiceWorkerUpdates } from './app/platform';
 import {
   aiStyleInstruction,
@@ -61,7 +43,7 @@ import {
   resolveSyncConflict,
   sanitizeId,
 } from './sync';
-import { isFeedbackAdmin } from './feedback';
+import { isFeedbackAdmin } from './feedback-access';
 import changelogMarkdown from '../CHANGELOG.md?raw';
 import type {
   AISettings,
@@ -128,6 +110,68 @@ let cameraShotUrl: string | null = null;
 let cameraOnCapture: ((file: File) => Promise<void> | void) | null = null;
 let cameraFallbackInput: HTMLInputElement | null = null;
 let isAnalyzingBook = false;
+
+type CharactersFeature = typeof import('./app/characters');
+let charactersFeature: CharactersFeature | null = null;
+let charactersFeaturePromise: Promise<CharactersFeature> | null = null;
+let adminFeaturePromise: Promise<typeof import('./app/admin')> | null = null;
+let adminFeaturesInitialized = false;
+
+function loadCharactersFeature(): Promise<CharactersFeature> {
+  if (charactersFeature) return Promise.resolve(charactersFeature);
+  if (!charactersFeaturePromise) {
+    charactersFeaturePromise = import('./app/characters').then((feature) => {
+      feature.initCharacters({
+        loadBookData: async (bookId) => {
+          const [characters, relations, notes, entries, quotes] = await Promise.all([
+            all<Character>('characters'), all<CharacterRelation>('characterRelations'), all<Note>('notes'), all<Entry>('entries'), all<Quote>('quotes'),
+          ]);
+          const mine = <T extends { bookId: string }>(items: T[]) => items.filter((item) => sanitizeId(item.bookId) === sanitizeId(bookId));
+          return { characters: mine(characters), relations: mine(relations), notes: mine(notes), entries: mine(entries), quotes: mine(quotes) };
+        },
+        saveCharacter: pushCharacterToCloud,
+        saveRelation: pushCharacterRelationToCloud,
+        deleteCharacter: (id) => deleteFromCloud('characters', id),
+        deleteRelation: (id) => deleteFromCloud('characterRelations', id),
+        confirm: showConfirmDialog,
+        ai: {
+          hasKey: () => Boolean(getPrivateGeminiKey()),
+          request: requestGeminiFeature,
+          settings: () => { const settings = getAISettingsForTask('chat'); return { model: settings.model, thinking: settings.thinking }; },
+          styleInstruction: () => aiStyleOnly(getAISettingsForTask('chat')),
+          openSettings: openAISettingsGuide,
+          isKeyError: isAIKeyError,
+        },
+        renderMarkdown: renderGeminiMarkdown,
+      });
+      charactersFeature = feature;
+      return feature;
+    }).catch((error) => { charactersFeaturePromise = null; throw error; });
+  }
+  return charactersFeaturePromise;
+}
+
+function loadAdminFeature() {
+  if (!adminFeaturePromise) {
+    adminFeaturePromise = import('./app/admin').then((feature) => {
+      if (!adminFeaturesInitialized) {
+        feature.initAdminFeatures();
+        adminFeaturesInitialized = true;
+      }
+      return feature;
+    }).catch((error) => { adminFeaturePromise = null; throw error; });
+  }
+  return adminFeaturePromise;
+}
+
+function resetAdminBadges() {
+  for (const id of ['settingsOpenBadge', 'inboxPendingBadge']) {
+    const badge = $(`#${id}`);
+    badge?.classList.add('hidden');
+    if (badge) badge.textContent = '';
+  }
+  $('#settingsOpen')?.setAttribute('aria-label', 'Ajustes');
+}
 
 const AI_SPARK = '<svg class="ai-spark" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true" focusable="false"><path d="M10 3c.7 4.6 3.4 7.3 8 8-4.6.7-7.3 3.4-8 8-.7-4.6-3.4-7.3-8-8 4.6-.7 7.3-3.4 8-8z"/><path d="M19 1.5c.25 1.7 1.1 2.55 2.8 2.8-1.7.25-2.55 1.1-2.8 2.8-.25-1.7-1.1-2.55-2.8-2.8 1.7-.25 2.55-1.1 2.8-2.8z"/></svg>';
 
@@ -1315,7 +1359,7 @@ async function renderDetail() {
   });
   $('#addQuote')?.addEventListener('click', () => openQuoteForm(b.id));
   if (detailTab === 'quotes') bindQuoteActions(p);
-  if (detailTab === 'characters') await renderCharactersPanel(p, b);
+  if (detailTab === 'characters') await (await loadCharactersFeature()).renderCharactersPanel(p, b);
   $('#editBook2')?.addEventListener('click', () => {
     $<HTMLDialogElement>('#detailDialog')?.close();
     openBookForm(b);
@@ -1493,7 +1537,7 @@ async function renderDetail() {
     if (analysis) {
       await deleteFromCloud('analyses', analysis.id);
     }
-    await purgeBookCharacters(b.id);
+    await (await loadCharactersFeature()).purgeBookCharacters(b.id);
     await deleteFromCloud('conversations', `book__${b.id}`);
     await deleteFromCloud('conversations', `review__${sanitizeId(b.id)}`);
     await deleteFromCloud('books', b.id);
@@ -2139,14 +2183,16 @@ function updateAccountUI(status: SyncStatus, message: string, user: any) {
     adminCard.classList.toggle('hidden', !isAdmin);
   }
   if (isAdmin) {
-    void refreshAdminFeedbackSummary();
-    void archiveAdminSiteVisitsInBackground();
+    void loadAdminFeature().then((feature) => Promise.all([
+      feature.refreshAdminFeedbackSummary(),
+      feature.archiveAdminSiteVisitsInBackground(),
+    ]));
   } else {
-    updateAdminPendingBadges(0);
+    resetAdminBadges();
   }
 
   if ($<HTMLDialogElement>('#feedbackDialog')?.open) {
-    void renderMyFeedbackList();
+    void loadAdminFeature().then((feature) => feature.renderMyFeedbackList());
   }
 }
 
@@ -2198,7 +2244,7 @@ async function handleGoogleSignOut() {
 function initAccountSettings() {
   $('#settingsOpen')!.onclick = () => {
     $<HTMLDialogElement>('#settingsDialog')?.showModal();
-    if (isFeedbackAdmin(getSyncState().user)) void refreshAdminFeedbackSummary();
+    if (isFeedbackAdmin(getSyncState().user)) void loadAdminFeature().then((feature) => feature.refreshAdminFeedbackSummary());
   };
   $('#accountBtn')!.onclick = () => {
     const { user } = getSyncState();
@@ -2558,7 +2604,7 @@ async function openSearchResult(doc: SearchDoc) {
   detailTab = ({ note: 'notes', entry: 'entries', quote: 'quotes', character: 'characters' } as const)[doc.kind];
   await renderDetail();
   if (doc.kind === 'character') {
-    openCharacterSheet(doc.id);
+    await (await loadCharactersFeature()).openCharacterSheet(doc.id);
     return;
   }
   const attribute = { note: 'data-ai-note', entry: 'data-ai-entry', quote: 'data-quote-id' }[doc.kind];
@@ -3230,7 +3276,8 @@ async function sendGeminiQuestion(e: Event) {
     const turn = modelTurn;
     const messagesBox = $('#geminiMessages')!;
     // Modelo elegido primero y después los de respaldo. Si uno falla, se corta o deja la respuesta a mitad, sigue el próximo.
-    const models = [aiSettings.model, ...GEMINI_FALLBACK_MODELS.filter((m) => m !== aiSettings.model)];
+    const { FALLBACK_MODELS } = await import('./gemini-direct');
+    const models = [aiSettings.model, ...FALLBACK_MODELS.filter((m) => m !== aiSettings.model)];
     const failedModels: string[] = [];
     let lastError: Error | null = null;
     const retryNote = document.createElement('div');
@@ -3547,10 +3594,10 @@ function initEnvironmentNotices() {
 function guardUnsavedCharacterForm() {
   const dialog = $<HTMLDialogElement>('#detailDialog');
   if (!dialog) return;
-  const pending = () => dialog.open && detailTab === 'characters' && hasUnsavedChanges();
+  const pending = () => dialog.open && detailTab === 'characters' && Boolean(charactersFeature?.hasUnsavedChanges());
   const ifDiscarded = async (then: () => void) => {
-    if (!(await confirmDiscard())) return;
-    leaveCharacterForm();
+    if (!charactersFeature || !(await charactersFeature.confirmDiscard())) return;
+    charactersFeature.leaveCharacterForm();
     then();
   };
   dialog.addEventListener(
@@ -3582,6 +3629,14 @@ function guardUnsavedCharacterForm() {
 
 function wireEvents() {
   guardUnsavedCharacterForm();
+  document.addEventListener('click', (event) => {
+    const trigger = (event.target as HTMLElement).closest<HTMLElement>('#footerFeedbackBtn,#openFeedbackBtn,#openFeedbackInboxBtn,#openUsersDirectoryBtn');
+    if (!trigger || adminFeaturesInitialized || trigger.dataset.adminLazyReady) return;
+    trigger.dataset.adminLazyReady = '1';
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    void loadAdminFeature().then(() => trigger.click()).catch((error) => console.error('No se pudo cargar el panel de comentarios:', error));
+  }, true);
   $$('.tab').forEach((b) => {
     b.onclick = () => switchView(b.dataset.view!);
   });
@@ -4422,8 +4477,6 @@ function wireEvents() {
     }
   });
 
-  initAdminFeatures();
-
   $('#footerUpdatesBtn')?.addEventListener('click', () => {
     renderUpdatesList();
     $<HTMLDialogElement>('#updatesDialog')?.showModal();
@@ -4441,42 +4494,6 @@ export async function initApp() {
   render();
   initAISettings();
   initSearch({ loadDocs: loadSearchDocs, open: openSearchResult });
-  initCharacters({
-    loadBookData: async (bookId) => {
-      const [characters, relations, notes, entries, quotes] = await Promise.all([
-        all<Character>('characters'),
-        all<CharacterRelation>('characterRelations'),
-        all<Note>('notes'),
-        all<Entry>('entries'),
-        all<Quote>('quotes'),
-      ]);
-      const mine = <T extends { bookId: string }>(items: T[]) => items.filter((item) => sanitizeId(item.bookId) === sanitizeId(bookId));
-      return {
-        characters: mine(characters),
-        relations: mine(relations),
-        notes: mine(notes),
-        entries: mine(entries),
-        quotes: mine(quotes),
-      };
-    },
-    saveCharacter: pushCharacterToCloud,
-    saveRelation: pushCharacterRelationToCloud,
-    deleteCharacter: (id) => deleteFromCloud('characters', id),
-    deleteRelation: (id) => deleteFromCloud('characterRelations', id),
-    confirm: showConfirmDialog,
-    ai: {
-      hasKey: () => Boolean(getPrivateGeminiKey()),
-      request: requestGeminiFeature,
-      settings: () => {
-        const settings = getAISettingsForTask('chat');
-        return { model: settings.model, thinking: settings.thinking };
-      },
-      styleInstruction: () => aiStyleOnly(getAISettingsForTask('chat')),
-      openSettings: openAISettingsGuide,
-      isKeyError: isAIKeyError,
-    },
-    renderMarkdown: renderGeminiMarkdown,
-  });
   initAccountSettings();
   initInstall();
   setupServiceWorkerUpdates();
@@ -4494,7 +4511,7 @@ export async function initApp() {
           const isEditingReview =
             detailTab === 'review' &&
             document.activeElement?.id === 'detailReviewText';
-          const isEditingCharacters = detailTab === 'characters' && isCharactersBusy();
+          const isEditingCharacters = detailTab === 'characters' && Boolean(charactersFeature?.isCharactersBusy());
           if (!isEditingReview && !isEditingCharacters) await renderDetail();
         }
       }

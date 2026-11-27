@@ -14,6 +14,7 @@ import type { User } from 'firebase/auth';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import { sanitizeId } from './sync';
 import { visitsApiEnabled } from './site-config';
+import { FEEDBACK_ADMIN_EMAIL, isFeedbackAdmin } from './feedback-access';
 import type {
   BookProgressSummary,
   BookStatus,
@@ -25,16 +26,8 @@ import type {
   UserDirectoryEntry,
 } from './types';
 
-export const FEEDBACK_ADMIN_EMAIL = '[redacted]';
 const APP_CLIENT_VERSION = 'v42';
-
-export function isFeedbackAdmin(user: User | null | undefined): boolean {
-  return Boolean(
-    user &&
-      user.emailVerified &&
-      user.email?.trim().toLowerCase() === FEEDBACK_ADMIN_EMAIL,
-  );
-}
+export { FEEDBACK_ADMIN_EMAIL, isFeedbackAdmin } from './feedback-access';
 
 function toIso(value: unknown): string {
   if (value instanceof Timestamp) return value.toDate().toISOString();
