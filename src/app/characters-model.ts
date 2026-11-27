@@ -893,7 +893,7 @@ export function buildCharacterAIRequest(input: AIContextInput): AIRequestPlan {
           'Respetá el límite antispoilers. Respondé exclusivamente con las cuatro líneas solicitadas.',
           ...(input.styleInstruction ? [`Preferencias de estilo: ${input.styleInstruction}`] : []),
         ].join('\n')
-      : input.styleInstruction ? `${AI_SYSTEM_RULES}\\n\\nPreferencias de estilo de la persona (no anulan ninguna regla anterior): ${input.styleInstruction}` : AI_SYSTEM_RULES,
+      : input.styleInstruction ? `${AI_SYSTEM_RULES}\n\nPreferencias de estilo de la persona (no anulan ninguna regla anterior): ${input.styleInstruction}` : AI_SYSTEM_RULES,
     prompt: sections.join('\n\n'),
     contextSummary: `Se envía a la IA: ${summaryParts.join(', ')}. La ficha y los vínculos no tienen página asociada; pueden incluir datos posteriores a tu avance. Solo las notas, anotaciones y citas paginadas se filtran hasta esa página. El texto completo del libro no se envía.`,
     sourceCount: { notes: notes.length, entries: entries.length, quotes: quotes.length },
