@@ -81,14 +81,9 @@ export function paint(focusHeading = false) {
   }
   host.innerHTML = `<div class="chr-root">${html}</div>`;
   bindEvents();
-  if (state.netReveal && state.mode === 'index' && state.view === 'network') {
-    const network = host.querySelector<HTMLElement>('.chr-network--global');
-    if (network) {
-      network.classList.add('chr-network--reveal');
-      state.netReveal = false;
-      window.setTimeout(() => network.classList.remove('chr-network--reveal'), 1500);
-    }
-  }
+  // La red se dibuja estable: no reiniciar animaciones de opacidad/escala al entrar
+  // o al repintar controles, porque producen un efecto de parpadeo en móviles.
+  state.netReveal = false;
   if (state.mode === 'sheet') paintAI();
   if (focusHeading) host.querySelector<HTMLElement>('#chrHeading')?.focus({ preventScroll: false });
 }
