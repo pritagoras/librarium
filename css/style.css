@@ -231,14 +231,15 @@ main{padding:20px clamp(16px,5vw,40px) 64px}
 .subannotation strong{grid-column:1/-1}.subannotation small{font-size:11px;color:var(--muted)}
 .subannotation button{grid-column:2;grid-row:2;border:0;background:none;color:var(--muted);font-size:11px;text-decoration:underline}
 .subannotations details summary{cursor:pointer;color:var(--muted);font-size:12px}
-.ai-subcomments{display:grid;gap:8px;margin:.7em 0;padding:.75em;border:1px solid var(--line);border-radius:8px;background:var(--paper2)}
-.ai-subcomments>small{font-weight:650;color:var(--muted)}
-.ai-subcomment{padding:.65em .75em;border-left:3px solid var(--green);background:var(--white);border-radius:0 7px 7px 0}
-.ai-subcomment p{margin:0;line-height:1.55;white-space:normal}
-.ai-subcomment small{display:block;margin-top:.5em;color:var(--muted);font-size:11px}
-.ai-subcomment button{margin-top:4px;padding:2px 0;border:0;background:none;color:var(--muted);font-size:11px;text-decoration:underline}
-.ai-subcomments details summary{cursor:pointer;color:var(--muted);font-size:12px}
-:root[data-theme="dark"] .ai-subcomment{background:#292b28}
+.ai-subcomments{display:grid;gap:5px;margin:.55em 0}
+.ai-subcomments>small{font-weight:650;color:var(--muted);font-size:10px;letter-spacing:.06em;text-transform:uppercase}
+.ai-subcomment{border:1px solid var(--line);border-radius:7px;background:var(--paper2)}
+.ai-subcomment>summary{padding:8px 10px;cursor:pointer;font-size:13px;font-weight:600;line-height:1.4}
+.ai-subcomment-answer{padding:8px 10px 9px;border-top:1px solid var(--line);font-size:13px}
+.ai-subcomment-answer p{margin:0;line-height:1.5;white-space:normal}
+.ai-subcomment-answer small{display:block;margin-top:.5em;color:var(--muted);font-size:10px}
+.ai-subcomment-answer button{margin-top:4px;padding:2px 0;border:0;background:none;color:var(--muted);font-size:11px;text-decoration:underline}
+.ai-subcomments-more{margin-top:2px}.ai-subcomments-more summary{cursor:pointer;color:var(--muted);font-size:12px}
 :root[data-theme="dark"] .gemini-msg-action{background:#292b28;color:var(--ink)}
 :root[data-theme="dark"] .gemini-msg-action:hover{background:#343731}
 

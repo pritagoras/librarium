@@ -97,9 +97,9 @@ function renderSubannotations(items: Subannotation[] = []): string {
 
 function renderAiSubcomments(items: AISubcomment[] = []): string {
   if (!items.length) return '';
-  const row = (item: AISubcomment) => `<div class="ai-subcomment" data-ai-subcomment-id="${esc(item.id)}"><p>${esc(item.text).replace(/\n/g, '<br>')}</p><small>${esc(item.question)}</small><button type="button" data-delete-ai-subcomment="${esc(item.id)}">Borrar</button></div>`;
+  const row = (item: AISubcomment) => `<details class="ai-subcomment" data-ai-subcomment-id="${esc(item.id)}"><summary>${esc(item.question)}</summary><div class="ai-subcomment-answer"><p>${esc(item.text).replace(/\n/g, '<br>')}</p><small>${new Date(item.createdAt).toLocaleDateString('es-AR')}</small><button type="button" data-delete-ai-subcomment="${esc(item.id)}">Borrar respuesta</button></div></details>`;
   const preview = items.length > 2 ? items.slice(0, 2) : items;
-  return `<div class="ai-subcomments"><small>Respuestas guardadas de la IA</small>${preview.map(row).join('')}${items.length > 2 ? `<details><summary>Ver ${items.length - 2} respuestas más</summary>${items.slice(2).map(row).join('')}</details>` : ''}</div>`;
+  return `<div class="ai-subcomments"><small>Respuestas de la IA</small>${preview.map(row).join('')}${items.length > 2 ? `<details class="ai-subcomments-more"><summary>Ver ${items.length - 2} preguntas más</summary>${items.slice(2).map(row).join('')}</details>` : ''}</div>`;
 }
 
 const statusNames: Record<BookStatus, string> = {
