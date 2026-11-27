@@ -24,7 +24,11 @@ export async function purgeBookCharacters(bookId: string): Promise<void> {
 // Entrada principal
 // ---------------------------------------------------------------------------
 
+let mountedContainer: HTMLElement | null = null;
+let mountedBookId = '';
+
 export async function renderCharactersPanel(container: HTMLElement, currentBook: Book): Promise<void> {
+  if (mountedContainer === container && mountedBookId === currentBook.id && container.querySelector('.chr-root')) return;
   if (state.bookId !== currentBook.id) {
     abortAI();
     setState(emptyState(currentBook.id));
@@ -33,6 +37,8 @@ export async function renderCharactersPanel(container: HTMLElement, currentBook:
   setBook(currentBook);
   await reload();
   paint();
+  mountedContainer = container;
+  mountedBookId = currentBook.id;
 }
 
 /** Abre una ficha en el panel que ya se dibujó (se usa desde la búsqueda global). */
