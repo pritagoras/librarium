@@ -9,7 +9,6 @@ const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || (process.env.PORT === '8765' ? '127.0.0.1' : '0.0.0.0');
-const ADMIN_EMAIL = '[redacted]';
 const VISITS_FILE = path.join(os.tmpdir(), 'librarium-site-visits.json');
 const MAX_TRACKED_SESSIONS = 5000;
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
@@ -102,14 +101,15 @@ async function verifyAdminIdToken(idToken: string, apiKey: string): Promise<bool
     );
     if (!resp.ok) return false;
     const data = (await resp.json()) as {
-      users?: Array<{ email?: string; emailVerified?: boolean }>;
+      users?: Array<{ emailVerified?: boolean; customAttributes?: string }>;
     };
     const user = data.users?.[0];
+    let claims: Record<string, unknown> = {};
+    try { claims = JSON.parse(user?.customAttributes || '{}'); } catch {}
     return Boolean(
       user &&
         user.emailVerified === true &&
-        typeof user.email === 'string' &&
-        user.email.trim().toLowerCase() === ADMIN_EMAIL,
+        claims.admin === true,
     );
   } catch {
     return false;

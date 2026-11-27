@@ -178,7 +178,7 @@ async function handleFeedbackSubmit(e: Event) {
     textarea.value = '';
     if (statusEl) statusEl.textContent = '¡Gracias! Tu mensaje quedó guardado para revisarlo pronto.';
     await renderMyFeedbackList();
-    if (isFeedbackAdmin(getSyncState().user)) void refreshAdminFeedbackSummary();
+    if (await isFeedbackAdmin(getSyncState().user)) void refreshAdminFeedbackSummary();
   } catch (err: any) {
     if (statusEl) {
       statusEl.textContent =
@@ -262,7 +262,7 @@ export function updateAdminPendingBadges(openCount: number) {
 }
 
 export async function archiveAdminSiteVisitsInBackground() {
-  if (!isFeedbackAdmin(getSyncState().user)) return;
+  if (!(await isFeedbackAdmin(getSyncState().user))) return;
   if (Date.now() - lastBackgroundVisitArchiveAt < 2 * 60 * 1000) return;
   lastBackgroundVisitArchiveAt = Date.now();
   try {
@@ -275,7 +275,7 @@ export async function archiveAdminSiteVisitsInBackground() {
 
 export async function refreshAdminFeedbackSummary() {
   const summaryEl = $('#adminFeedbackSummary');
-  if (!isFeedbackAdmin(getSyncState().user)) {
+  if (!(await isFeedbackAdmin(getSyncState().user))) {
     updateAdminPendingBadges(0);
     return;
   }
@@ -297,7 +297,7 @@ export async function refreshAdminFeedbackSummary() {
 
 async function openFeedbackInboxDialog() {
   const dlg = $<HTMLDialogElement>('#feedbackInboxDialog');
-  if (!dlg || !isFeedbackAdmin(getSyncState().user)) return;
+  if (!dlg || !(await isFeedbackAdmin(getSyncState().user))) return;
   if (!dlg.open) dlg.showModal();
   await loadFeedbackInbox();
 }
@@ -486,7 +486,7 @@ function formatShortDate(iso: string): string {
 
 async function openUsersDirectoryDialog() {
   const dlg = $<HTMLDialogElement>('#usersDirectoryDialog');
-  if (!dlg || !isFeedbackAdmin(getSyncState().user)) return;
+  if (!dlg || !(await isFeedbackAdmin(getSyncState().user))) return;
   if (!dlg.open) dlg.showModal();
   await loadUsersDirectory();
 }

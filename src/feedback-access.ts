@@ -1,11 +1,11 @@
 import type { User } from 'firebase/auth';
 
-export const FEEDBACK_ADMIN_EMAIL = '[redacted]';
-
-export function isFeedbackAdmin(user: User | null | undefined): boolean {
-  return Boolean(
-    user &&
-      user.emailVerified &&
-      user.email?.trim().toLowerCase() === FEEDBACK_ADMIN_EMAIL,
-  );
+export async function isFeedbackAdmin(user: User | null | undefined): Promise<boolean> {
+  if (!user?.emailVerified) return false;
+  try {
+    const token = await user.getIdTokenResult();
+    return token.claims.admin === true;
+  } catch {
+    return false;
+  }
 }

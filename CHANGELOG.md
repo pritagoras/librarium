@@ -10,6 +10,7 @@ Este registro resume los cambios para quienes usan Librarium, sin tecnicismos. L
 - La opción de consultar y borrar frases y respuestas guardadas desde el elemento, además de encontrarlas con la búsqueda.
 
 ### Se mejoró
+- El acceso de administración ya no depende de una dirección de correo escrita en el código.
 - La carga inicial descarga personajes y herramientas administrativas solo cuando se necesitan.
 - El análisis del build muestra el peso de los módulos para orientar futuras mejoras.
 - Las frases guardadas se conservan en las copias de seguridad y se combinan al sincronizar dispositivos.

@@ -2135,7 +2135,7 @@ async function openSyncConflictsDialog() {
   if (!dialog.open) dialog.showModal();
 }
 
-function updateAccountUI(status: SyncStatus, message: string, user: any) {
+async function updateAccountUI(status: SyncStatus, message: string, user: any) {
   const accountBtn = $('#accountBtn');
   const statusText = $('#syncStatusText');
   const signedOutView = $('#accountSignedOutView');
@@ -2178,7 +2178,7 @@ function updateAccountUI(status: SyncStatus, message: string, user: any) {
   }
 
   const adminCard = $('#adminFeedbackCard');
-  const isAdmin = isFeedbackAdmin(user);
+  const isAdmin = await isFeedbackAdmin(user);
   if (adminCard) {
     adminCard.classList.toggle('hidden', !isAdmin);
   }
@@ -2242,9 +2242,9 @@ async function handleGoogleSignOut() {
 }
 
 function initAccountSettings() {
-  $('#settingsOpen')!.onclick = () => {
+  $('#settingsOpen')!.onclick = async () => {
     $<HTMLDialogElement>('#settingsDialog')?.showModal();
-    if (isFeedbackAdmin(getSyncState().user)) void loadAdminFeature().then((feature) => feature.refreshAdminFeedbackSummary());
+    if (await isFeedbackAdmin(getSyncState().user)) void loadAdminFeature().then((feature) => feature.refreshAdminFeedbackSummary());
   };
   $('#accountBtn')!.onclick = () => {
     const { user } = getSyncState();
@@ -4517,7 +4517,7 @@ export async function initApp() {
       }
     },
     (status, message, user) => {
-      updateAccountUI(status, message, user);
+      void updateAccountUI(status, message, user);
     },
   );
 }

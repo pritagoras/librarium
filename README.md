@@ -84,11 +84,14 @@ npm install
 npm run dev      # servidor de desarrollo en http://127.0.0.1:8765
 npm run build    # genera dist/
 npm run analyze  # muestra qué módulos ocupan más espacio en cada paquete
+npm run set-admin-claim -- <UID> grant  # da acceso de administrador (requiere GOOGLE_APPLICATION_CREDENTIALS)
 npm run lint     # chequeo de tipos y reglas de Firestore
 npm run test     # pruebas de importación, restauración, conflictos de sincronización y personajes (fichas, vínculos, respaldo y contexto para la IA)
 ```
 
 En Windows también podés usar `INSTALAR.bat` (una vez) e `INICIAR_LIBRARIUM.bat`.
+
+Para administrar reportes, Librarium usa el claim `admin` de Firebase Auth, no una dirección de correo guardada en el código. Configurá `GOOGLE_APPLICATION_CREDENTIALS` con un archivo de cuenta de servicio que no esté dentro del repositorio y usá `npm run set-admin-claim -- <UID> grant` una vez. Después cerrá y volvé a iniciar sesión en Librarium y publicá las reglas con `firebase deploy --only firestore:rules`.
 
 ### Publicar en GitHub Pages
 El flujo de GitHub Actions incluido publica el sitio en cada cambio a `main`. En GitHub: **Settings → Pages → Build and deployment → Source: GitHub Actions**.

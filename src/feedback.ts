@@ -14,7 +14,7 @@ import type { User } from 'firebase/auth';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import { sanitizeId } from './sync';
 import { visitsApiEnabled } from './site-config';
-import { FEEDBACK_ADMIN_EMAIL, isFeedbackAdmin } from './feedback-access';
+import { isFeedbackAdmin } from './feedback-access';
 import type {
   BookProgressSummary,
   BookStatus,
@@ -27,7 +27,7 @@ import type {
 } from './types';
 
 const APP_CLIENT_VERSION = 'v42';
-export { FEEDBACK_ADMIN_EMAIL, isFeedbackAdmin } from './feedback-access';
+export { isFeedbackAdmin } from './feedback-access';
 
 function toIso(value: unknown): string {
   if (value instanceof Timestamp) return value.toDate().toISOString();
@@ -158,7 +158,7 @@ export async function fetchMyFeedbackReports(): Promise<FeedbackItem[]> {
 
 export async function fetchAllFeedbackReports(): Promise<FeedbackItem[]> {
   const user = auth.currentUser;
-  if (!isFeedbackAdmin(user)) {
+  if (!(await isFeedbackAdmin(user))) {
     throw new Error('Acceso restringido al administrador de Librarium.');
   }
 
@@ -178,7 +178,7 @@ export async function updateFeedbackReport(
   adminNote: string,
 ): Promise<void> {
   const user = auth.currentUser;
-  if (!isFeedbackAdmin(user)) {
+  if (!(await isFeedbackAdmin(user))) {
     throw new Error('Acceso restringido al administrador de Librarium.');
   }
   const cleanId = sanitizeId(id);
@@ -196,7 +196,7 @@ export async function updateFeedbackReport(
 
 export async function deleteFeedbackReport(id: string): Promise<void> {
   const user = auth.currentUser;
-  if (!isFeedbackAdmin(user)) {
+  if (!(await isFeedbackAdmin(user))) {
     throw new Error('Acceso restringido al administrador de Librarium.');
   }
   const cleanId = sanitizeId(id);
@@ -239,7 +239,7 @@ function mapBookSummary(raw: unknown): BookProgressSummary | null {
 
 export async function fetchAdminUserDirectory(): Promise<UserDirectoryEntry[]> {
   const user = auth.currentUser;
-  if (!isFeedbackAdmin(user)) {
+  if (!(await isFeedbackAdmin(user))) {
     throw new Error('Acceso restringido al administrador de Librarium.');
   }
   try {
@@ -286,7 +286,7 @@ export async function fetchAdminUserDirectory(): Promise<UserDirectoryEntry[]> {
 export async function fetchAdminSiteVisits(): Promise<SiteVisitStats | null> {
   if (!visitsApiEnabled) return null;
   const user = auth.currentUser;
-  if (!isFeedbackAdmin(user) || !user) return null;
+  if (!user || !(await isFeedbackAdmin(user))) return null;
   try {
     const idToken = await user.getIdToken();
     const resp = await fetch('/api/visits', {
@@ -303,7 +303,7 @@ export async function syncAndFetchPersistentSiteStats(
   serverStats: SiteVisitStats | null,
 ): Promise<PersistentSiteStatsSummary> {
   const user = auth.currentUser;
-  if (!isFeedbackAdmin(user)) {
+  if (!(await isFeedbackAdmin(user))) {
     return { totalAnonAllTime: 0, byDate: {} };
   }
 
