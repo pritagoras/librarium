@@ -757,6 +757,7 @@ export async function pushNoteToCloud(note: Note): Promise<Note> {
       comment: normalized.comment || '',
       read: normalized.read,
       subannotations: normalized.subannotations || [],
+      aiSubcomments: normalized.aiSubcomments || [],
       updatedAt: serverTimestamp(),
     };
     inFlightCloudWrites.notes.add(id);
@@ -829,6 +830,7 @@ export async function pushEntryToCloud(entry: Entry): Promise<Entry> {
       comment: normalized.comment || '',
       photoMediaId: normalized.photoMediaId || null,
       subannotations: normalized.subannotations || [],
+      aiSubcomments: normalized.aiSubcomments || [],
       updatedAt: serverTimestamp(),
     };
     inFlightCloudWrites.entries.add(id);
@@ -907,6 +909,7 @@ export async function pushQuoteToCloud(quote: Quote): Promise<Quote> {
       analysis: normalized.analysis || '',
       photoMediaIds: normalized.photoMediaIds,
       subannotations: normalized.subannotations || [],
+      aiSubcomments: normalized.aiSubcomments || [],
       updatedAt: serverTimestamp(),
     };
     inFlightCloudWrites.quotes.add(id);
@@ -1429,6 +1432,7 @@ function subscribeUserCollections(uid: string) {
             comment: data.comment || '',
             read: Boolean(data.read),
             subannotations: Array.isArray(data.subannotations) ? data.subannotations : [],
+            aiSubcomments: Array.isArray(data.aiSubcomments) ? data.aiSubcomments : [],
             createdAt: toIso(data.createdAt),
             updatedAt: toIso(data.updatedAt),
           });
@@ -1464,6 +1468,7 @@ function subscribeUserCollections(uid: string) {
             comment: data.comment || '',
             photoMediaId: data.photoMediaId || null,
             subannotations: Array.isArray(data.subannotations) ? data.subannotations : [],
+            aiSubcomments: Array.isArray(data.aiSubcomments) ? data.aiSubcomments : [],
             photo: null,
             createdAt: toIso(data.createdAt),
             updatedAt: toIso(data.updatedAt),
@@ -1500,6 +1505,7 @@ function subscribeUserCollections(uid: string) {
             page: data.page ?? null,
             analysis: data.analysis || '',
             subannotations: Array.isArray(data.subannotations) ? data.subannotations : [],
+            aiSubcomments: Array.isArray(data.aiSubcomments) ? data.aiSubcomments : [],
             photoMediaIds: Array.isArray(data.photoMediaIds) ? data.photoMediaIds : [],
             photos: [],
             createdAt: toIso(data.createdAt),

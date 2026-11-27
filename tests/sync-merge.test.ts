@@ -16,6 +16,15 @@ test('keeps subannotations added independently on two devices', () => {
   if (decision.kind === 'accept-remote') assert.deepEqual((decision.record as any).subannotations.map((item: any) => item.id), ['local', 'remote']);
 });
 
+test('keeps AI subcomments added independently on two devices', () => {
+  const decision = reconcileRecords(
+    { id: 'note', aiSubcomments: [{ id: 'local', text: 'Una respuesta' }] },
+    { id: 'note', aiSubcomments: [{ id: 'remote', text: 'Otra respuesta' }] },
+  );
+  assert.equal(decision.kind, 'accept-remote');
+  if (decision.kind === 'accept-remote') assert.deepEqual((decision.record as any).aiSubcomments.map((item: any) => item.id), ['local', 'remote']);
+});
+
 test('treats timestamp-only differences as the same content', () => {
   assert.equal(recordsHaveSameContent(
     { id: 'book-1', title: 'Libro', userId: 'u1', createdAt: 'a', updatedAt: 'b' },

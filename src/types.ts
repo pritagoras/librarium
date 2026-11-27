@@ -45,11 +45,19 @@ export interface Note {
   createdAt?: string;
   updatedAt?: string;
   subannotations?: Subannotation[];
+  aiSubcomments?: AISubcomment[];
 }
 
 export interface Subannotation {
   id: string;
   phrase: string;
+  question: string;
+  createdAt: string;
+}
+
+export interface AISubcomment {
+  id: string;
+  text: string;
   question: string;
   createdAt: string;
 }
@@ -67,6 +75,7 @@ export interface Entry {
   createdAt: string;
   updatedAt?: string;
   subannotations?: Subannotation[];
+  aiSubcomments?: AISubcomment[];
 }
 
 export interface Quote {
@@ -82,6 +91,7 @@ export interface Quote {
   createdAt: string;
   updatedAt: string;
   subannotations?: Subannotation[];
+  aiSubcomments?: AISubcomment[];
 }
 
 export interface BookConnection {

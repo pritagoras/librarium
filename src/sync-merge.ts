@@ -41,10 +41,11 @@ export function reconcileRecords<T extends object>(
   local: T | undefined,
   remote: T,
 ): MergeDecision<T> {
-  if (local && ('subannotations' in (local as any) || 'subannotations' in (remote as any))) {
+  if (local && (['subannotations', 'aiSubcomments'].some((field) => field in (local as any) || field in (remote as any)))) {
     const merged = mergeSubannotations((local as any).subannotations, (remote as any).subannotations);
-    local = { ...local, subannotations: merged } as T;
-    remote = { ...remote, subannotations: merged } as T;
+    const replies = mergeSubannotations((local as any).aiSubcomments, (remote as any).aiSubcomments);
+    local = { ...local, subannotations: merged, aiSubcomments: replies } as T;
+    remote = { ...remote, subannotations: merged, aiSubcomments: replies } as T;
   }
   if (!local || recordsHaveSameContent(local as Record<string, any>, remote as Record<string, any>)) {
     return { kind: 'accept-remote', record: remote };

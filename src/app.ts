@@ -65,6 +65,7 @@ import { isFeedbackAdmin } from './feedback';
 import changelogMarkdown from '../CHANGELOG.md?raw';
 import type {
   AISettings,
+  AISubcomment,
   Book,
   BookAnalysis,
   Character,
@@ -92,6 +93,13 @@ function renderSubannotations(items: Subannotation[] = []): string {
   const rows = visible.map((item) => `<div class="subannotation" data-subannotation-id="${esc(item.id)}"><strong>${esc(item.phrase)}</strong><small>${esc(item.question)}</small><button type="button" data-delete-subannotation="${esc(item.id)}" aria-label="Borrar frase clave">Borrar</button></div>`).join('');
   const rest = items.length > 2 ? `<details><summary>Ver ${items.length - 2} frases clave más</summary>${items.slice(2).map((item) => `<div class="subannotation" data-subannotation-id="${esc(item.id)}"><strong>${esc(item.phrase)}</strong><small>${esc(item.question)}</small><button type="button" data-delete-subannotation="${esc(item.id)}">Borrar</button></div>`).join('')}</details>` : '';
   return `<div class="subannotations">${rows}${rest}</div>`;
+}
+
+function renderAiSubcomments(items: AISubcomment[] = []): string {
+  if (!items.length) return '';
+  const row = (item: AISubcomment) => `<div class="ai-subcomment" data-ai-subcomment-id="${esc(item.id)}"><p>${esc(item.text).replace(/\n/g, '<br>')}</p><small>${esc(item.question)}</small><button type="button" data-delete-ai-subcomment="${esc(item.id)}">Borrar</button></div>`;
+  const preview = items.length > 2 ? items.slice(0, 2) : items;
+  return `<div class="ai-subcomments"><small>Respuestas guardadas de la IA</small>${preview.map(row).join('')}${items.length > 2 ? `<details><summary>Ver ${items.length - 2} respuestas más</summary>${items.slice(2).map(row).join('')}</details>` : ''}</div>`;
 }
 
 const statusNames: Record<BookStatus, string> = {
@@ -1232,9 +1240,10 @@ async function renderDetail() {
               }</small>
               <span class="note-text">${esc(n.text)}</span>
               ${n.comment ? `<span class="note-comment"><strong>Mi comentario:</strong> ${esc(n.comment)}</span>` : ''}
-              ${renderSubannotations(n.subannotations)}
             </span>
           </button>
+          ${renderSubannotations(n.subannotations)}
+          ${renderAiSubcomments(n.aiSubcomments)}
           <div class="note-actions">
             ${aiIconButton('data-ask-note', n.id, n.comment ? 'Debatir mi comentario con la IA' : 'Preguntar a la IA')}
             <button type="button" class="comment-note-btn" data-comment-note="${esc(n.id)}" title="Comentar nota">${
@@ -1279,6 +1288,7 @@ async function renderDetail() {
               <p>${esc(x.text || '')}</p>
               ${x.comment ? `<p class="entry-personal-comment"><strong>Mi comentario:</strong> ${esc(x.comment)}</p>` : ''}
               ${renderSubannotations(x.subannotations)}
+              ${renderAiSubcomments(x.aiSubcomments)}
               ${
                 x.photo
                   ? `<img class="annotation-photo-thumb" data-open-photo="${esc(x.id)}" src="${esc(x.photo)}" alt="Abrir fotografía">`
@@ -1668,6 +1678,7 @@ function quoteCardHTML(
     }</p>
     ${quote.analysis ? `<p class="quote-analysis"><strong>Mi comentario:</strong> ${esc(quote.analysis)}</p>` : ''}
     ${renderSubannotations(quote.subannotations)}
+    ${renderAiSubcomments(quote.aiSubcomments)}
     ${photos ? `<div class="quote-photos">${photos}</div>` : ''}
     <div class="annotation-actions">
       <button type="button" class="mini" data-edit-quote="${esc(quote.id)}">Editar cita</button>
@@ -2012,6 +2023,7 @@ async function renderJournal() {
           <p>${esc(x.text || '')}</p>
           ${x.comment ? `<p class="entry-personal-comment"><strong>Mi comentario:</strong> ${esc(x.comment)}</p>` : ''}
           ${renderSubannotations(x.subannotations)}
+          ${renderAiSubcomments(x.aiSubcomments)}
           ${
             x.photo
               ? `<img class="annotation-photo-thumb" data-open-photo="${esc(x.id)}" src="${esc(x.photo)}" alt="Abrir fotografía">`
@@ -2519,9 +2531,9 @@ async function loadSearchDocs(): Promise<SearchDoc[]> {
     items.sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''));
 
   notes.sort((a, b) => (a.section || 1) - (b.section || 1) || a.number - b.number);
-  for (const n of notes) add('note', n, `Nota ${n.number}`, [n.text, n.comment, ...(n.subannotations || []).flatMap((s) => [s.phrase, s.question])]);
-  for (const e of recent(entries)) add('entry', e, e.title || `Anotación · pág. ${e.page}`, [e.text, e.comment, ...(e.subannotations || []).flatMap((s) => [s.phrase, s.question])]);
-  for (const q of recent(quotes)) add('quote', q, q.page != null ? `Cita · pág. ${q.page}` : 'Cita', [q.text, q.analysis, q.chapter, ...(q.subannotations || []).flatMap((s) => [s.phrase, s.question])]);
+  for (const n of notes) add('note', n, `Nota ${n.number}`, [n.text, n.comment, ...(n.subannotations || []).flatMap((s) => [s.phrase, s.question]), ...(n.aiSubcomments || []).flatMap((s) => [s.text, s.question])]);
+  for (const e of recent(entries)) add('entry', e, e.title || `Anotación · pág. ${e.page}`, [e.text, e.comment, ...(e.subannotations || []).flatMap((s) => [s.phrase, s.question]), ...(e.aiSubcomments || []).flatMap((s) => [s.text, s.question])]);
+  for (const q of recent(quotes)) add('quote', q, q.page != null ? `Cita · pág. ${q.page}` : 'Cita', [q.text, q.analysis, q.chapter, ...(q.subannotations || []).flatMap((s) => [s.phrase, s.question]), ...(q.aiSubcomments || []).flatMap((s) => [s.text, s.question])]);
   for (const c of characters) {
     add('character', c, c.name, [c.aliases?.join(', '), c.description, c.occupation, c.affiliation, c.traits?.join(', '), c.comments]);
   }
@@ -2819,7 +2831,7 @@ function attachGeminiMessageActions(wrapper: HTMLElement, answer: string, source
   const bar = document.createElement('div');
   bar.className = 'gemini-msg-actions';
   const extracted = extractKeyPhrase(answer);
-  const answerPlainText = markdownToPlainText(extracted.answer);
+  const answerPlainText = [markdownToPlainText(extracted.answer), extracted.phrase].filter(Boolean).join('\n\n');
 
   const makeBtn = (label: string, onClick: (btn: HTMLButtonElement) => void | Promise<void>) => {
     const btn = document.createElement('button');
@@ -2844,7 +2856,7 @@ function attachGeminiMessageActions(wrapper: HTMLElement, answer: string, source
   };
 
   makeBtn('Copiar', async (btn) => {
-    const ok = await copyPlainText(answer);
+    const ok = await copyPlainText(answerPlainText);
     if (ok) markSaved(btn, 'Copiado ✓');
   });
 
@@ -2858,7 +2870,7 @@ function attachGeminiMessageActions(wrapper: HTMLElement, answer: string, source
     if (source) {
       const savedList = 'subannotations' in source ? (source.subannotations || []) : [];
       const duplicate = savedList.some((item: Subannotation) => item.phrase === extracted.phrase);
-      const saveButton = makeBtn(duplicate ? 'Guardada ✓' : 'Guardar en mi comentario', async (btn) => {
+      const saveButton = makeBtn(duplicate ? 'Guardada ✓' : 'Guardar anotación', async (btn) => {
         if (btn.disabled || !ctx || !source) return;
         const fresh = ctx.note ? await get<Note>('notes', source.id) : ctx.entry ? await get<Entry>('entries', source.id) : await get<Quote>('quotes', source.id);
         if (!fresh) return;
@@ -2876,80 +2888,29 @@ function attachGeminiMessageActions(wrapper: HTMLElement, answer: string, source
       if (duplicate) saveButton.disabled = true;
     }
   }
-  if (ctx?.note) {
-    const targetNote = ctx.note;
-    makeBtn('Guardar en comentario', async (btn) => {
-      const fresh = (await get<Note>('notes', targetNote.id)) || targetNote;
-      if (fresh.comment?.trim()) {
-        const ok = await showConfirmDialog({
-          eyebrow: 'NOTA FINAL',
-          title: '¿Agregar al comentario de la nota?',
-          message: 'Esta nota ya tiene un comentario guardado. Se añadirá esta respuesta al final.',
-          confirmLabel: 'Agregar al final',
-        });
-        if (!ok) return;
-        fresh.comment = `${markdownToPlainText(fresh.comment.trim())}\n\n${answerPlainText}`;
-      } else {
-        fresh.comment = answerPlainText;
+  const source = ctx?.note || ctx?.entry || ctx?.quote;
+  if (ctx && source) {
+    const existing = 'aiSubcomments' in source ? (source.aiSubcomments || []) : [];
+    const alreadySaved = existing.some((item: AISubcomment) => item.text === answerPlainText && item.question === sourceQuestion);
+    const saveCommentButton = makeBtn(alreadySaved ? 'Comentario guardado ✓' : 'Guardar comentario', async (btn) => {
+      if (btn.disabled || !ctx) return;
+      const fresh = ctx.note ? await get<Note>('notes', source.id) : ctx.entry ? await get<Entry>('entries', source.id) : await get<Quote>('quotes', source.id);
+      if (!fresh) return;
+      const replies = (fresh as Note | Entry | Quote).aiSubcomments || [];
+      if (replies.some((item) => item.text === answerPlainText && item.question === sourceQuestion)) {
+        btn.textContent = 'Comentario guardado ✓'; btn.disabled = true; return;
       }
-      const saved = await pushNoteToCloud(fresh);
-      if (geminiItem?.note?.id === saved.id) geminiItem.note = saved;
+      const reply: AISubcomment = { id: uid(), text: answerPlainText, question: sourceQuestion, createdAt: new Date().toISOString() };
+      (fresh as Note | Entry | Quote).aiSubcomments = mergeSubannotations(replies, [reply]);
+      const saved = ctx.note ? await pushNoteToCloud(fresh as Note) : ctx.entry ? await pushEntryToCloud(fresh as Entry) : await pushQuoteToCloud(fresh as Quote);
+      if (ctx.note) ctx.note = saved as Note; else if (ctx.entry) ctx.entry = saved as Entry; else if (ctx.quote) ctx.quote = saved as Quote;
+      btn.textContent = 'Comentario guardado ✓'; btn.disabled = true;
       renderGeminiContextCard();
-      if ($<HTMLDialogElement>('#detailDialog')?.open && activeBook?.id === saved.bookId) {
-        await renderDetail();
-      }
-      markSaved(btn, 'Guardado en nota ✓');
-    });
-  } else if (ctx?.quote) {
-    const targetQuote = ctx.quote;
-    makeBtn('Guardar en análisis', async (btn) => {
-      const fresh = (await get<Quote>('quotes', targetQuote.id)) || targetQuote;
-      if (fresh.analysis?.trim()) {
-        const ok = await showConfirmDialog({
-          eyebrow: 'CITAS FAVORITAS',
-          title: '¿Agregar al análisis de la cita?',
-          message: 'Esta cita ya tiene un análisis personal. Se añadirá esta respuesta al final.',
-          confirmLabel: 'Agregar al final',
-        });
-        if (!ok) return;
-        fresh.analysis = `${markdownToPlainText(fresh.analysis.trim())}\n\n${answerPlainText}`;
-      } else {
-        fresh.analysis = answerPlainText;
-      }
-      const saved = await pushQuoteToCloud(fresh);
-      if (geminiItem?.quote?.id === saved.id) geminiItem.quote = saved;
-      renderGeminiContextCard();
-      if ($<HTMLDialogElement>('#detailDialog')?.open && activeBook?.id === saved.bookId) {
-        await renderDetail();
-      }
+      if ($<HTMLDialogElement>('#detailDialog')?.open) await renderDetail();
       if ($('#quotesView')?.classList.contains('active')) await renderQuoteCollection();
-      markSaved(btn, 'Guardado en cita ✓');
-    });
-  } else if (ctx?.entry) {
-    const targetEntry = ctx.entry;
-    makeBtn('Guardar en anotación', async (btn) => {
-      const fresh = (await get<Entry>('entries', targetEntry.id)) || targetEntry;
-      if (fresh.text?.trim()) {
-        const ok = await showConfirmDialog({
-          eyebrow: 'ANOTACIÓN',
-          title: '¿Agregar a la anotación?',
-          message: 'Esta anotación ya tiene texto guardado. Se añadirá esta respuesta al final.',
-          confirmLabel: 'Agregar al final',
-        });
-        if (!ok) return;
-        fresh.text = `${markdownToPlainText(fresh.text.trim())}\n\n${answerPlainText}`;
-      } else {
-        fresh.text = answerPlainText;
-      }
-      const saved = await pushEntryToCloud(fresh);
-      if (geminiItem?.entry?.id === saved.id) geminiItem.entry = saved;
-      renderGeminiContextCard();
-      if ($<HTMLDialogElement>('#detailDialog')?.open && activeBook?.id === saved.bookId) {
-        await renderDetail();
-      }
       if ($('#notebookView')?.classList.contains('active')) await renderJournal();
-      markSaved(btn, 'Guardado ✓');
     });
+    if (alreadySaved) saveCommentButton.disabled = true;
   }
 
   if (ctx?.book) {
@@ -2987,17 +2948,18 @@ function attachGeminiMessageActions(wrapper: HTMLElement, answer: string, source
 }
 
 document.addEventListener('click', async (event) => {
-  const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-delete-subannotation]');
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-delete-subannotation],[data-delete-ai-subcomment]');
   if (!button) return;
   const row = button.closest<HTMLElement>('[data-ai-note],[data-ai-entry],[data-quote-id]');
   if (!row) return;
-  const id = button.dataset.deleteSubannotation!;
+  const isReply = Boolean(button.dataset.deleteAiSubcomment);
+  const id = button.dataset.deleteAiSubcomment || button.dataset.deleteSubannotation!;
   const noteId = row.dataset.aiNote;
   const entryId = row.dataset.aiEntry;
   const quoteId = row.dataset.quoteId;
-  if (noteId) { const record = await get<Note>('notes', noteId); if (record) { record.subannotations = (record.subannotations || []).filter((item) => item.id !== id); await pushNoteToCloud(record); } }
-  else if (entryId) { const record = await get<Entry>('entries', entryId); if (record) { record.subannotations = (record.subannotations || []).filter((item) => item.id !== id); await pushEntryToCloud(record); } }
-  else if (quoteId) { const record = await get<Quote>('quotes', quoteId); if (record) { record.subannotations = (record.subannotations || []).filter((item) => item.id !== id); await pushQuoteToCloud(record); } }
+  if (noteId) { const record = await get<Note>('notes', noteId); if (record) { if (isReply) record.aiSubcomments = (record.aiSubcomments || []).filter((item) => item.id !== id); else record.subannotations = (record.subannotations || []).filter((item) => item.id !== id); await pushNoteToCloud(record); } }
+  else if (entryId) { const record = await get<Entry>('entries', entryId); if (record) { if (isReply) record.aiSubcomments = (record.aiSubcomments || []).filter((item) => item.id !== id); else record.subannotations = (record.subannotations || []).filter((item) => item.id !== id); await pushEntryToCloud(record); } }
+  else if (quoteId) { const record = await get<Quote>('quotes', quoteId); if (record) { if (isReply) record.aiSubcomments = (record.aiSubcomments || []).filter((item) => item.id !== id); else record.subannotations = (record.subannotations || []).filter((item) => item.id !== id); await pushQuoteToCloud(record); } }
   if ($<HTMLDialogElement>('#detailDialog')?.open) await renderDetail();
   if ($('#quotesView')?.classList.contains('active')) await renderQuoteCollection();
   if ($('#notebookView')?.classList.contains('active')) await renderJournal();
@@ -3177,7 +3139,7 @@ async function sendGeminiQuestion(e: Event) {
       const page = Math.max(0, Number(geminiItem.book.currentPage) || 0);
       systemInstruction += `\n\nMODO EVITAR SPOILERS: la persona está aproximadamente en la página ${page} de «${geminiItem.book.title}». Usá esa página como referencia aproximada de su avance y evitá revelar o anticipar hechos posteriores, giros o destinos. Si la ubicación de un dato no es clara, respondé sin revelar detalles de trama que puedan adelantarse. Esta preferencia no exige hablar de spoilers ni impide responder preguntas generales de forma segura.`;
     }
-    systemInstruction += `\n\nAl final de cada respuesta agregá una línea separada exactamente con este marcador y una sola oración de hasta 25 palabras que responda la pregunta concreta: ${KEY_PHRASE_MARKER} Tu frase clave. Debe ser autosuficiente, clara y segura; si no hay respuesta segura, decilo. Respetá siempre el modo Evitar spoilers también en esa frase. No escribas el marcador en ningún otro lugar.`;
+    systemInstruction += `\n\nAl final de cada respuesta agregá una línea separada exactamente con este marcador y una sola oración breve (máximo 25 palabras): ${KEY_PHRASE_MARKER} frase clave. La frase tiene que contestar de manera tajante la pregunta concreta, no resumir vagamente tu respuesta ni prometer que la contestaste. Si preguntan nombres, fechas, causas o una lista, incluí esos datos concretos en la frase; no omitas la respuesta principal. Debe entenderse sola. Si no hay respuesta segura, decilo con claridad. Respetá siempre Evitar spoilers también en esa frase y limitá los datos al avance de lectura indicado. No escribas el marcador en ningún otro lugar.`;
     const parts: any[] = [];
     if (!geminiHistory.length) {
       const { book, note, entry, quote, analysis } = geminiItem || {};

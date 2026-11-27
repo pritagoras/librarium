@@ -6,10 +6,12 @@ Este registro resume los cambios para quienes usan Librarium, sin tecnicismos. L
 
 ### Se agregó
 - Una frase clave al final de las respuestas completas de la IA, que se puede guardar dentro de la nota, anotación o cita de origen.
-- La opción de consultar y borrar esas frases desde el elemento, además de encontrarlas con la búsqueda.
+- La opción de guardar la respuesta completa como comentario secundario, o solo la frase clave como anotación.
+- La opción de consultar y borrar frases y respuestas guardadas desde el elemento, además de encontrarlas con la búsqueda.
 
 ### Se mejoró
 - Las frases guardadas se conservan en las copias de seguridad y se combinan al sincronizar dispositivos.
+- La frase clave responde de forma directa e incluye los datos concretos que se preguntaron.
 
 ## "1.0.0" — 26 de noviembre de 2026 · Hito reconstruido
 
